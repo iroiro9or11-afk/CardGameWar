@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.3 — offline campaign layer over the original card editor/battle engine */
+/* 都道府県カード戦争 v1.0.5 — offline campaign layer over the original card editor/battle engine */
 'use strict';
 
 let campaignState = null;
