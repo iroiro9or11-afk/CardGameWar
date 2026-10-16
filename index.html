@@ -553,15 +553,13 @@
     <div id="crop-modal" class="fixed inset-0 bg-black/90 z-50 flex flex-col items-center justify-center hidden p-4">
       <div class="bg-slate-900 border border-slate-700 rounded-xl p-4 w-full max-w-sm flex flex-col items-center space-y-4">
         <h3 class="font-bold text-amber-400 text-xs" id="crop-modal-title">画像のトリミング</h3>
-        <div id="crop-container" class="relative w-[210px] h-[280px] bg-slate-950 overflow-hidden border-2 border-dashed border-amber-400 rounded cursor-grab active:cursor-grabbing select-none touch-none">
+        <div id="crop-container" class="relative w-[210px] h-[162px] bg-slate-950 overflow-hidden border-2 border-emerald-400 rounded cursor-grab active:cursor-grabbing select-none touch-none shadow-[0_0_0_2px_rgba(16,185,129,.18)]">
           <img id="crop-target-img" class="absolute pointer-events-none origin-top-left max-w-none" src="" style="transform: translate(0px, 0px) scale(1);">
-          <div id="crop-visible-guide" class="absolute inset-0 pointer-events-none hidden z-10">
-            <div class="absolute flex items-start justify-center pt-1" style="left:0;right:0;top:0;height:21%;background:rgba(0,0,0,.55)"><span class="text-[9px] font-black text-white rounded px-1.5 py-0.5" style="background:rgba(0,0,0,.75)">カード表示外</span></div>
-            <div class="absolute flex items-end justify-center pb-1" style="left:0;right:0;bottom:0;height:21%;background:rgba(0,0,0,.55)"><span class="text-[9px] font-black text-white rounded px-1.5 py-0.5" style="background:rgba(0,0,0,.75)">カード表示外</span></div>
-            <div class="absolute" style="left:0;right:0;top:21%;height:58%;border:2px solid #6ee7b7;box-shadow:inset 0 0 0 1px rgba(0,0,0,.7)"><span class="absolute top-1 left-1 text-[9px] font-black text-emerald-100 rounded px-1.5 py-0.5" style="background:rgba(6,78,59,.9)">カードプレビューに映る範囲</span></div>
+          <div id="crop-visible-guide" class="absolute inset-0 pointer-events-none z-10 border-2 border-emerald-300">
+            <span class="absolute top-1 left-1 text-[9px] font-black text-emerald-100 rounded px-1.5 py-0.5" style="background:rgba(6,78,59,.9)">この枠全体がカードに表示されます</span>
           </div>
         </div>
-        <p id="crop-guide-help" class="text-[10px] leading-relaxed text-emerald-200 text-center">明るい枠の内側が、実際のカード上部の画像欄に表示される範囲です。上下の暗い部分はカード上では切り落とされます。</p>
+        <p id="crop-guide-help" class="text-[10px] leading-relaxed text-emerald-200 text-center">表示枠を、カード上部の画像欄と同じ縦横比にしました。枠内全体がプレビューに表示され、適用後に勝手に上下が切り取られることはありません。画像をドラッグして位置を調整できます。</p>
         <div class="w-full space-y-2 text-xs">
           <div class="flex justify-between text-slate-400"><span>ズーム</span><span id="crop-zoom-val" class="font-mono text-amber-400">1.0x</span></div>
           <input type="range" id="crop-zoom" min="0.1" max="5" step="0.01" value="1" class="w-full accent-amber-500">
@@ -1055,7 +1053,7 @@
     const cardBrowserSettingsByKey = Object.create(null);
 
     let currentCropTargetType = 'unit';
-    let cropState = { img: new Image(), x: 0, y: 0, scale: 1, isDragging: false, startX: 0, startY: 0 };
+    let cropState = { img: new Image(), x: 0, y: 0, scale: 1, fitScale: 1, targetW: 210, targetH: 162, isDragging: false, startX: 0, startY: 0 };
     let croppedImageData = { unit: null, magic: null, player: null, rival: null };
 
     let editingDeck = { id: null, name: "", unitIds: [], magicIds: [] };
@@ -2357,7 +2355,7 @@
       switchView("deck");
     }
 
-    // 画像クロッパー (縦横比3:4アスペクト＆拡大率修正)
+    // 画像クロッパー：実際のカード画像欄と同じ比率で切り抜き、二重トリミングを防ぐ。
     function handleFileSelect(e, targetType) {
       const file = e.target.files[0]; if (!file) return;
       const reader = new FileReader(); reader.onload = (evt) => openCropModal(evt.target.result, targetType); reader.readAsDataURL(file);
@@ -2370,89 +2368,111 @@
       currentCropTargetType = targetType;
       const cropTitle = document.getElementById('crop-modal-title');
       const cropApply = document.getElementById('crop-apply-btn');
+      const isSquare = targetType === 'player' || targetType === 'rival';
       if (cropTitle) cropTitle.textContent = targetType === 'rival' ? 'ライバルアイコンの切り抜き位置を調整' : targetType === 'player' ? 'プレイヤーアイコンの切り抜き位置を調整' : 'カード画像の切り抜き位置を調整';
-      if (cropApply) cropApply.textContent = (targetType === 'rival' || targetType === 'player') ? 'この切り抜きをアイコンに適用' : 'この切り抜きを適用';
+      if (cropApply) cropApply.textContent = isSquare ? 'この切り抜きをアイコンに適用' : 'この切り抜きを適用';
       cropState.img = new Image();
       cropState.img.onload = () => {
-        const isSquare = targetType === 'player' || targetType === 'rival';
-        const targetW = isSquare ? 200 : 210, targetH = isSquare ? 200 : 280;
-        document.getElementById("crop-container").style.width = targetW + "px";
-        document.getElementById("crop-container").style.height = targetH + "px";
-        const guide = document.getElementById('crop-visible-guide');
+        // card-aspectは幅/高さ=0.75、画像欄はカード全高の58%。画像欄の幅/高さは0.75/0.58なので、高さ=幅*(0.58/0.75)。
+        const targetW = isSquare ? 200 : 210;
+        const targetH = isSquare ? 200 : Math.round(210 * (0.58 / 0.75));
+        cropState.targetW = targetW;
+        cropState.targetH = targetH;
+        const box = document.getElementById('crop-container');
+        box.style.width = targetW + 'px';
+        box.style.height = targetH + 'px';
         const guideHelp = document.getElementById('crop-guide-help');
-        if (guide) guide.classList.toggle('hidden', isSquare);
-        if (guideHelp) {
-          guideHelp.classList.toggle('hidden', isSquare);
-          if (isSquare) guideHelp.textContent = 'アイコンは正方形の枠内がそのまま表示されます。';
-          else guideHelp.textContent = '明るい枠の内側が、実際のカード上部の画像欄に表示される範囲です。上下の暗い部分はカード上では切り落とされます。';
-        }
-        
+        if (guideHelp) guideHelp.textContent = isSquare
+          ? 'アイコンの表示枠と同じ正方形です。枠内全体がそのままアイコンに表示されます。'
+          : '表示枠はカード上部の画像欄と同じ縦横比です。枠内全体がプレビューに表示され、適用後に上下が追加で切り取られることはありません。';
         const fitScale = Math.max(targetW / cropState.img.width, targetH / cropState.img.height);
+        cropState.fitScale = fitScale;
         cropState.scale = fitScale;
         cropState.x = (targetW - cropState.img.width * fitScale) / 2;
         cropState.y = (targetH - cropState.img.height * fitScale) / 2;
-        
-        const zoomInput = document.getElementById("crop-zoom");
-        zoomInput.min = (fitScale * 0.5).toFixed(3);
-        zoomInput.max = (fitScale * 3.0).toFixed(3);
-        zoomInput.step = (fitScale * 0.02).toFixed(3);
-        zoomInput.value = fitScale.toFixed(3);
-        document.getElementById("crop-zoom-val").innerText = "1.0x";
-
+        const zoomInput = document.getElementById('crop-zoom');
+        zoomInput.min = fitScale.toFixed(4);
+        zoomInput.max = (fitScale * 4).toFixed(4);
+        zoomInput.step = Math.max(fitScale * 0.01, 0.0001).toFixed(4);
+        zoomInput.value = fitScale.toFixed(4);
+        document.getElementById('crop-zoom-val').innerText = '1.0x';
         updateCropTransform();
-        document.getElementById("crop-modal").classList.remove("hidden");
+        document.getElementById('crop-modal').classList.remove('hidden');
       };
+      cropState.img.onerror = () => alert('画像を読み込めませんでした。別の画像ファイルを選んでください。');
       cropState.img.src = src;
-      document.getElementById("crop-target-img").src = src;
+      document.getElementById('crop-target-img').src = src;
+    }
+
+    function clampCropPosition() {
+      const drawnW = cropState.img.width * cropState.scale;
+      const drawnH = cropState.img.height * cropState.scale;
+      cropState.x = Math.min(0, Math.max(cropState.targetW - drawnW, cropState.x));
+      cropState.y = Math.min(0, Math.max(cropState.targetH - drawnH, cropState.y));
     }
 
     function updateCropTransform() {
-      document.getElementById("crop-target-img").style.transform = `translate(${cropState.x}px, ${cropState.y}px) scale(${cropState.scale})`;
+      clampCropPosition();
+      document.getElementById('crop-target-img').style.transform = `translate(${cropState.x}px, ${cropState.y}px) scale(${cropState.scale})`;
     }
 
     function setupCropInteractions() {
-      const box = document.getElementById("crop-container");
-      box.addEventListener("pointerdown", e => { cropState.isDragging = true; cropState.startX = e.clientX - cropState.x; cropState.startY = e.clientY - cropState.y; box.setPointerCapture(e.pointerId); });
-      box.addEventListener("pointermove", e => { if (cropState.isDragging) { cropState.x = e.clientX - cropState.startX; cropState.y = e.clientY - cropState.startY; updateCropTransform(); } });
+      const box = document.getElementById('crop-container');
+      box.addEventListener('pointerdown', e => {
+        cropState.isDragging = true;
+        cropState.startX = e.clientX - cropState.x;
+        cropState.startY = e.clientY - cropState.y;
+        box.setPointerCapture(e.pointerId);
+      });
+      box.addEventListener('pointermove', e => {
+        if (cropState.isDragging) {
+          cropState.x = e.clientX - cropState.startX;
+          cropState.y = e.clientY - cropState.startY;
+          updateCropTransform();
+        }
+      });
       const stop = () => cropState.isDragging = false;
-      box.addEventListener("pointerup", stop); box.addEventListener("pointercancel", stop);
-      document.getElementById("crop-zoom").addEventListener("input", e => {
-        cropState.scale = parseFloat(e.target.value);
-        document.getElementById("crop-zoom-val").innerText = (cropState.scale / (cropState.img.width ? Math.max(210/cropState.img.width, 280/cropState.img.height) : 1)).toFixed(1) + "x";
+      box.addEventListener('pointerup', stop);
+      box.addEventListener('pointercancel', stop);
+      document.getElementById('crop-zoom').addEventListener('input', e => {
+        const oldScale = cropState.scale || cropState.fitScale;
+        const nextScale = parseFloat(e.target.value);
+        const factor = nextScale / oldScale;
+        const cx = cropState.targetW / 2;
+        const cy = cropState.targetH / 2;
+        cropState.x = cx - (cx - cropState.x) * factor;
+        cropState.y = cy - (cy - cropState.y) * factor;
+        cropState.scale = nextScale;
+        document.getElementById('crop-zoom-val').innerText = (cropState.scale / cropState.fitScale).toFixed(1) + 'x';
         updateCropTransform();
       });
     }
 
     function applyCrop() {
       const isSquare = currentCropTargetType === 'player' || currentCropTargetType === 'rival';
-      const canvas = document.createElement("canvas");
-      canvas.width = isSquare ? 200 : 300;
-      canvas.height = isSquare ? 200 : 400;
-      const ctx = canvas.getContext("2d");
-      
-      const containerW = isSquare ? 200 : 210;
-      const r = canvas.width / containerW;
-
-      ctx.drawImage(
-        cropState.img,
-        cropState.x * r,
-        cropState.y * r,
-        cropState.img.width * cropState.scale * r,
-        cropState.img.height * cropState.scale * r
-      );
-      const url = canvas.toDataURL("image/webp", 0.85);
-
+      // 出力比率を表示枠と一致させる。カードのobject-coverで二重に切り取られない。
+      const outW = isSquare ? 200 : 600;
+      const outH = isSquare ? 200 : Math.round(outW * cropState.targetH / cropState.targetW);
+      const canvas = document.createElement('canvas');
+      canvas.width = outW;
+      canvas.height = outH;
+      const ctx = canvas.getContext('2d');
+      const r = outW / cropState.targetW;
+      ctx.drawImage(cropState.img, cropState.x * r, cropState.y * r,
+        cropState.img.width * cropState.scale * r, cropState.img.height * cropState.scale * r);
+      const url = canvas.toDataURL('image/webp', 0.9);
       if (currentCropTargetType === 'unit') croppedImageData.unit = url;
       else if (currentCropTargetType === 'magic') croppedImageData.magic = url;
       else if (currentCropTargetType === 'player') {
         playerIcon = url;
-        // アイコン変更直後に保存する。プロフィール保存ボタンを押さなくてもページ更新で消えない。
-        saveToStore("settings", { key: "player_icon", value: playerIcon }).catch(() => {});
+        saveToStore('settings', { key: 'player_icon', value: playerIcon }).catch(() => {});
         updatePlayerProfileDisplay();
+      } else if (currentCropTargetType === 'rival') {
+        tempRivalIcon = url;
+        setRivalIconPreview(url);
       }
-      else if (currentCropTargetType === 'rival') { tempRivalIcon = url; setRivalIconPreview(url); }
-
-      document.getElementById("crop-modal").classList.add("hidden"); updatePreview();
+      document.getElementById('crop-modal').classList.add('hidden');
+      updatePreview();
     }
     function cancelCrop() { document.getElementById("crop-modal").classList.add("hidden"); }
 
