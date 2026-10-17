@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.6 — offline campaign layer over the original card editor/battle engine */
+/* 都道府県カード戦争 v1.0.8 — offline campaign layer over the original card editor/battle engine */
 'use strict';
 
 let campaignState = null;
@@ -550,7 +550,7 @@ function prefRenderHolder() {
   const units=prefOwnedUnits(PREF_PLAYER_ID),magics=prefOwnedMagics(PREF_PLAYER_ID);
   const uc=document.getElementById('pref-holder-unit-count'),mc=document.getElementById('pref-holder-magic-count');if(uc)uc.textContent=`${units.length}/10`;if(mc)mc.textContent=`${magics.length}`;
   const list=document.getElementById('pref-holder-list');if(!list)return;
-  const shown=(prefCurrentHolderTab==='unit'?units:magics).filter(inst=>{const c=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);return String(c?.name||'').toLocaleLowerCase('ja').includes(prefHolderSearch.toLocaleLowerCase('ja'));});
+  const shown=(prefCurrentHolderTab==='unit'?units:magics).filter(inst=>{const c=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);return normalizeCardSearchText(c?.name||'').includes(normalizeCardSearchText(prefHolderSearch));});
   list.innerHTML=shown.map(inst=>{
     const card=prefCardForInstance(inst.id);const extra=prefCurrentHolderTab==='unit'?`<div class="mt-1 text-[10px] font-bold text-emerald-300">価値 ${prefFormatMoney(prefCardValue(card))}</div><div class="text-[9px] text-slate-500">残り${Math.max(0,(inst.expiresAtAbs||prefAbsTurn()+PREF_CARD_LIFETIME)-prefAbsTurn())}ターン</div>`:`<div class="mt-1 text-[10px] font-bold text-emerald-300">価値 ${prefFormatMoney(prefCardValue(card))}</div>`;
     return `<div class="rounded-xl border border-slate-800 bg-slate-900 p-1 sm:p-2">${prefCardDisplay(inst.id,{small:true,extra})}<div class="pref-card-actions"><button data-pref-action="details" data-id="${prefEsc(inst.id)}" class="bg-slate-800 hover:bg-slate-700 text-slate-200">詳細</button><button data-pref-action="list-card" data-id="${prefEsc(inst.id)}" class="bg-emerald-800/90 hover:bg-emerald-700 text-emerald-100">市場へ出品</button></div></div>`;
@@ -562,12 +562,12 @@ function prefRenderMarket() {
   if(!campaignState){prefShowNoGame('pref-market-list');return;}
   const list=document.getElementById('pref-market-list');if(!list)return;
   const input=document.getElementById('pref-market-search');
-  const search=String(input?.value??prefMarketSearch).trim().toLocaleLowerCase('ja');
+  const search=normalizeCardSearchText(String(input?.value??prefMarketSearch).trim());
   prefMarketSearch=search;
   const base=prefMarketListings(prefMarketOwnOnly?null:(prefCurrentMarketTab==='unit'?'unit':'magic'),prefMarketOwnOnly)
     .filter(inst=>{
       const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
-      return !!card&&(!search||String(card.name||'').toLocaleLowerCase('ja').includes(search));
+      return !!card&&(!search||normalizeCardSearchText(card.name||'').includes(search));
     });
   const sortedInstancesForKind=kind=>{
     const prepared=base.filter(inst=>inst.kind===kind).map(inst=>{
@@ -1140,7 +1140,7 @@ async function prefHandleClick(action,id,button) {
     prefShowModal('ターン処理中','47都道府県のAI対戦と決算処理を行っています。二重処理を防ぐため、完了するまでカードの購入・出品・ガチャ利用・コマンド変更はできません。',[{label:'閉じる',action:'close-modal',style:'primary'}]);return;
   }
   if(action==='new-game'){
-    if(campaignState&&!campaignState.gameOver){prefShowModal('新しいゲーム', '現在のゲーム進行データを消去して、最初から開始しますか？<p class="text-xs text-slate-400 mt-2">作成済みカードは削除されません。</p>',[{label:'キャンセル',action:'close-modal'},{label:'初期化して開始',action:'confirm-new-game',style:'danger'}]);}
+    if(campaignState&&!campaignState.gameOver){prefShowModal('最初からやり直す', '現在のゲーム進行データを消去して、新しいゲームを開始しますか？<p class="text-xs text-slate-400 mt-2">所持資金・所有カード・市場・ランキング・戦績・調査結果はリセットされます。作成済みカード、プレイヤー名、ライバルプロフィール設定は削除されません。</p>',[{label:'キャンセル',action:'close-modal'},{label:'初期化して開始',action:'confirm-new-game',style:'danger'}]);}
     else prefCreateNewCampaign();
     if(campaignState){await prefSave();prefSyncCampaignClones();prefRenderAll();switchView('prefecture');}
     return;

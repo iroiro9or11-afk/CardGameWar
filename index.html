@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.6</title>
+  <title>都道府県カード戦争 v1.0.8</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -44,7 +44,6 @@
       #form-magic-card option[value="dmg_atk_ratio"] { display:none; }
     </style>
   <style>
-    #online-status-timer-group { display:none !important; }
     .pref-stat-card {background:linear-gradient(145deg,rgba(15,23,42,.98),rgba(2,6,23,.94));border:1px solid rgba(71,85,105,.65);border-radius:14px;padding:12px;min-width:0}
     .pref-stat-label {font-size:10px;color:#94a3b8;font-weight:800;letter-spacing:.04em}
     .pref-stat-value {font-size:clamp(16px,3.1vw,25px);font-weight:900;color:#f8fafc;line-height:1.25;margin-top:6px;overflow-wrap:anywhere}
@@ -302,7 +301,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.6</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.8</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -336,7 +335,7 @@
         <div id="pref-stats" class="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3"></div>
         <div class="grid grid-cols-1 lg:grid-cols-5 gap-3">
           <div class="lg:col-span-3 rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5">
-            <div class="flex items-center justify-between gap-2 mb-3"><h3 class="font-black text-white">今週のコマンド</h3><span id="pref-command-status" class="text-[10px] font-bold text-slate-400">未選択</span></div>
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-3"><h3 class="font-black text-white">今週のコマンド</h3><div class="flex flex-wrap items-center gap-2"><span id="pref-command-status" class="text-[10px] font-bold text-slate-400">未選択</span><button type="button" data-pref-action="new-game" class="px-3 py-2 rounded-lg border border-rose-500/40 bg-rose-950/50 hover:bg-rose-900/70 text-rose-200 text-[10px] font-black">🔄 最初からやり直す</button></div></div>
             <div id="pref-command-panel" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button data-pref-action="choose-battle" class="rounded-xl border border-rose-500/40 bg-gradient-to-br from-rose-950/80 to-slate-950 p-4 text-left hover:border-rose-300 transition"><div class="text-2xl">⚔️</div><div class="font-black text-rose-200 mt-2">対戦コマンド</div><div class="text-xs text-slate-400 mt-1">カードを選出して代表同士の対戦に参加</div><div id="pref-battle-rule" class="text-[10px] text-rose-300 mt-3">4ターンに1回以上の対戦が必要</div></button>
               <button data-pref-action="choose-investigation" class="rounded-xl border border-cyan-500/40 bg-gradient-to-br from-cyan-950/70 to-slate-950 p-4 text-left hover:border-cyan-300 transition"><div class="text-2xl">🔎</div><div class="font-black text-cyan-200 mt-2">調査コマンド</div><div class="text-xs text-slate-400 mt-1">他の代表のカードや行動傾向を調査</div><div class="text-[10px] text-cyan-300 mt-3">成功率は相手とのランク差で変動</div></button>
@@ -549,7 +548,7 @@
       </div>
     </section>
 
-    <!-- 画像トリミングモーダル (v1.0.6: トリミング時の元画像縮小を修正) -->
+    <!-- 画像トリミングモーダル (v1.0.7: アイコン即時プレビューと条件・検索改善) -->
     <div id="crop-modal" class="fixed inset-0 bg-black/90 z-50 flex flex-col items-center justify-center hidden p-4">
       <div class="bg-slate-900 border border-slate-700 rounded-xl p-4 w-full max-w-sm flex flex-col items-center space-y-4">
         <h3 class="font-bold text-amber-400 text-xs" id="crop-modal-title">画像のトリミング</h3>
@@ -644,38 +643,6 @@
     </div>
 
     <!-- 戦闘準備画面 -->
-    <section id="view-online" class="view-section hidden space-y-4">
-      <div class="flex items-center justify-between gap-2">
-        <div><div class="flex items-center gap-2"><h2 class="text-lg font-bold text-emerald-400 border-l-4 border-emerald-400 pl-2">🌐 オンライン対戦</h2><span id="online-connection-badge" class="text-[10px] px-2 py-1 rounded bg-slate-800 text-slate-400">未接続</span></div><p class="text-[11px] text-slate-400 mt-1">2人対戦・観戦・90秒制限。ゲーム結果はサーバーが管理します。</p></div>
-        <button onclick="leaveOnlineRoom(); switchView('battle-setup')" class="px-3 py-2 bg-slate-700 rounded text-xs font-bold">戻る</button>
-      </div>
-      <div id="online-lobby" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-          <h3 class="font-black text-cyan-300">部屋を作成</h3>
-          <input id="online-room-name" class="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs" placeholder="部屋名" value="カード勝負">
-          <input id="online-room-password" class="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs" placeholder="パスワード（任意）" type="password">
-          <select id="online-room-rule" class="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs">
-            <option value="unlimited">無制限</option><option value="rental">レンタル</option><option value="super_rental">超レンタル</option><option value="random_pot">闇鍋</option><option value="card_exchange">カード交換</option>
-          </select>
-          <label class="flex items-center gap-2 text-xs"><input id="online-allow-spectators" type="checkbox" checked> 観戦を許可</label>
-          <input id="online-max-spectators" class="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs" type="number" min="0" max="50" value="10" placeholder="最大観戦人数">
-          <button id="online-create-room-btn" type="button" onclick="createOnlineRoom()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-black">部屋を作成</button><div id="online-lobby-status" class="text-xs text-slate-400 min-h-[1.25rem]"></div>
-        </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <div class="flex justify-between items-center mb-3"><h3 class="font-black text-amber-300">部屋一覧</h3><button onclick="requestRoomList()" class="px-2 py-1 bg-slate-800 rounded text-[10px]">更新</button></div>
-          <div id="online-room-list" class="space-y-2 max-h-[420px] overflow-auto"><div class="text-xs text-slate-500">接続中...</div></div>
-        </div>
-      </div>
-      <div id="online-room-panel" class="hidden bg-slate-900 border border-emerald-500/40 rounded-xl p-4 space-y-4">
-        <div class="flex flex-wrap justify-between gap-2"><div><div id="online-current-room" class="font-black text-emerald-300"></div><div id="online-current-rule" class="text-xs text-slate-400"></div></div><button onclick="leaveOnlineRoom()" class="px-3 py-2 bg-rose-700 rounded text-xs font-bold">退出</button></div>
-        <div id="online-players" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
-        <div id="online-selection-area" class="space-y-3"></div>
-        <div class="flex flex-wrap gap-2"><button id="online-ready-btn" onclick="toggleOnlineReady()" class="px-5 py-3 bg-emerald-600 rounded-lg font-black">準備完了</button><span id="online-status" class="self-center text-xs text-slate-400"></span></div>
-      </div>
-      <div id="online-pool-area" class="hidden bg-slate-900 border border-purple-500/40 rounded-xl p-4"></div>
-      <div id="online-error" class="hidden bg-rose-950/70 border border-rose-500 text-rose-200 rounded-xl p-3 text-xs"></div>
-    </section>
-
     <section id="view-battle-setup" class="view-section hidden">
       <h2 class="text-lg font-bold mb-4 text-amber-400 border-l-4 border-amber-400 pl-2">対戦設定</h2>
       <div class="bg-slate-900 p-6 rounded-xl border border-slate-800 max-w-3xl mx-auto space-y-6 shadow-xl">
@@ -854,12 +821,7 @@
           </div>
         </div>
       </div>
-
-      <div class="flex justify-end -mt-2 min-h-[1.5rem]" aria-live="polite">
-        <div id="online-battle-timer" class="hidden px-2 py-1 rounded-md border border-emerald-800/70 bg-slate-950/90 text-[11px] font-black text-emerald-300">🌐 残り <span id="online-battle-timer-value">90</span> 秒</div>
-      </div>
-
-      <!-- 相手の公開マジックカード：戦闘ヘッダー直下、敵キャラカードの上に常時表示 -->
+<!-- 相手の公開マジックカード：戦闘ヘッダー直下、敵キャラカードの上に常時表示 -->
       <div id="enemy-magic-public-panel" class="bg-slate-900 p-3 rounded-xl border border-rose-900/70 space-y-2 shadow-xl">
         <div class="flex justify-between items-center">
           <span class="text-xs font-bold text-rose-300">📜 相手の公開マジックカード</span>
@@ -920,7 +882,6 @@
           <span id="magic-reserved-status" class="text-[10px] text-amber-300 font-bold">予約中: なし</span>
         </div>
         <div id="magic-hand-grid" class="grid grid-cols-5 gap-2 sm:gap-3 p-2 min-h-[220px]"></div>
-        <div id="online-magic-targets" class="hidden border-t border-slate-800 pt-2"></div>
       </div>
 
       <!-- 戦闘ログ -->
@@ -1033,6 +994,12 @@
   </main>
 
   <script>
+    // ひらがな・カタカナ・半角カタカナを同一視するカード検索用正規化。
+    // NFKCで半角カタカナ等を正規化し、ひらがなを対応するカタカナへ寄せる。
+    function normalizeCardSearchText(value) {
+      return String(value ?? '').normalize('NFKC').toLocaleLowerCase('ja').replace(/[\u3041-\u3096]/g, ch => String.fromCharCode(ch.charCodeAt(0) + 0x60));
+    }
+
     // Database and State Management
     const DB_NAME = "CardGameDB_v12_Engine";
     const DB_VERSION = 1;
@@ -1059,9 +1026,6 @@
     let editingDeck = { id: null, name: "", unitIds: [], magicIds: [] };
     let editingCardId = null;
     let currentDetailCardId = null;
-    window.__onlineBattleCards = window.__onlineBattleCards || {};
-    // Shared by the offline popup layer so backdrop-tap skipping is disabled during online matches.
-    window.__onlineBattleMode = false;
     let deploymentSelection = { player: { active: [], reserve: [] }, enemy: { active: [], reserve: [] } };
     let storyModeState = null;
     let storyModeDraft = null;
@@ -1362,6 +1326,12 @@
       switch(cond.type) {
         case "hp_ratio_gte": return `${prefix}のHPが${cond.val}%以上`;
         case "hp_ratio_lte": return `${prefix}のHPが${cond.val}%以下`;
+        case "hp_val_gte": return `${prefix}のHPが${cond.val}以上`;
+        case "hp_val_lte": return `${prefix}のHPが${cond.val}以下`;
+        case "atk_val_gte": return `${prefix}の攻撃力が${cond.val}以上`;
+        case "atk_val_lte": return `${prefix}の攻撃力が${cond.val}以下`;
+        case "speed_val_gte": return `${prefix}の行動値が${cond.val}以上`;
+        case "speed_val_lte": return `${prefix}の行動値が${cond.val}以下`;
         case "ap_val_gte": return `自分のAPが${cond.val}以上`;
         case "ap_val_lte": return `自分のAPが${cond.val}以下`;
         case "ally_has_attr": return `味方に[${cond.attr || '炎'}]属性がいる場合`;
@@ -1389,6 +1359,12 @@
         else if (targetCond.type === "attr_not") condStr = `[${targetCond.attr}]属性以外の`;
         else if (targetCond.type === "hp_ratio_gte") condStr = `HP${targetCond.val}%以上の`;
         else if (targetCond.type === "hp_ratio_lte") condStr = `HP${targetCond.val}%以下の`;
+        else if (targetCond.type === "hp_val_gte") condStr = `HP${targetCond.val}以上の`;
+        else if (targetCond.type === "hp_val_lte") condStr = `HP${targetCond.val}以下の`;
+        else if (targetCond.type === "atk_val_gte") condStr = `攻撃力${targetCond.val}以上の`;
+        else if (targetCond.type === "atk_val_lte") condStr = `攻撃力${targetCond.val}以下の`;
+        else if (targetCond.type === "speed_val_gte") condStr = `行動値${targetCond.val}以上の`;
+        else if (targetCond.type === "speed_val_lte") condStr = `行動値${targetCond.val}以下の`;
         else if (targetCond.type === "status_is") condStr = `${statusName(targetCond.status)}状態の`;
         else if (targetCond.type === "any_status") condStr = `状態異常の`;
       }
@@ -1653,78 +1629,17 @@
     // カード画像の互換取得
     // 旧データ(img) / 現行データ(image) / 将来のimageUrl / IndexedDBのBlob・Fileに対応
     const cardImageObjectUrlCache = new WeakMap();
-    // オンラインで受信した相手側カードをローカルカードとは別に保持する。
-    // 同じカード画像を対戦前・戦闘中・ポップアップで共通利用する。
-    window.__onlineBattleCards = window.__onlineBattleCards || {};
-
-    function getOnlinePublicCard(cardId){
-      if(cardId==null)return null;
-      return window.__onlineBattleCards[String(cardId)] || null;
-    }
-    function registerOnlinePublicCard(card){
-      if(!card || !card.id)return;
-      const id=String(card.id);
-      const prev=window.__onlineBattleCards[id] || {};
-      const incomingImage = [card.image,card.img,card.imageUrl].find(v=>typeof v==='string'&&v.length) || null;
-      const metadata={...card,id};
-      // publicBattle snapshots deliberately send image:null to keep packets small.
-      // Never let a metadata-only snapshot erase the image received in battle_assets.
-      delete metadata.image; delete metadata.img; delete metadata.imageUrl;
-      const next={...prev,...metadata,id};
-      const existingImage=[prev.image,prev.img,prev.imageUrl].find(v=>typeof v==='string'&&v.length) || null;
-      const image=incomingImage || existingImage;
-      if(image) next.image=image;
-      else delete next.image;
-      delete next.img; delete next.imageUrl;
-      window.__onlineBattleCards[id]=next;
-    }
-    function mergeOnlinePublicAssets(items){
-      for(const item of (Array.isArray(items)?items:[])){
-        if(!item?.id || !(item.image || item.imageUrl))continue;
-        registerOnlinePublicCard({id:String(item.id),image:item.image||item.imageUrl});
-      }
-      // 出撃設定カードはカード本体と画像アセットが別通信なので、
-      // アセット受信後に現在のdeployment_optionsへも画像を反映する。
-      if(onlineDeckOptions){
-        for(const list of [onlineDeckOptions.units||[],onlineDeckOptions.magics||[]]){
-          for(const card of list){
-            const remote=getOnlinePublicCard(card?.id);
-            if(remote?.image || remote?.imageUrl) Object.assign(card,{image:remote.image||remote.imageUrl});
-          }
-        }
-      }
-      // 画像を受け取った後は現在のカード表示も即時更新する。
-      if(onlineMode && window.battleState && battleState.playerUnits){
-        for(const u of [...(battleState.playerUnits||[]),...(battleState.enemyUnits||[])]){
-          const c=getOnlinePublicCard(u.cardId);
-          if(c?.image)u.image=c.image;
-        }
-        if(Array.isArray(battleState.magicHand)) battleState.magicHand=battleState.magicHand.map(c=>({...c,...(getOnlinePublicCard(c.id)||{})}));
-        if(Array.isArray(battleState.enemyMagicHand)) battleState.enemyMagicHand=battleState.enemyMagicHand.map(c=>({...c,...(getOnlinePublicCard(c.id)||{})}));
-        try{renderBattleState();}catch(e){console.error('online asset rerender error',e);}
-      }
-    }
-
     function getCardImage(card) {
       if (!card) return null;
       const values = [card.image, card.img, card.imageUrl];
       const value = values.find(v => (typeof v === 'string' && v.length > 0) || (typeof Blob !== 'undefined' && v instanceof Blob)) || null;
-      // ローカルカードの画像は、同じIDを持つオンラインキャッシュより優先する。
+      // カード画像は保存されているローカルデータから取得する。
       if (typeof value === 'string' && value) return value;
       if (typeof Blob !== 'undefined' && value instanceof Blob) {
         if (!cardImageObjectUrlCache.has(value)) cardImageObjectUrlCache.set(value, URL.createObjectURL(value));
         return cardImageObjectUrlCache.get(value);
       }
 
-      // オンライン公開カードは、ローカル画像が存在しない場合のみフォールバックに使う。
-      // image:'' や image:null が imageUrl の有効な値を隠さないよう各候補を個別に確認する。
-      const remote = card.id!=null ? getOnlinePublicCard(card.id) : null;
-      const remoteValue = [remote?.image,remote?.img,remote?.imageUrl].find(v => (typeof v === 'string' && v.length > 0) || (typeof Blob !== 'undefined' && v instanceof Blob)) || null;
-      if (typeof remoteValue === 'string' && remoteValue) return remoteValue;
-      if (typeof Blob !== 'undefined' && remoteValue instanceof Blob) {
-        if (!cardImageObjectUrlCache.has(remoteValue)) cardImageObjectUrlCache.set(remoteValue, URL.createObjectURL(remoteValue));
-        return cardImageObjectUrlCache.get(remoteValue);
-      }
       return null;
     }
 
@@ -1864,7 +1779,7 @@
       const imgUrl = getCardImage(data);
       const cardIdAttr = data.id ? `data-card-id="${data.id}"` : '';
       const safeName = data.name || '名称未設定';
-      const rankCard = data.id ? ((Array.isArray(allCards) ? allCards.find(c=>String(c.id)===String(data.id)) : null) || getOnlinePublicCard(data.id)) : null;
+      const rankCard = data.id ? (Array.isArray(allCards) ? allCards.find(c=>String(c.id)===String(data.id)) : null) : null;
       const rankValue = Number(data.rank ?? data.stats?.rank ?? rankCard?.rank ?? 1);
       const rankStars = Math.max(1, Math.min(5, Math.round(Number.isFinite(rankValue) ? rankValue : 1)));
       if (data.cardType === "magic") {
@@ -2004,6 +1919,7 @@
                 <option value="none">条件なし</option>
                 <option value="hp_ratio_gte">自分のHPが○％以上</option>
                 <option value="hp_ratio_lte">自分のHPが○％以下</option>
+                ${!isMagic ? `<option value="hp_val_gte">自分のHPが○以上</option><option value="hp_val_lte">自分のHPが○以下</option><option value="atk_val_gte">自分の攻撃力が○以上</option><option value="atk_val_lte">自分の攻撃力が○以下</option><option value="speed_val_gte">自分の行動値が○以上</option><option value="speed_val_lte">自分の行動値が○以下</option>` : ''}
                 <option value="ap_val_gte">自分のAPが○以上</option>
                 <option value="ap_val_lte">自分のAPが○以下</option>
                 <option value="ally_has_attr">味方に◯属性がいる場合</option>
@@ -2051,6 +1967,12 @@
                   <option value="none">条件なし</option>
                   <option value="hp_ratio_gte">対象のHPが○％以上</option>
                   <option value="hp_ratio_lte">対象のHPが○％以下</option>
+                  <option value="hp_val_gte">対象のHPが○以上</option>
+                  <option value="hp_val_lte">対象のHPが○以下</option>
+                  <option value="atk_val_gte">対象の攻撃力が○以上</option>
+                  <option value="atk_val_lte">対象の攻撃力が○以下</option>
+                  <option value="speed_val_gte">対象の行動値が○以上</option>
+                  <option value="speed_val_lte">対象の行動値が○以下</option>
                   <option value="attr_is">対象が◯属性</option>
                   <option value="attr_not">対象が◯属性以外</option>
                   <option value="status_is">対象が(状態異常)</option>
@@ -2059,7 +1981,7 @@
               </div>
             </div>
             <div class="grid grid-cols-3 gap-1">
-              <input type="number" class="${prefix}-target-cond-val bg-slate-950 border border-slate-700 rounded px-1 text-[10px]" value="50" placeholder="HP%" oninput="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">
+              <input type="number" class="${prefix}-target-cond-val bg-slate-950 border border-slate-700 rounded px-1 text-[10px]" value="50" placeholder="数値/HP％" oninput="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">
               <input type="text" list="registered-attributes-list" class="${prefix}-target-cond-attr bg-slate-950 border border-slate-700 rounded px-1 text-[10px]" value="炎" placeholder="属性名" oninput="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">
               <select class="${prefix}-target-cond-status bg-slate-800 text-[10px] rounded" onchange="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">${statusOptions()}</select>
             </div>
@@ -2152,11 +2074,11 @@
                 <div>
                   <span class="text-[8px] text-slate-400">追加効果の対象条件:</span>
                   <select class="${prefix}-sub-target-cond-type bg-slate-800 text-[10px] rounded w-full" onchange="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">
-                    <option value="none">条件なし</option><option value="hp_ratio_gte">対象のHPが○％以上</option><option value="hp_ratio_lte">対象のHPが○％以下</option><option value="attr_is">対象が◯属性</option><option value="attr_not">対象が◯属性以外</option><option value="status_is">対象が(状態異常)</option><option value="any_status">対象が状態異常</option>
+                    <option value="none">条件なし</option><option value="hp_ratio_gte">対象のHPが○％以上</option><option value="hp_ratio_lte">対象のHPが○％以下</option><option value="hp_val_gte">対象のHPが○以上</option><option value="hp_val_lte">対象のHPが○以下</option><option value="atk_val_gte">対象の攻撃力が○以上</option><option value="atk_val_lte">対象の攻撃力が○以下</option><option value="speed_val_gte">対象の行動値が○以上</option><option value="speed_val_lte">対象の行動値が○以下</option><option value="attr_is">対象が◯属性</option><option value="attr_not">対象が◯属性以外</option><option value="status_is">対象が(状態異常)</option><option value="any_status">対象が状態異常</option>
                   </select>
                 </div>
                 <div class="grid grid-cols-3 gap-1">
-                  <input type="number" class="${prefix}-sub-target-cond-val bg-slate-950 border border-slate-700 rounded px-1 text-[10px]" value="50" placeholder="HP%" oninput="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">
+                  <input type="number" class="${prefix}-sub-target-cond-val bg-slate-950 border border-slate-700 rounded px-1 text-[10px]" value="50" placeholder="数値/HP％" oninput="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">
                   <input type="text" list="registered-attributes-list" class="${prefix}-sub-target-cond-attr bg-slate-950 border border-slate-700 rounded px-1 text-[10px]" value="炎" placeholder="属性名" oninput="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">
                   <select class="${prefix}-sub-target-cond-status bg-slate-800 text-[10px] rounded" onchange="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">${statusOptions()}</select>
                 </div>
@@ -2462,7 +2384,7 @@
       });
     }
 
-    function applyCrop() {
+    async function applyCrop() {
       const isSquare = currentCropTargetType === 'player' || currentCropTargetType === 'rival';
       // 出力比率を表示枠と一致させる。カードのobject-coverで二重に切り取られない。
       const outW = isSquare ? 200 : 600;
@@ -2478,12 +2400,18 @@
       if (currentCropTargetType === 'unit') croppedImageData.unit = url;
       else if (currentCropTargetType === 'magic') croppedImageData.magic = url;
       else if (currentCropTargetType === 'player') {
+        croppedImageData.player = url;
         playerIcon = url;
-        saveToStore('settings', { key: 'player_icon', value: playerIcon }).catch(() => {});
+        // アイコン適用時点で即時にプレビューと永続保存を更新する。
         updatePlayerProfileDisplay();
+        try { await saveToStore('settings', { key: 'player_icon', value: playerIcon }); }
+        catch (error) { console.error('プレイヤーアイコンの保存に失敗しました', error); alert('アイコンを表示しましたが、保存に失敗しました。もう一度お試しください。'); }
       } else if (currentCropTargetType === 'rival') {
+        croppedImageData.rival = url;
         tempRivalIcon = url;
         setRivalIconPreview(url);
+        // 編集中のライバルが対戦相手として選択済みなら、保存前でも表示に即時反映する。
+        if (editingRivalId && String(document.getElementById('select-rival-preset')?.value || '') === String(editingRivalId)) setRivalSetupIcon(url);
       }
       document.getElementById('crop-modal').classList.add('hidden');
       updatePreview();
@@ -2713,8 +2641,8 @@
 
     function renderDeckList() {
       const list = document.getElementById("deck-card-list"); list.innerHTML = "";
-      const query = String(document.getElementById('deck-card-search')?.value || '').trim().toLocaleLowerCase('ja');
-      const source = allCards.filter(c => (c.cardType || "unit") === activeDeckFilter && (!query || String(c.name || '').toLocaleLowerCase('ja').includes(query)));
+      const query = normalizeCardSearchText(String(document.getElementById('deck-card-search')?.value || '').trim());
+      const source = allCards.filter(c => (c.cardType || "unit") === activeDeckFilter && (!query || normalizeCardSearchText(c.name || '').includes(query)));
       const cards = filterAndSortCardBrowserItems(source, `deck-list-${activeDeckFilter}`);
       if (!cards.length) {
         list.innerHTML = `<div class="col-span-5 bg-slate-900 border border-slate-800 rounded p-4 text-xs text-slate-400">条件に一致するカードがありません。並べ替え・絞り込み設定から「すべて表示」を選択してください。</div>`;
@@ -2734,9 +2662,7 @@
 
     function openCardDetail(cardId, options = {}) {
       const readOnly = !!(options && options.readOnly);
-      // 詳細表示はカード一覧・デッキ編成では編集/削除を表示し、
-      // 戦闘中だけ編集/削除を隠す。オンライン状態の変数はここで参照しない。
-      // （onlineMode はオンラインIIFE内の変数なので、ここから参照するとReferenceErrorになる。）
+      // カード一覧・デッキ編成では編集／削除を表示し、戦闘中は隠す。
       const battleView = document.getElementById("view-battle");
       const battleLocked = !!(battleView && !battleView.classList.contains("hidden"));
       if (!battleLocked && !readOnly) {
@@ -2746,7 +2672,7 @@
         document.getElementById("btn-edit-card")?.classList.add("hidden");
         document.getElementById("btn-delete-card")?.classList.add("hidden");
       }
-      const card = allCards.find(c => String(c.id) === String(cardId)) || window.__onlineBattleCards?.[String(cardId)]; if (!card) return;
+      const card = allCards.find(c => String(c.id) === String(cardId)); if (!card) return;
       currentDetailCardId = card.id;
       document.getElementById("detail-card-title").innerText = card.name;
       document.getElementById("detail-card-type").innerText = card.cardType === "magic" ? "マジック" : "キャラクター";
@@ -2870,7 +2796,7 @@
     function openBattleUnitDetail(instanceId) {
       const unit = battleState?.playerUnits?.concat(battleState.enemyUnits || []).find(u => u.instanceId === instanceId);
       if (!unit) return;
-      const base = allCards.find(c => String(c.id) === String(unit.cardId)) || window.__onlineBattleCards?.[String(unit.cardId)] || unit;
+      const base = allCards.find(c => String(c.id) === String(unit.cardId)) || unit;
       currentDetailCardId = base.id;
       document.getElementById("detail-card-title").innerText = `${unit.name}（戦闘中）`;
       document.getElementById("detail-card-type").innerText = base.cardType === 'magic' ? 'マジック' : 'キャラクター';
@@ -3079,28 +3005,31 @@
       document.getElementById("rival-modal").classList.add("hidden");
     }
 
-    function updatePlayerProfileDisplay() {
-      document.getElementById("setup-player-name-display").innerText = playerName;
-      const setupImg = document.getElementById("setup-player-icon");
-      const setupPh = document.getElementById("setup-player-icon-ph");
-      if (playerIcon) {
-        setupImg.src = playerIcon; setupImg.classList.remove("hidden"); setupPh.classList.add("hidden");
+    function applyIconImage(img, placeholder, src) {
+      if (!img || !placeholder) return;
+      img.onload = () => { img.classList.remove('hidden'); placeholder.classList.add('hidden'); };
+      img.onerror = () => { img.onerror = null; img.removeAttribute('src'); img.classList.add('hidden'); placeholder.classList.remove('hidden'); };
+      if (typeof src === 'string' && src.length) {
+        img.src = src;
+        if (img.complete && img.naturalWidth > 0) { img.classList.remove('hidden'); placeholder.classList.add('hidden'); }
+        else { img.classList.add('hidden'); placeholder.classList.remove('hidden'); }
       } else {
-        setupImg.classList.add("hidden"); setupPh.classList.remove("hidden");
+        img.removeAttribute('src'); img.classList.add('hidden'); placeholder.classList.remove('hidden');
       }
+    }
 
-      const pPrev = document.getElementById("player-icon-preview");
-      const pPh = document.getElementById("player-icon-placeholder");
-      if (pPrev && pPh) {
-        if (playerIcon) { pPrev.src = playerIcon; pPrev.classList.remove("hidden"); pPh.classList.add("hidden"); }
-        else { pPrev.classList.add("hidden"); pPh.classList.remove("hidden"); }
-      }
+    function updatePlayerProfileDisplay() {
+      const nameDisplay = document.getElementById("setup-player-name-display");
+      if (nameDisplay) nameDisplay.innerText = playerName;
+      applyIconImage(document.getElementById("setup-player-icon"), document.getElementById("setup-player-icon-ph"), playerIcon);
+      applyIconImage(document.getElementById("player-icon-preview"), document.getElementById("player-icon-placeholder"), playerIcon);
     }
 
     async function savePlayerProfile() {
       playerName = document.getElementById("input-player-name").value.trim() || "あなた";
       await saveToStore("settings", { key: "player_name", value: playerName });
       if (playerIcon) await saveToStore("settings", { key: "player_icon", value: playerIcon });
+      else await deleteFromStore("settings", "player_icon");
       updatePlayerProfileDisplay();
       if (typeof campaignState !== 'undefined' && campaignState?.regions?.['京都府']) {
         campaignState.regions['京都府'].repName = playerName;
@@ -3135,7 +3064,9 @@
     }
     function clearRivalIcon() {
       tempRivalIcon = null;
+      croppedImageData.rival = null;
       setRivalIconPreview(null);
+      if (editingRivalId && String(document.getElementById('select-rival-preset')?.value || '') === String(editingRivalId)) setRivalSetupIcon(null);
       const input = document.getElementById('input-rival-icon-file'); if (input) input.value = '';
     }
     async function saveRival() {
@@ -3144,9 +3075,17 @@
       const cardPreference = document.getElementById("select-rival-card-focus")?.value || "rank-value";
       const intelligence = document.getElementById("select-rival-intelligence")?.value || "normal";
       const existing = editingRivalId ? allRivals.find(r => String(r.id) === String(editingRivalId)) : null;
-      const newRival = { ...(existing || {}), id: existing?.id || generateUniqueId("rival"), name, deckId: existing?.deckId || "", iconImage: tempRivalIcon || null, intelligence, personality, cardPreference };
+      const iconToSave = tempRivalIcon !== undefined ? (tempRivalIcon || null) : (existing?.iconImage || null);
+      const newRival = { ...(existing || {}), id: existing?.id || generateUniqueId("rival"), name, deckId: existing?.deckId || "", iconImage: iconToSave, intelligence, personality, cardPreference };
       await saveToStore("rivals", newRival);
+      // 保存完了後に保存値を再取得し、IndexedDBへ入ったアイコンを画面へ反映する。
       allRivals = await getAllFromStore("rivals");
+      const persistedRival = allRivals.find(r => String(r.id) === String(newRival.id));
+      if (persistedRival && persistedRival.iconImage !== iconToSave) {
+        persistedRival.iconImage = iconToSave;
+        await saveToStore("rivals", persistedRival);
+        allRivals = await getAllFromStore("rivals");
+      }
       if (typeof campaignState !== 'undefined' && campaignState?.regions) {
         const activeRegion = Object.values(campaignState.regions).find(region => String(region.profileRivalId || '') === String(newRival.id));
         if (activeRegion) {
@@ -3170,6 +3109,7 @@
       if (selectedPreset && findRivalById(newRival.id)) {
         selectedPreset.value = String(newRival.id);
         applyRivalPreset();
+        setRivalSetupIcon(findRivalById(newRival.id)?.iconImage || null);
       }
       if (storyModeState && !document.getElementById('view-story')?.classList.contains('hidden')) renderStoryMode();
       resetRivalForm();
@@ -3314,7 +3254,7 @@
     // ===== ストーリーモード =====
     // 5戦の順番制ストーリーモード。旧32人トーナメント状態も安全に移行する。
     function storyShuffle(arr){const a=[...(arr||[])];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
-    // このブロックは最初のscript内。オンライン用IIFE内の esc() は参照できないので、
+    // このブロックは最初のscript内の独立した描画処理。
     // ストーリー専用のエスケープ関数を同じスコープに定義する。
     function storyEscapeHtml(value){return String(value??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));}
     async function saveStoryModeState(){if(!storyModeState){await deleteFromStore('settings','story_mode_state');return;}await saveToStore('settings',{key:'story_mode_state',value:storyModeState});}
@@ -4504,7 +4444,7 @@
       if (targetType === 'select_enemy_1' || targetType === 'random_enemy_1' || targetType === 'all_enemy') return enemies;
       if (targetType === 'select_ally_1' || targetType === 'random_ally_1' || targetType === 'all_ally') return allies;
       if (targetType === 'all_field' || targetType === 'random_all_1') {
-        // Online targetPool() is field-only too; living reserve units are never eligible until deployed.
+        // 生存中の控えは、フィールドへ登場するまでは対象にできない。
         return [...getActiveUnits('player'), ...getActiveUnits('enemy')].filter(u => u.currentHp > 0);
       }
       return [];
@@ -4519,6 +4459,12 @@
       if (targetCond.type === 'hp_ratio_lte') {
         return target.maxHp > 0 && (target.currentHp / target.maxHp) * 100 <= targetCond.val;
       }
+      if (targetCond.type === "hp_val_gte") return Number(target.currentHp) >= Number(targetCond.val);
+      if (targetCond.type === "hp_val_lte") return Number(target.currentHp) <= Number(targetCond.val);
+      if (targetCond.type === "atk_val_gte") return getEffectiveAtk(target) >= Number(targetCond.val);
+      if (targetCond.type === "atk_val_lte") return getEffectiveAtk(target) <= Number(targetCond.val);
+      if (targetCond.type === "speed_val_gte") return getEffectiveSpeed(target) >= Number(targetCond.val);
+      if (targetCond.type === "speed_val_lte") return getEffectiveSpeed(target) <= Number(targetCond.val);
       if (targetCond.type === 'attr_is') {
         return target.mainAttr === targetCond.attr || (target.subAttrs || []).includes(targetCond.attr);
       }
@@ -4779,6 +4725,12 @@
       const ap = actor.side === 'player' ? state.playerAp : state.enemyAp;
       if (cond.type === 'hp_ratio_gte') return actor.maxHp > 0 && actor.currentHp / actor.maxHp * 100 >= Number(cond.val);
       if (cond.type === 'hp_ratio_lte') return actor.maxHp > 0 && actor.currentHp / actor.maxHp * 100 <= Number(cond.val);
+      if (cond.type === 'hp_val_gte') return Number(actor.currentHp) >= Number(cond.val);
+      if (cond.type === 'hp_val_lte') return Number(actor.currentHp) <= Number(cond.val);
+      if (cond.type === 'atk_val_gte') return aiPlannerEffectiveAtk(actor) >= Number(cond.val);
+      if (cond.type === 'atk_val_lte') return aiPlannerEffectiveAtk(actor) <= Number(cond.val);
+      if (cond.type === 'speed_val_gte') return aiPlannerEffectiveSpeed(actor) >= Number(cond.val);
+      if (cond.type === 'speed_val_lte') return aiPlannerEffectiveSpeed(actor) <= Number(cond.val);
       if (cond.type === 'ap_val_gte') return ap >= Number(cond.val);
       if (cond.type === 'ap_val_lte') return ap <= Number(cond.val);
       if (cond.type === 'ally_has_attr') return allies.some(u => u !== actor && (u.mainAttr === cond.attr || (u.subAttrs || []).includes(cond.attr)));
@@ -4801,6 +4753,12 @@
       if (!cond || cond.type === 'none') return true;
       if (cond.type === 'hp_ratio_gte') return target.maxHp > 0 && target.currentHp / target.maxHp * 100 >= Number(cond.val);
       if (cond.type === 'hp_ratio_lte') return target.maxHp > 0 && target.currentHp / target.maxHp * 100 <= Number(cond.val);
+      if (cond.type === 'hp_val_gte') return Number(target.currentHp) >= Number(cond.val);
+      if (cond.type === 'hp_val_lte') return Number(target.currentHp) <= Number(cond.val);
+      if (cond.type === 'atk_val_gte') return aiPlannerEffectiveAtk(target) >= Number(cond.val);
+      if (cond.type === 'atk_val_lte') return aiPlannerEffectiveAtk(target) <= Number(cond.val);
+      if (cond.type === 'speed_val_gte') return aiPlannerEffectiveSpeed(target) >= Number(cond.val);
+      if (cond.type === 'speed_val_lte') return aiPlannerEffectiveSpeed(target) <= Number(cond.val);
       if (cond.type === 'attr_is') return target.mainAttr === cond.attr || (target.subAttrs || []).includes(cond.attr);
       if (cond.type === 'attr_not') return !(target.mainAttr === cond.attr || (target.subAttrs || []).includes(cond.attr));
       if (cond.type === 'status_is') return aiPlannerHasStatus(target, cond.status);
@@ -6096,8 +6054,14 @@
       const allies = isPlayer ? getActiveUnits('player') : getActiveUnits('enemy');
       const enemies = isPlayer ? getActiveUnits('enemy') : getActiveUnits('player');
 
-      if (cond.type === "hp_ratio_gte") return (actor.currentHp / actor.maxHp) * 100 >= cond.val;
-      if (cond.type === "hp_ratio_lte") return (actor.currentHp / actor.maxHp) * 100 <= cond.val;
+      if (cond.type === "hp_ratio_gte") return actor.maxHp > 0 && (actor.currentHp / actor.maxHp) * 100 >= Number(cond.val);
+      if (cond.type === "hp_ratio_lte") return actor.maxHp > 0 && (actor.currentHp / actor.maxHp) * 100 <= Number(cond.val);
+      if (cond.type === "hp_val_gte") return Number(actor.currentHp) >= Number(cond.val);
+      if (cond.type === "hp_val_lte") return Number(actor.currentHp) <= Number(cond.val);
+      if (cond.type === "atk_val_gte") return getEffectiveAtk(actor) >= Number(cond.val);
+      if (cond.type === "atk_val_lte") return getEffectiveAtk(actor) <= Number(cond.val);
+      if (cond.type === "speed_val_gte") return getEffectiveSpeed(actor) >= Number(cond.val);
+      if (cond.type === "speed_val_lte") return getEffectiveSpeed(actor) <= Number(cond.val);
       if (cond.type === "ap_val_gte") return (isPlayer ? battleState.playerAp : battleState.enemyAp) >= cond.val;
       if (cond.type === "ap_val_lte") return (isPlayer ? battleState.playerAp : battleState.enemyAp) <= cond.val;
 
@@ -6145,7 +6109,7 @@
       (unit.buffs || []).forEach(b => { if (b.type === 'speed') spd += b.val; });
       (unit.debuffs || []).forEach(b => { if (b.type === 'speed') spd += b.val; });
       // 状態異常の鈍足は buffs/debuffs ではなく statuses に格納される。
-      // オンライン（サーバー側）と同じく、継続中の鈍足だけ行動値を半減する。
+      // 継続中の鈍足だけ行動値を半減する。
       const slow = (unit.statuses || []).some(s => s.type === 'slow' && durationActive(s.duration));
       return slow ? Math.floor(spd / 2) : spd;
     }
@@ -6337,9 +6301,8 @@
       if (!modal) return;
       const startedAt = Date.now();
 
-      // ポップアップはオンライン戦闘のイベント処理をブロックする重要な演出。
       // 詳細UIの一部で例外が起きても「演出なし→即次ターン」にならないよう、
-      // 最低5秒は必ず表示する。
+      // ポップアップは最低5秒表示する。
       modal.classList.remove("hidden");
       const popupKind = document.getElementById("popup-title");
       if (popupKind) popupKind.innerText = cardData?.cardType === 'magic' ? 'MAGIC CARD' : 'ACTION';
@@ -6423,8 +6386,7 @@
             const hpAfter=detail.hpAfter||{current:entity.currentHp,max:entity.maxHp};
             const dead=Number(hpAfter?.current??entity.currentHp??1)<=0;img.classList.toggle('popup-dead-image',dead);
             img.onerror=()=>{img.onerror=null;img.src=createDummyCardImage(isPlayerTarget?'👤':'👹',isPlayerTarget?'#075985':'#9f1239');};
-            const publicTargetCard=entity.cardId?getOnlinePublicCard(entity.cardId):null;
-            img.src=entity.image||entity.iconImage||getCardImage(publicTargetCard)||getCardImage(entity)||createDummyCardImage(isPlayerTarget?'👤':'👹',isPlayerTarget?'#075985':'#9f1239');imgBox.appendChild(img);card.appendChild(imgBox);
+            img.src=entity.image||entity.iconImage||getCardImage(entity)||createDummyCardImage(isPlayerTarget?'👤':'👹',isPlayerTarget?'#075985':'#9f1239');imgBox.appendChild(img);card.appendChild(imgBox);
             const name=document.createElement('div');name.className=`mt-1 text-[10px] sm:text-xs font-black break-words ${isPlayerTarget?'text-cyan-200':'text-rose-200'}`;name.textContent=entity.name||`対象${index+1}`;card.appendChild(name);
             const hp=document.createElement('div');hp.className='text-[9px] leading-tight text-slate-200 mt-1';
             const before=detail.hpBefore;hp.textContent=hpAfter?.max>0?`${before&&before.current!=null?`${before.current}/${before.max} → `:''}${hpAfter.current}/${hpAfter.max}`:'HP —';card.appendChild(hp);
@@ -6460,9 +6422,8 @@
 
       // 詳細処理が失敗しても、イベント1件につき最低5秒は画面を保持する。
       // オフラインでは背景（ポップアップ本体の外側）をタップすると、この待機だけを早送りして次のキューへ進む。
-      // オンラインではサーバーイベント順序を守るため、タップによる早送りは許可しない。
       const remaining=Math.max(0,5000-(Date.now()-startedAt));
-      if(remaining) await waitForActionPopupDisplay(remaining, window.__onlineBattleMode !== true);
+      if(remaining) await waitForActionPopupDisplay(remaining, true);
       modal.classList.add("hidden");
     }
 
@@ -6484,13 +6445,11 @@
     }
 
     // Overlayそのものがクリックされた場合だけ早送りする。ポップアップ内容やカードの操作は妨げない。
-    // オンラインはイベント順序と両クライアントの同期を優先するため、背景タップでは閉じない。
     const actionPopupModalForAdvance = document.getElementById('action-popup-modal');
     if (actionPopupModalForAdvance && !actionPopupModalForAdvance.dataset.offlineAdvanceBound) {
       actionPopupModalForAdvance.dataset.offlineAdvanceBound = 'true';
       actionPopupModalForAdvance.addEventListener('click', event => {
         if (event.target !== actionPopupModalForAdvance) return;
-        if (window.__onlineBattleMode === true) return;
         if (typeof actionPopupDismissResolver === 'function') actionPopupDismissResolver();
       });
     }
@@ -6512,1319 +6471,6 @@
   </script>
   <script src="prefecture-game.js"></script>
 
-  <div id="online-status-timer-group" class="fixed top-20 right-3 z-[80] flex flex-col items-stretch gap-2 max-w-[calc(100vw-1.5rem)]">
-    <div id="online-controls" class="hidden bg-slate-950/95 border border-emerald-500/60 rounded-xl shadow-2xl p-2.5 backdrop-blur min-w-[190px]">
-      <div class="font-black text-emerald-300 text-xs">🌐 オンライン対戦</div>
-      <div id="online-confirmed-status" class="text-[10px] text-slate-400 mt-1">行動を選択して「行動決定」を押してください。</div>
-    </div>
-    <div id="online-timer" title="ドラッグしてオンライン対戦表示と大きいカウントタイマーをまとめて移動" class="hidden self-end px-3 py-2 rounded-xl border border-emerald-500/60 bg-slate-950/95 shadow-2xl backdrop-blur text-2xl font-black text-amber-300 leading-tight cursor-move select-none touch-none">90</div>
-  </div>
 
-<script>
-(function(){
-  const $ = id => document.getElementById(id);
-  const ruleName = {unlimited:'無制限',rental:'レンタル',super_rental:'超レンタル',random_pot:'闇鍋',card_exchange:'カード交換'};
-  const waitForAppReady = async (timeoutMs=10000) => {
-    const until = Date.now() + timeoutMs;
-    while (!window.__cardBattleAppReady && Date.now() < until) await new Promise(r=>setTimeout(r,50));
-    return !!window.__cardBattleAppReady;
-  };
-  // 右上の「オンライン対戦」表示と大きいカウントタイマーを1つのグループとして移動する。小さい戦闘ヘッダー側は対象外。
-  function makeDraggable(el, storageKey, handle=el) {
-    if (!el || !handle || el.dataset.dragBound === '1') return;
-    el.dataset.dragBound = '1';
-    try {
-      const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
-      if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
-        el.style.position = 'fixed'; el.style.left = `${saved.x}px`; el.style.top = `${saved.y}px`;
-        el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.margin = '0'; el.style.zIndex = '80';
-      }
-    } catch {}
-    let drag = null;
-    handle.addEventListener('pointerdown', e => {
-      if (e.button !== 0 || e.target.closest('button, input, select, textarea, a')) return;
-      const r = el.getBoundingClientRect();
-      drag = {dx:e.clientX-r.left, dy:e.clientY-r.top};
-      el.style.position='fixed'; el.style.left=`${r.left}px`; el.style.top=`${r.top}px`;
-      el.style.right='auto'; el.style.bottom='auto'; el.style.margin='0'; el.style.zIndex='80';
-      try { handle.setPointerCapture(e.pointerId); } catch {}
-      e.preventDefault();
-    });
-    handle.addEventListener('pointermove', e => {
-      if (!drag) return;
-      const x=Math.max(0,Math.min(window.innerWidth-el.offsetWidth,e.clientX-drag.dx));
-      const y=Math.max(0,Math.min(window.innerHeight-el.offsetHeight,e.clientY-drag.dy));
-      el.style.left=`${x}px`; el.style.top=`${y}px`;
-    });
-    const finish = () => {
-      if (!drag) return; drag=null;
-      const r=el.getBoundingClientRect();
-      try { localStorage.setItem(storageKey,JSON.stringify({x:r.left,y:r.top})); } catch {}
-    };
-    handle.addEventListener('pointerup',finish); handle.addEventListener('pointercancel',finish);
-  }
-  makeDraggable(document.getElementById('online-status-timer-group'),'cardBattle.onlineStatusAndLargeTimerPosition.v3293');
-
-  let onlineWS = null;
-  let onlineAuthenticated = false;
-  let onlineConnectionState = 'disconnected';
-  let onlineReconnectTimer = null;
-  let onlineReconnectDelay = 1000;
-  let onlineCreateInFlight = false;
-  let onlineCreateWatchdog = null;
-  let onlineAssetsReady = false;
-  let onlineAssetsSyncing = false;
-  let onlineSessionId = localStorage.getItem('cardBattleOnlineSession') || null;
-  let onlineRoom = null;
-  let onlineSlot = null;
-  let onlineReady = false;
-  let onlineSpectating = false;
-  let onlinePool = null;
-  let onlineRentalDecks = [];
-  let onlineExchangeSelected = [];
-  let onlineExchangeFilter = 'all';
-  let onlineExchangeSearch = '';
-  let onlineExchangeSubmitted = false;
-  let onlineExchangePending = null;
-  let onlineExchangeDecisionLocked = false;
-  let onlineExchangeReceivedCount = 0;
-  let onlineExchangeReceivedCards = [];
-  let onlineExchangeOpponentSubmitted = false;
-  let onlineDeckList = [];
-  let onlineDeckOptions = null;
-  let onlineSelection = null;
-  let onlineDeckRequestId = null;
-  let onlineDeckRequestTimer = null;
-  let onlineUiToken = 0;
-  let onlineTimerHandle = null;
-  let onlineDeadline = 0;
-  let onlineTimerEndMonotonic = 0;
-  let onlineSubmitted = false;
-  let onlineLastTurn = 0;
-  let onlineLastDecisionToken = null;
-  let onlinePrepareMarker = null;
-  let onlinePrepareAckToken = null;
-  let onlinePrepareWatchdog = null;
-  let onlineLastState = null;
-  let onlineEventQueue = [];
-  let onlineEventProcessing = false;
-  let onlineDeferredState = null;
-  let onlineDeferredEnd = null;
-  let onlineRematchRequested = false;
-
-  var onlineMode = false;
-  var onlinePending = {units:{},magicId:null};
-  var onlineSelectedUnitId = null;
-
-  const onlineSendQueue = [];
-
-  function updateConnectionBadge(state, textLabel=null){
-    onlineConnectionState = state;
-    const el = $('online-connection-badge');
-    if (!el) return;
-    const labels = {connecting:'接続中…',connected:'接続済み',disconnected:'未接続',error:'接続エラー'};
-    el.innerText = textLabel || labels[state] || state;
-    el.className = 'text-[10px] px-2 py-1 rounded ' + (
-      state==='connected' ? 'bg-emerald-900/60 text-emerald-300' :
-      state==='connecting' ? 'bg-amber-900/60 text-amber-300' :
-      state==='error' ? 'bg-rose-900/60 text-rose-300' :
-      'bg-slate-800 text-slate-400'
-    );
-  }
-  function setOnlineStatus(text){ const msg=text||''; if ($('online-status')) $('online-status').innerText=msg; if ($('online-lobby-status')) $('online-lobby-status').innerText=msg; }
-  function ensureOnlineSession(){
-    if (!onlineSessionId) {
-      onlineSessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-      localStorage.setItem('cardBattleOnlineSession', onlineSessionId);
-    }
-    return onlineSessionId;
-  }
-  function serverUrl(){
-    if (window.CARD_AI_ONLINE_SERVER_URL) return String(window.CARD_AI_ONLINE_SERVER_URL).replace(/\/$/,'');
-    if (location.protocol === 'https:') return 'wss://' + location.host;
-    if (location.protocol === 'http:') return 'ws://' + location.host;
-    return null;
-  }
-
-  function showOnlineError(msg){
-    const e = $('online-error');
-    if (e) { e.innerText = msg; e.classList.remove('hidden'); setTimeout(()=>e.classList.add('hidden'),6000); }
-    setOnlineStatus(msg);
-  }
-  function rawSend(type,payload={}){
-    if (!onlineWS || onlineWS.readyState !== WebSocket.OPEN) return false;
-    try { onlineWS.send(JSON.stringify({type,...payload})); return true; } catch { return false; }
-  }
-  function sendOnline(type,payload={}, options={}){
-    ensureOnlineSession();
-    const item={type,payload,critical:options.critical!==false,createdAt:Date.now()};
-    if (onlineAuthenticated && onlineWS?.readyState===WebSocket.OPEN) return rawSend(type,payload);
-    onlineSendQueue.push(item);
-    connectOnline();
-    return false;
-  }
-  function flushOnlineQueue(){
-    if (!onlineAuthenticated || !onlineWS || onlineWS.readyState!==WebSocket.OPEN) return;
-    while (onlineSendQueue.length) {
-      const item=onlineSendQueue.shift();
-      if (!item) continue;
-      rawSend(item.type,item.payload);
-    }
-  }
-  function stripCard(c){
-    if(!c)return null;
-    const x=JSON.parse(JSON.stringify(c,(k,v)=>{
-      if((k==='image'||k==='img'||k==='imageUrl')&&typeof v!=='string')return undefined;
-      return v;
-    }));
-    if(typeof c.image==='string')x.image=c.image;
-    else if(typeof c.img==='string')x.image=c.img;
-    if(typeof c.imageUrl==='string')x.imageUrl=c.imageUrl;
-    return x;
-  }
-  function cardImageSource(c){ for(const value of [c?.image,c?.img,c?.imageUrl]) if((typeof value==='string'&&value.length>0)||(typeof Blob!=='undefined'&&value instanceof Blob)) return value; return null; }
-  function hasTransportableImage(c){
-    const value=cardImageSource(c);
-    return (typeof value==='string' && value.length>0) || (typeof Blob!=='undefined' && value instanceof Blob);
-  }
-  async function imageValueForTransport(value){
-    if(typeof value==='string' && value.length) return value;
-    if(typeof Blob!=='undefined' && value instanceof Blob){
-      try{
-        return await new Promise(resolve=>{
-          const reader=new FileReader();
-          reader.onload=()=>resolve(typeof reader.result==='string'&&reader.result?reader.result:null);
-          reader.onerror=()=>resolve(null);
-          reader.readAsDataURL(value);
-        });
-      }catch(_){ return null; }
-    }
-    return null;
-  }
-  function transportCard(c){
-    if(!c)return null;
-    const x=stripCard(c);
-    if(!x)return null;
-    // 画像は別メッセージで分割送信する。カード本体には巨大なbase64画像を含めない。
-    delete x.image;
-    delete x.img;
-    delete x.imageUrl;
-    return x;
-  }
-  function onlineProfilePayload(){
-    return {name:playerName,cards:(allCards||[]).map(transportCard).filter(Boolean),decks:allDecks||[],assetIds:(allCards||[]).filter(hasTransportableImage).map(c=>String(c.id)).filter(Boolean)};
-  }
-  async function buildCardAssetBatches(){
-    const assets=[]; const MAX_BATCH_BYTES=256*1024;
-    let batch=[]; let size=2;
-    for(const c of (allCards||[])){
-      const image=await imageValueForTransport(cardImageSource(c));
-      if(!image)continue;
-      const item={id:String(c.id),image};
-      const itemSize=JSON.stringify(item).length;
-      if(batch.length && size+itemSize+32>MAX_BATCH_BYTES){assets.push(batch);batch=[];size=2;}
-      batch.push(item);size+=itemSize+1;
-    }
-    if(batch.length)assets.push(batch);
-    return assets;
-  }
-  let onlineAssetSyncGeneration=0;
-  async function sendCardAssets(){
-    if(!onlineAuthenticated||!onlineWS||onlineWS.readyState!==WebSocket.OPEN||onlineAssetsSyncing)return;
-    const wsAtStart=onlineWS;
-    const generation=++onlineAssetSyncGeneration;
-    onlineAssetsSyncing=true;onlineAssetsReady=false;
-    const batches=await buildCardAssetBatches();
-    if(generation!==onlineAssetSyncGeneration||wsAtStart!==onlineWS||!onlineWS||onlineWS.readyState!==WebSocket.OPEN){onlineAssetsSyncing=false;return;}
-    if(batches.length===0){
-      const imageExpected=(allCards||[]).some(hasTransportableImage);
-      onlineAssetsSyncing=false;onlineAssetsReady=!imageExpected;
-      if(onlineAssetsReady){setOnlineStatus(onlineRoom?'画像同期対象のカードはありません。':'オンライン接続済み。');if(onlineRoom?.rule==='card_exchange')renderCardExchangeSelection();}
-      else showOnlineError('カード画像を送信用データに変換できませんでした。画像形式を確認して再接続してください。');
-      return;
-    }
-    let index=0;
-    const sendNext=()=>{
-      if(generation!==onlineAssetSyncGeneration||wsAtStart!==onlineWS||!onlineAuthenticated||!onlineWS||onlineWS.readyState!==WebSocket.OPEN)return;
-      if(index>=batches.length){onlineAssetsSyncing=false;return;}
-      const batchNo=index;
-      const sent=rawSend('profile_assets',{assets:batches[index],batch:batchNo,total:batches.length});
-      if(sent)index++;
-    };
-    window.__cardBattleAssetNext=sendNext;
-    sendNext();
-  }
-
-  async function syncProfileAfterHello(){
-    const ready = await waitForAppReady();
-    if (!ready) { showOnlineError('カードデータの読み込みが完了していないため、オンライン同期を待っています。'); return; }
-    if (onlineAuthenticated) {
-      onlineAssetsReady=!onlineRoom;
-      rawSend('profile_sync',{cards:(allCards||[]).map(transportCard).filter(Boolean),decks:allDecks||[],name:playerName,assetIds:(allCards||[]).filter(hasTransportableImage).map(c=>String(c.id)).filter(Boolean)});
-      // 画像は部屋作成/入室/復帰後にだけ同期する。
-      // ロビー接続時に全画像を先送りすると、部屋作成要求が画像通信の後ろで待たされるため。
-      if (onlineRoom) sendCardAssets();
-    }
-  }
-
-  function connectOnline(){
-    const url=serverUrl();
-    if(!url){
-      updateConnectionBadge('error','サーバーURLなし');
-      showOnlineError('オンライン対戦はゲームをWebサーバーから開いてください。HTMLファイルを直接開く場合はオンライン接続できません。');
-      return;
-    }
-    if (onlineWS && (onlineWS.readyState===WebSocket.OPEN || onlineWS.readyState===WebSocket.CONNECTING)) return;
-    clearTimeout(onlineReconnectTimer);
-    updateConnectionBadge('connecting');
-    setOnlineStatus('オンラインサーバーへ接続中…');
-    try { onlineWS=new WebSocket(url); } catch(e){ updateConnectionBadge('error'); showOnlineError('WebSocket接続を開始できませんでした。'); return; }
-    onlineAuthenticated=false;
-    onlineWS.onopen=()=>{
-      onlineReconnectDelay=1000;
-      updateConnectionBadge('connected');
-      setOnlineStatus('サーバー接続済み。認証中…');
-      rawSend('hello',{sessionId:ensureOnlineSession(),name:playerName});
-    };
-    onlineWS.onmessage=e=>{
-      let m; try{m=JSON.parse(e.data)}catch{return;}
-      handleOnlineMessage(m);
-    };
-    onlineWS.onerror=()=>{
-      updateConnectionBadge('error');
-      showOnlineError('オンラインサーバーへ接続できません。サーバーURL・Renderの起動状態・WebSocket接続を確認してください。');
-    };
-    onlineWS.onclose=()=>{
-      onlineAuthenticated=false;
-      onlineAssetsReady=false; onlineAssetsSyncing=false; onlineAssetSyncGeneration++;
-      window.__cardBattleAssetNext=null;
-      if(onlineCreateInFlight) clearTimeout(onlineCreateWatchdog);
-      updateConnectionBadge('disconnected');
-      if (onlineRoom && onlineSessionId) {
-        setOnlineStatus('サーバーから切断されました。再接続を試みています。');
-        clearTimeout(onlineReconnectTimer);
-        onlineReconnectTimer=setTimeout(connectOnline,onlineReconnectDelay);
-        onlineReconnectDelay=Math.min(10000,onlineReconnectDelay*2);
-      } else {
-        setOnlineStatus('サーバー未接続');
-      }
-      onlineWS=null;
-    };
-  }
-
-  function onlineProfileAndReady(){
-    return waitForAppReady(10000).then(ready=>{
-      if(!ready){showOnlineError('カードデータの読み込みが完了していません。ページの読み込み完了後にもう一度実行してください。');return null;}
-      return onlineProfilePayload();
-    });
-  }
-
-  async function createOnlineRoom(){
-    if(onlineCreateInFlight){ setOnlineStatus('すでに部屋作成要求を処理中です。'); return; }
-    try{
-      ensureOnlineSession();
-      onlineCreateInFlight=true;
-      const btn=$('online-create-room-btn'); if(btn){btn.disabled=true;btn.innerText='部屋を作成中…';}
-      setOnlineStatus('カードデータを確認しています…');
-      const profile=await onlineProfileAndReady();
-      if(!profile){ onlineCreateInFlight=false; if(btn){btn.disabled=false;btn.innerText='部屋を作成';} return; }
-      const payload={
-        roomName:$('online-room-name')?.value.trim()||'カード勝負',
-        password:$('online-room-password')?.value||'',
-        rule:$('online-room-rule')?.value||'unlimited',
-        allowSpectators:!!$('online-allow-spectators')?.checked,
-        maxSpectators:Math.max(0,Math.min(50,Number($('online-max-spectators')?.value)||10)),
-        profile
-      };
-      if(!onlineWS || onlineWS.readyState!==WebSocket.OPEN || !onlineAuthenticated){
-        setOnlineStatus('サーバー認証を待っています…');
-        sendOnline('room_create',payload);
-      }else{
-        setOnlineStatus('部屋作成要求を送信しています…');
-        const sent=sendOnline('room_create',payload);
-        if(sent) {
-          setOnlineStatus('部屋作成要求を送信しました。サーバーの応答を待っています…');
-          clearTimeout(onlineCreateWatchdog);
-          onlineCreateWatchdog=setTimeout(()=>{
-            if(!onlineCreateInFlight) return;
-            onlineCreateInFlight=false;
-            const b=$('online-create-room-btn'); if(b){b.disabled=false;b.innerText='部屋を作成';}
-            showOnlineError('部屋作成要求にサーバーから応答がありません。WebSocket通信を再接続します。');
-            try{ if(onlineWS && onlineWS.readyState===WebSocket.OPEN) onlineWS.close(); }catch{}
-          },15000);
-        } else setOnlineStatus('接続復帰後に部屋作成要求を送信します…');
-      }
-    }catch(e){
-      console.error('createOnlineRoom error',e);
-      onlineCreateInFlight=false;
-      const btn=$('online-create-room-btn'); if(btn){btn.disabled=false;btn.innerText='部屋を作成';}
-      showOnlineError('部屋作成処理でエラーが発生しました。ページを再読み込みして再試行してください。');
-    }
-  }
-  window.createOnlineRoom=createOnlineRoom;
-
-  function requestRoomList(){ensureOnlineSession();connectOnline();setOnlineStatus('部屋一覧を更新しています…');sendOnline('room_list');}
-  window.requestRoomList=requestRoomList;
-
-  function openOnlineView(){ensureOnlineSession();switchView('online');connectOnline();requestRoomList();}
-  window.openOnlineView=openOnlineView;
-
-  function renderRooms(list){
-    const area=$('online-room-list'); if(!area)return;
-    area.innerHTML='';
-    if(!list.length){area.innerHTML='<div class="text-xs text-slate-500">募集中の部屋はありません。</div>';return;}
-    for(const r of list){
-      const d=document.createElement('div');
-      d.className='bg-slate-950 border border-slate-800 rounded-lg p-3 flex flex-wrap items-center gap-2';
-      d.innerHTML=`<div class="flex-1 min-w-[180px]"><div class="font-bold text-xs text-white">${esc(r.roomName)} ${r.password?'🔒':''}</div><div class="text-[10px] text-slate-400">${esc(r.ownerName)} / ${ruleName[r.rule]||r.rule} / ${r.players}/2 / 観戦 ${r.spectators}/${r.maxSpectators} / 状態：${esc(roomStatusText(r.status))}</div></div>`;
-      if(r.players<2 && (r.status==='waiting'||r.status==='preparing')){
-        const b=document.createElement('button');b.className='px-3 py-1.5 bg-cyan-700 rounded text-[10px] font-bold';b.innerText='入室';b.onclick=()=>joinOnlineRoom(r);d.appendChild(b);
-      }
-      if(r.status==='battle' && r.allowSpectators!==false && r.spectators<r.maxSpectators){
-        const b=document.createElement('button');b.className='px-3 py-1.5 bg-purple-700 rounded text-[10px] font-bold';b.innerText='観戦';b.onclick=()=>spectateRoom(r);d.appendChild(b);
-      }
-      area.appendChild(d);
-    }
-  }
-  function roomStatusText(s){return ({waiting:'待機中',preparing:'準備中',battle:'対戦中',finished:'終了',closed:'終了'})[s]||s||'';}
-
-  async function joinOnlineRoom(r){
-    const profile=await onlineProfileAndReady();if(!profile)return;
-    ensureOnlineSession();connectOnline();
-    const pw=r.password?prompt('部屋のパスワードを入力してください。')||'':'';
-    setOnlineStatus('部屋へ入室しています…');
-    sendOnline('room_join',{roomId:r.roomId,password:pw,profile});
-  }
-  function spectateRoom(r){
-    ensureOnlineSession();connectOnline();
-    const pw=r.password?prompt('観戦パスワードを入力してください。')||'':'';
-    setOnlineStatus('観戦参加しています…');
-    sendOnline('spectate_join',{roomId:r.roomId,password:pw});
-  }
-
-  function resetOnlineRoomLocal(){
-    window.__onlineBattleMode = false;
-    onlineUiToken++;
-    clearOnlinePreparationWatchdog();
-    clearTimeout(onlineDeckRequestTimer);onlineDeckRequestTimer=null;
-    onlineRoom=null;onlineSlot=null;onlineReady=false;onlineSpectating=false;onlinePool=null;onlineRentalDecks=[];onlineExchangeSelected=[];onlineExchangeFilter='all';onlineExchangeSearch='';onlineExchangeSubmitted=false;onlineExchangePending=null;onlineExchangeDecisionLocked=false;onlineExchangeReceivedCount=0;onlineExchangeReceivedCards=[];onlineExchangeOpponentSubmitted=false;removeCardExchangeDecisionModal();onlineDeckList=[];onlineDeckOptions=null;onlineSelection=null;onlineDeckRequestId=null;onlineSubmitted=false;onlineLastTurn=0;onlineLastDecisionToken=null;onlinePrepareMarker=null;onlinePrepareAckToken=null;onlineLastState=null;onlineEventQueue=[];onlineEventProcessing=false;onlineDeferredState=null;onlineDeferredEnd=null;onlineRematchRequested=false;
-    clearInterval(onlineTimerHandle);onlineDeadline=0;onlineTimerEndMonotonic=0;onlinePending={units:{},magicId:null};onlineSelectedUnitId=null;
-    $('online-room-panel')?.classList.add('hidden');$('online-lobby')?.classList.remove('hidden');$('online-pool-area')?.classList.add('hidden');
-    onlineMode=false;$('online-controls')?.classList.add('hidden');$('online-timer')?.classList.add('hidden');
-  }
-  function leaveOnlineRoom(){sendOnline('room_leave');resetOnlineRoomLocal();}
-  window.leaveOnlineRoom=leaveOnlineRoom;
-
-  function renderPlayerList(players){
-    const area=$('online-players');if(!area)return;
-    area.innerHTML=(players||[]).map((p,i)=>`<div class="bg-slate-950 border border-slate-800 rounded p-3 text-xs"><b>${i===0?'PLAYER 1':'PLAYER 2'}</b><div>${p?esc(p.name):'待機中'}</div>${p?.deckName?`<div class="text-[10px] text-cyan-300">使用デッキ：${esc(p.deckName)}</div>`:''}<div class="text-[10px] ${p?.online?'text-cyan-300':'text-slate-500'}">${p?(p.online?'接続中':'切断中'):''}</div><div class="text-[10px] ${p?.ready?'text-emerald-400':'text-slate-500'}">${p?.ready?'準備完了':'準備中'}</div></div>`).join('');
-  }
-  function renderRoomPanel(){
-    if(!onlineRoom)return;
-    $('online-lobby')?.classList.add('hidden');$('online-room-panel')?.classList.remove('hidden');
-    $('online-current-room').innerText='部屋：'+onlineRoom.roomName;
-    $('online-current-rule').innerText='ルール：'+(ruleName[onlineRoom.rule]||onlineRoom.rule);
-    const readyBtn=$('online-ready-btn');
-    if(readyBtn){
-      if(onlineRoom.rule==='card_exchange') readyBtn.classList.add('hidden');
-      else {readyBtn.classList.remove('hidden');readyBtn.innerText=onlineReady?'準備を解除':'準備完了';}
-    }
-  }
-
-  function scheduleOnlineRoomRender(roomId){
-    const token=++onlineUiToken;
-    const render=async()=>{
-      if(token!==onlineUiToken || !onlineRoom || String(onlineRoom.roomId)!==String(roomId) || onlineSpectating)return;
-      if(!window.__cardBattleAppReady){
-        await waitForAppReady();
-        if(token!==onlineUiToken || !onlineRoom || String(onlineRoom.roomId)!==String(roomId) || onlineSpectating)return;
-      }
-      renderOnlineSelection();
-    };
-    render();
-  }
-
-  function requestOnlineDeckOptions(){
-    if(!onlineRoom || onlineSpectating) return;
-    if(onlineRoom.rule==='super_rental'||onlineRoom.rule==='random_pot') return;
-    if(onlineDeckOptions) return;
-    const deckId=String(onlineSelection?.deckId||'');
-    if(!deckId) return;
-    if(onlineDeckRequestId===deckId) return;
-    clearTimeout(onlineDeckRequestTimer);
-    onlineDeckRequestId=deckId;
-    setOnlineStatus('デッキのキャラクターカードを読み込んでいます…');
-    const sent=sendOnline('deck_select',{deckId});
-    // 応答が何らかの理由で届かなかった場合、同じデッキを再選択しなくても再試行できるようにする。
-    onlineDeckRequestTimer=setTimeout(()=>{
-      if(onlineDeckRequestId!==deckId || onlineDeckOptions)return;
-      onlineDeckRequestId=null;
-      setOnlineStatus(sent ? 'デッキ情報の取得に時間がかかっています。再読み込みを試しています…' : '接続復帰後にデッキ情報の取得を再試行します。');
-      if(onlineRoom && !onlineSpectating) requestOnlineDeckOptions();
-    },12000);
-  }
-
-  function selectOnlineDeck(deckId){
-    if(!onlineRoom||onlineSpectating)return;
-    clearTimeout(onlineDeckRequestTimer);onlineDeckRequestTimer=null;
-    onlineSelection=onlineSelection||{};
-    onlineSelection.deckId=String(deckId||'');onlineSelection.deployConfirmed=false;onlineDeckOptions=null;onlineDeckRequestId=null;
-    onlineReady=false;
-    renderOnlineSelection();
-    requestOnlineDeckOptions();
-  }
-  window.selectOnlineDeck=selectOnlineDeck;
-  window.requestOnlineDeckOptions=requestOnlineDeckOptions;
-
-  function toggleOnlineReady(){
-    if(!onlineRoom||onlineSpectating)return;
-    if(!onlineAssetsReady){showOnlineError('カード画像の同期がまだ完了していません。少し待ってから「準備完了」を押してください。');return;}
-    if(!onlineReady){
-      if((onlineRoom.rule==='unlimited'||onlineRoom.rule==='rental') && !onlineSelection?.deployConfirmed){showOnlineError('先にデッキを選び、出撃する3体と控えの順番を確定してください。');return;}
-      onlineReady=true;$('online-ready-btn').innerText='準備を解除';sendOnline('room_ready',{ready:true});
-    }else{
-      onlineReady=false;$('online-ready-btn').innerText='準備完了';sendOnline('room_ready',{ready:false});
-    }
-  }
-  window.toggleOnlineReady=toggleOnlineReady;
-
-  function rebuildReserveOrder(){
-    if(!onlineDeckOptions||!onlineSelection)return;
-    const active=new Set(onlineSelection.active||[]);
-    const current=(onlineSelection.reserve||[]).filter(id=>onlineDeckOptions.units.some(c=>c.id===id&&!active.has(id)));
-    const rest=onlineDeckOptions.units.map(c=>String(c.id)).filter(id=>!active.has(id)&&!current.includes(id));
-    onlineSelection.reserve=[...current,...rest].slice(0,2);
-  }
-  function toggleOnlineDeploymentUnit(id){
-    onlineSelection=onlineSelection||{};
-    onlineSelection.active=onlineSelection.active||[];
-    const i=onlineSelection.active.indexOf(id);
-    if(i>=0) onlineSelection.active.splice(i,1);
-    else {
-      if(onlineSelection.active.length>=3){showOnlineError('出撃キャラクターは3体までです。');return;}
-      onlineSelection.active.push(id);
-    }
-    onlineSelection.deployConfirmed=false;onlineReady=false;rebuildReserveOrder();renderOnlineSelection();
-  }
-  window.toggleOnlineDeploymentUnit=toggleOnlineDeploymentUnit;
-  function moveOnlineReserve(id,dir){
-    if(!onlineSelection?.reserve)return;
-    const i=onlineSelection.reserve.indexOf(id);if(i<0)return;
-    const j=i+dir;if(j<0||j>=onlineSelection.reserve.length)return;
-    [onlineSelection.reserve[i],onlineSelection.reserve[j]]=[onlineSelection.reserve[j],onlineSelection.reserve[i]];onlineSelection.deployConfirmed=false;renderOnlineSelection();
-  }
-  window.moveOnlineReserve=moveOnlineReserve;
-  function confirmOnlineDeployment(){
-    if(!onlineDeckOptions||!onlineSelection)return;
-    const active=[...(onlineSelection.active||[])];if(active.length!==3){showOnlineError('出撃キャラクターを3体選択してください。');return;}
-    rebuildReserveOrder();
-    const unitIds=onlineDeckOptions.units.map(c=>String(c.id));
-    const magicIds=onlineDeckOptions.magics.map(c=>String(c.id));
-    onlineSelection={...onlineSelection,unitIds,magicIds,active, reserve:(onlineSelection.reserve||[]).slice(0,2),deployConfirmed:false};
-    sendOnline('battle_select',{selection:onlineSelection});
-  }
-  window.confirmOnlineDeployment=confirmOnlineDeployment;
-
-  function renderOwnOnlineDeckSelector(){
-    const area=$('online-selection-area');if(!area)return;
-    let decks=(onlineDeckList&&onlineDeckList.length)?onlineDeckList:(allDecks||[]);
-    // ページ更新直後のprofile_syncより先にroom_recoveredが届いても、
-    // サーバーが返したdeployment_optionsから一時的な選択肢を作って表示を止めない。
-    if(!decks.length&&onlineDeckOptions?.deckId){
-      decks=[{id:String(onlineDeckOptions.deckId),name:onlineDeckOptions.deckName||'復元中のデッキ',unitIds:(onlineDeckOptions.units||[]).map(c=>String(c.id)),magicIds:(onlineDeckOptions.magics||[]).map(c=>String(c.id))}];
-    }
-    if(!decks.length){area.innerHTML='<div class="text-xs text-amber-300">使用できるデッキがありません。先に「デッキ編成」でデッキを作成してください。</div>';return;}
-    const current=onlineSelection?.deckId&&decks.some(d=>String(d.id)===String(onlineSelection.deckId))?String(onlineSelection.deckId):String(decks[0].id);
-    onlineSelection=onlineSelection||{};if(!onlineSelection.deckId)onlineSelection.deckId=current;
-    area.innerHTML=`<div class="text-xs text-slate-300 font-bold">オンライン対戦で使用するデッキ</div><select id="online-own-deck" onchange="selectOnlineDeck(this.value)" class="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs">${decks.map(d=>`<option value="${esc(d.id)}" ${String(d.id)===String(current)?'selected':''}>${esc(d.name)}（キャラ${(d.unitIds||[]).length} / マジック${(d.magicIds||[]).length}）</option>`).join('')}</select><div class="text-[10px] text-slate-500">デッキ選択後、出撃3体と控え順を決定します。</div>`;
-    if(onlineDeckOptions)renderDeploymentBuilder(area);
-    else requestOnlineDeckOptions();
-  }
-  function renderRentalDecks(){
-    const area=$('online-selection-area');if(!area)return;
-    if(!onlineRentalDecks.length){area.innerHTML='<div class="text-xs text-amber-300">部屋作成者のデッキ一覧を待っています…</div>';return;}
-    const current=onlineSelection?.deckId&&onlineRentalDecks.some(d=>d.id===onlineSelection.deckId)?onlineSelection.deckId:onlineRentalDecks[0].id;
-    onlineSelection=onlineSelection||{};if(!onlineSelection.deckId)onlineSelection.deckId=current;
-    area.innerHTML=`<div class="text-xs text-slate-300 font-bold">部屋作成者の公開デッキから選択</div><select id="online-rental-deck" onchange="selectOnlineDeck(this.value)" class="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs">${onlineRentalDecks.map(d=>`<option value="${esc(d.id)}" ${d.id===current?'selected':''}>${esc(d.name)}</option>`).join('')}</select><div class="text-[10px] text-slate-500">選択したデッキだけがオンライン対戦で使用されます。</div>`;
-    if(onlineDeckOptions)renderDeploymentBuilder(area);
-    else requestOnlineDeckOptions();
-  }
-  function renderDeploymentBuilder(area=$('online-selection-area')){
-    if(!area||!onlineDeckOptions)return;
-    onlineSelection=onlineSelection||{};
-    onlineSelection.active=onlineSelection.active||onlineDeckOptions.units.slice(0,3).map(c=>String(c.id));
-    rebuildReserveOrder();
-    const active=new Set(onlineSelection.active||[]);
-    const reserve=onlineSelection.reserve||[];
-    const unitCard=c=>`<button type="button" onclick='toggleOnlineDeploymentUnit(${JSON.stringify(String(c.id))})' class="text-left p-1 rounded border ${active.has(String(c.id))?'border-emerald-400 bg-emerald-900/30':'border-slate-700 bg-slate-950'}"><div class="aspect-[3/4] rounded overflow-hidden bg-slate-900 mb-1">${getCardHTML({id:c.id,cardType:c.cardType,name:c.name,mainAttr:c.mainAttr,subAttrs:c.subAttrs||[],hp:c.stats?.hp,atk:c.stats?.atk,prio:c.stats?.priority,rank:c.rank,img:getCardImage(c)})}</div><div class="text-[10px] font-bold truncate">${esc(c.name)}</div><div class="text-[9px] ${active.has(String(c.id))?'text-emerald-300':'text-slate-500'}">${active.has(String(c.id))?'出撃':'控え候補'}</div></button>`;
-    const reserveRow=reserve.map((id,i)=>{const c=onlineDeckOptions.units.find(x=>String(x.id)===id);if(!c)return '';return `<div class="flex items-center gap-2 p-2 rounded border border-slate-800 bg-slate-950"><div class="flex-1 text-xs font-bold">控え${i+1}：${esc(c.name)}</div><button onclick='moveOnlineReserve(${JSON.stringify(id)},-1)' class="px-2 py-1 bg-slate-800 rounded text-xs">▲</button><button onclick='moveOnlineReserve(${JSON.stringify(id)},1)' class="px-2 py-1 bg-slate-800 rounded text-xs">▼</button></div>`;}).join('');
-    area.insertAdjacentHTML('beforeend',`<div class="border-t border-slate-800 mt-3 pt-3 space-y-2"><div class="text-xs font-black text-emerald-300">出撃メンバーを決定</div><div class="text-[10px] text-slate-400">キャラクターを3体選択。残り（最大2体）が控えになります。控えの▲▼で登場順を変更できます。</div><div class="grid grid-cols-2 sm:grid-cols-5 gap-1">${onlineDeckOptions.units.map(unitCard).join('')}</div><div class="space-y-1 mt-2">${reserveRow||'<div class="text-[10px] text-slate-500">控えなし</div>'}</div><button onclick="confirmOnlineDeployment()" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-black text-xs">${onlineSelection.deployConfirmed?'出撃設定確定済み':'この出撃設定で確定'}</button></div>`);
-  }
-
-  function renderPoolBuilder(){
-    const p=onlinePool; if(!p)return;
-    onlineSelection=onlineSelection||{unitIds:[],magicIds:[],deployConfirmed:false};
-    const selectedUnits=onlineSelection.unitIds||[],selectedMagic=onlineSelection.magicIds||[];
-    $('online-pool-area').classList.remove('hidden');
-    const card=(c,sel,kind)=>`<button onclick='toggleOnlinePoolCard(${JSON.stringify(kind)},${JSON.stringify(String(c.id))})' class="text-left p-1 rounded border ${sel?'border-emerald-400 bg-emerald-900/30':'border-slate-700 bg-slate-950'}"><div class="aspect-[3/4] rounded overflow-hidden bg-slate-900 mb-1">${getCardHTML({id:c.id,cardType:c.cardType,name:c.name,mainAttr:c.mainAttr,subAttrs:c.subAttrs||[],hp:c.stats?.hp,atk:c.stats?.atk,prio:c.stats?.priority,rank:c.rank,img:getCardImage(c)})}</div><div class="text-[10px] font-bold truncate">${esc(c.name)}</div></button>`;
-    const canConfirm=selectedUnits.length>=3&&selectedUnits.length<=5&&selectedMagic.length<=10;
-    $('online-pool-area').innerHTML=`<div class="font-black text-purple-300 mb-2">サーバー抽選結果：候補から即席デッキを作成</div><div class="text-[10px] text-slate-400 mb-2">キャラは3～5枚。選択順の1～3番目が初期出撃、4～5番目が控え順。マジックは0～10枚です。</div><div class="font-bold text-cyan-300 text-xs mb-1">キャラクター ${selectedUnits.length}/5</div><div class="grid grid-cols-2 sm:grid-cols-5 gap-1">${p.units.map(c=>card(c,selectedUnits.includes(String(c.id)),'unit')).join('')}</div><div class="font-bold text-purple-300 text-xs mt-3 mb-1">マジック ${selectedMagic.length}/10</div><div class="grid grid-cols-2 sm:grid-cols-5 gap-1">${p.magics.map(c=>card(c,selectedMagic.includes(String(c.id)),'magic')).join('')}</div><button onclick="confirmOnlinePoolSelection()" ${canConfirm?'':'disabled'} class="w-full mt-3 py-2.5 ${canConfirm?'bg-purple-600 hover:bg-purple-500':'bg-slate-700 opacity-50'} rounded-lg font-black text-xs">${onlineSelection.deployConfirmed?'候補選択確定済み':'候補からデッキを確定'}</button>`;
-  }
-  window.toggleOnlinePoolCard=function(kind,id){
-    onlineSelection=onlineSelection||{unitIds:[],magicIds:[],deployConfirmed:false};
-    const key=kind==='unit'?'unitIds':'magicIds',max=kind==='unit'?5:10;
-    onlineSelection[key]=onlineSelection[key]||[];
-    const i=onlineSelection[key].indexOf(String(id));
-    if(i>=0)onlineSelection[key].splice(i,1);
-    else { if(onlineSelection[key].length>=max){showOnlineError(kind==='unit'?'キャラクターは5枚までです。':'マジックは10枚までです。');return;} onlineSelection[key].push(String(id)); }
-    onlineSelection.deployConfirmed=false;onlineReady=false;renderPoolBuilder();
-  };
-  function confirmOnlinePoolSelection(){
-    const units=onlineSelection?.unitIds||[],magics=onlineSelection?.magicIds||[];
-    if(units.length<3||units.length>5){showOnlineError('キャラクターは3～5枚選択してください。');return;}
-    sendOnline('battle_select',{selection:{unitIds:[...units],magicIds:[...magics],active:units.slice(0,3),reserve:units.slice(3,5),deployConfirmed:false}});
-  }
-  window.confirmOnlinePoolSelection=confirmOnlinePoolSelection;
-
-  function renderCardExchangeSelection(){
-    const area=$('online-selection-area');if(!area)return;
-    const cards=Array.isArray(allCards)?allCards:[];
-    if(onlineExchangeSubmitted){
-      area.innerHTML=`<div class="rounded-lg border border-amber-500/40 bg-amber-950/20 p-4 space-y-2"><div class="font-black text-amber-300">交換内容を確定しました（${onlineExchangeSelected.length}枚）</div><div class="text-xs text-slate-300">相手が交換内容を確定するまでお待ちください。確定したカードは送信側の所持カードから削除されません。</div></div>`;
-      return;
-    }
-    const filtered=cards.filter(c=>{
-      if(onlineExchangeFilter==='unit'&&c.cardType!=='unit')return false;
-      if(onlineExchangeFilter==='magic'&&c.cardType!=='magic')return false;
-      return !onlineExchangeSearch || String(c.name||'').toLowerCase().includes(onlineExchangeSearch.toLowerCase());
-    });
-    const cardButton=c=>{
-      const id=String(c.id),selected=onlineExchangeSelected.includes(id);
-      const img=getCardImage(c);
-      const body=getCardHTML({id:c.id,cardType:c.cardType,name:c.name,mainAttr:c.mainAttr,subAttrs:c.subAttrs||[],hp:c.stats?.hp,atk:c.stats?.atk,prio:c.stats?.priority,rank:c.rank,desc:c.desc||c.description||'',img});
-      return `<button type="button" onclick='toggleCardExchangeCard(${JSON.stringify(id)})' class="relative text-left p-1 rounded-lg border ${selected?'border-emerald-400 bg-emerald-900/30 ring-2 ring-emerald-500/50':'border-slate-700 bg-slate-950'}"><div class="aspect-[3/4] rounded overflow-hidden bg-slate-900 mb-1">${body}</div><div class="text-[10px] font-bold truncate">${esc(c.name||'名称未設定')}</div><div class="text-[9px] ${c.cardType==='unit'?'text-cyan-300':'text-purple-300'}">${c.cardType==='unit'?'キャラクター':'マジック'}${selected?'・選択中':''}</div>${selected?'<span class="absolute top-1 right-1 rounded-full bg-emerald-500 text-slate-950 text-[10px] font-black px-1.5 py-0.5">✓</span>':''}</button>`;
-    };
-    const disabled=onlineRoom.players<2||!onlineAssetsReady||cards.length===0;
-    area.innerHTML=`<div class="space-y-3">
-      <div><div class="font-black text-amber-300">🤝 カード交換</div><div class="text-xs text-slate-300 mt-1">所持カードから最大5枚を選んで相手に共有します。0枚でも確定できます。交換に出したカードは自分の所持カードから消えず、受け取ったカードはこのブラウザに保存されます。</div></div>
-      <div class="flex flex-wrap items-center gap-2"><span class="text-xs font-black ${onlineExchangeSelected.length===5?'text-amber-300':'text-emerald-300'}">選択中：${onlineExchangeSelected.length}/5枚</span><button type="button" onclick="setCardExchangeFilter('all')" class="px-3 py-1.5 rounded text-xs ${onlineExchangeFilter==='all'?'bg-cyan-700':'bg-slate-800'}">すべて</button><button type="button" onclick="setCardExchangeFilter('unit')" class="px-3 py-1.5 rounded text-xs ${onlineExchangeFilter==='unit'?'bg-cyan-700':'bg-slate-800'}">キャラクター</button><button type="button" onclick="setCardExchangeFilter('magic')" class="px-3 py-1.5 rounded text-xs ${onlineExchangeFilter==='magic'?'bg-cyan-700':'bg-slate-800'}">マジック</button><input value="${esc(onlineExchangeSearch)}" oninput="setCardExchangeSearch(this.value)" placeholder="カード名で検索" class="flex-1 min-w-[130px] bg-slate-950 border border-slate-700 rounded p-2 text-xs"></div>
-      ${onlineExchangeOpponentSubmitted?'<div class="text-xs text-cyan-300">相手は交換内容を確定しました。あなたの確定を待っています。</div>':''}${!onlineAssetsReady?'<div class="text-xs text-amber-300">カード画像を同期中です。完了までお待ちください。</div>':''}
-      ${onlineRoom.players<2?'<div class="text-xs text-amber-300">相手が入室すると交換を確定できます。</div>':''}
-      ${cards.length?`<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">${filtered.map(cardButton).join('')}</div>`:'<div class="text-xs text-amber-300">所持カードがありません。</div>'}
-      <div class="flex flex-wrap gap-2"><button type="button" onclick="clearCardExchangeSelection()" class="px-3 py-2 bg-slate-700 rounded text-xs" ${onlineExchangeSelected.length?'':'disabled'}>選択解除</button><button type="button" onclick="submitCardExchangeSelection()" class="flex-1 min-w-[200px] py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-500 rounded-lg font-black text-xs" ${disabled?'disabled':''}>${onlineExchangeSelected.length?`選択した${onlineExchangeSelected.length}枚で交換を確定`:'0枚で交換を確定'}</button></div>
-    </div>`;
-  }
-  window.toggleCardExchangeCard=function(id){
-    if(!onlineRoom||onlineRoom.rule!=='card_exchange'||onlineExchangeSubmitted)return;
-    const key=String(id),i=onlineExchangeSelected.indexOf(key);
-    if(i>=0)onlineExchangeSelected.splice(i,1);
-    else {if(onlineExchangeSelected.length>=5){showOnlineError('交換に出せるカードは最大5枚です。');return;}if(!(allCards||[]).some(c=>String(c.id)===key)){showOnlineError('所持カードが見つかりません。カード一覧を更新してください。');return;}onlineExchangeSelected.push(key);}
-    renderCardExchangeSelection();
-  };
-  window.setCardExchangeFilter=function(filter){onlineExchangeFilter=['all','unit','magic'].includes(filter)?filter:'all';renderCardExchangeSelection();};
-  window.setCardExchangeSearch=function(value){onlineExchangeSearch=String(value||'').slice(0,80);const input=$('online-selection-area')?.querySelector('input[placeholder="カード名で検索"]');const pos=input?.selectionStart;renderCardExchangeSelection();const next=$('online-selection-area')?.querySelector('input[placeholder="カード名で検索"]');if(next){next.focus();try{next.setSelectionRange(pos,pos);}catch{}}};
-  window.clearCardExchangeSelection=function(){if(onlineExchangeSubmitted)return;onlineExchangeSelected=[];renderCardExchangeSelection();};
-  window.submitCardExchangeSelection=function(){
-    if(!onlineRoom||onlineRoom.rule!=='card_exchange'||onlineExchangeSubmitted)return;
-    if(onlineRoom.players<2){showOnlineError('相手が入室するまで確定できません。');return;}
-    if(!onlineAssetsReady){showOnlineError('カード画像の同期が完了するまでお待ちください。');return;}
-    if(onlineExchangeSelected.length>5){showOnlineError('カードは最大5枚までです。');return;}
-    onlineExchangeSubmitted=true;renderCardExchangeSelection();
-    sendOnline('card_exchange_submit',{cardIds:[...onlineExchangeSelected]});
-  };
-
-  function removeCardExchangeDecisionModal(){document.getElementById('card-exchange-decision-modal')?.remove();onlineExchangeDecisionLocked=false;}
-  function showCardExchangeDecision(receivedCount=onlineExchangeReceivedCount, opponentVoted=false){
-    if(Number.isFinite(Number(receivedCount)))onlineExchangeReceivedCount=Number(receivedCount);
-    let modal=document.getElementById('card-exchange-decision-modal');
-    if(!modal){modal=document.createElement('div');modal.id='card-exchange-decision-modal';modal.className='fixed inset-0 z-[120] flex items-center justify-center bg-black/80 p-4';document.body.appendChild(modal);}
-    const locked=onlineExchangeDecisionLocked;
-    const message=locked?'あなたは「続ける」を選びました。相手の選択を待っています。':(opponentVoted?'相手は「続ける」を選びました。続けるか、ここで終了するか選んでください。':'続けて交換する場合は、相手も「続ける」を選ぶ必要があります。どちらかが「やめる」を選ぶと部屋を終了します。');
-    const receivedCardsHtml=(onlineExchangeReceivedCards||[]).length?`<div class="grid grid-cols-3 sm:grid-cols-5 gap-2 max-h-[34vh] overflow-y-auto">${onlineExchangeReceivedCards.map(c=>{const img=String(c.image||c.imageUrl||'');return `<div class="min-w-0 rounded-lg border border-slate-700 bg-slate-900 p-1.5 text-center"><img src="${esc(img)}" alt="${esc(c.name||'受け取ったカード')}" class="mx-auto w-full max-w-[82px] aspect-[3/4] object-cover rounded bg-slate-800" onerror="this.style.visibility='hidden'"><div class="mt-1 text-[10px] font-bold text-slate-100 break-words">${esc(c.name||'名称未設定')}</div><div class="text-[9px] text-slate-400">${c.cardType==='magic'?'マジック':'キャラクター'}</div></div>`;}).join('')}</div>`:(onlineExchangeReceivedCount===0?'<div class="text-center text-xs text-slate-400">今回はカードを受け取っていません（0枚交換）。</div>':'');
-    modal.innerHTML=`<div class="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-emerald-500/60 bg-slate-950 p-5 shadow-2xl space-y-4"><div class="text-center text-2xl font-black text-emerald-300">交換完了！</div><div class="text-center text-sm text-slate-200">相手から${onlineExchangeReceivedCount}枚のカードを受け取り、所持カードに保存しました。</div>${receivedCardsHtml}<div class="text-center text-xs text-slate-400">${message}</div><div class="grid grid-cols-2 gap-3"><button type="button" onclick="chooseCardExchangeContinue(true)" class="py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-black" ${locked?'disabled':''}>続ける</button><button type="button" onclick="chooseCardExchangeContinue(false)" class="py-3 rounded-lg bg-rose-700 hover:bg-rose-600 font-black" ${locked?'disabled':''}>やめる</button></div></div>`;
-  }
-  window.chooseCardExchangeContinue=function(keepGoing){
-    if(onlineExchangeDecisionLocked)return;
-    if(keepGoing===true){onlineExchangeDecisionLocked=true;showCardExchangeDecision(onlineExchangeReceivedCount,false);}
-    else {onlineExchangeDecisionLocked=true;const modal=document.getElementById('card-exchange-decision-modal');if(modal)modal.querySelectorAll('button').forEach(b=>b.disabled=true);}
-    sendOnline('card_exchange_continue',{continue:keepGoing===true});
-  };
-
-  async function finalizeCardExchangeReceive(){
-    const pending=onlineExchangePending;
-    if(!pending||pending.saving||pending.receivedBatches.size<pending.assetTotal)return;
-    pending.saving=true;
-    try{
-      allCards=await getAllFromStore('cards');
-      const receivedCards=[];
-      for(const source of pending.cards){
-        const sourceId=String(source.sourceCardId||source.id||'');
-        let card=allCards.find(c=>String(c.exchangeBatchId||'')===pending.exchangeId&&String(c.exchangeSourceCardId||'')===sourceId);
-        if(!card){
-          card={...source};delete card.sourceCardId;
-          card.id=generateCardId();
-          if(pending.images.has(sourceId))card.image=pending.images.get(sourceId);
-          else {delete card.image; if(card.imageUrl==null)delete card.imageUrl;}
-          card.exchangeSourceCardId=sourceId;
-          card.exchangeOriginCardId=String(source.originCardId||source.exchangeOriginCardId||sourceId);
-          card.exchangeBatchId=pending.exchangeId;
-          card.exchangeSourceName=String(pending.fromName||'相手');
-          card.exchangeReceivedAt=Date.now();
-          await saveToStore('cards',card);
-          allCards.push(card);
-        } else if(pending.images.has(sourceId)&&!card.image){card.image=pending.images.get(sourceId);await saveToStore('cards',card);}
-        receivedCards.push(card);
-      }
-      allCards=await getAllFromStore('cards');
-      onlineExchangeReceivedCards=receivedCards;
-      try{refreshAttributeDatalist();renderDeckList();}catch(_){/* current view may be the online lobby */}
-      const exchangeId=pending.exchangeId;
-      onlineExchangePending=null;
-      sendOnline('card_exchange_saved',{exchangeId});
-    }catch(err){
-      console.error('card exchange local save failed',err);
-      showOnlineError('受け取ったカードをローカル保存できませんでした。ブラウザの保存容量を確認して再試行してください。');
-    }
-  }
-
-  function renderOnlineSelection(){
-    if(!onlineRoom||onlineSpectating)return;
-    if(onlineRoom.rule==='card_exchange'){renderCardExchangeSelection();return;}
-    const area=$('online-selection-area');if(!area)return;
-    $('online-pool-area').classList.add('hidden');
-    if(onlineRoom.rule==='super_rental'||onlineRoom.rule==='random_pot'){
-      area.innerHTML=onlinePool?'<div class="text-xs text-purple-300 font-bold">候補カードから即席デッキを作成してください。</div>':'<div class="text-xs text-slate-400">両者が準備完了すると、サーバーから独立した候補カードが配布されます。</div>';
-      if(onlinePool)renderPoolBuilder();
-      return;
-    }
-    if(onlineRoom.rule==='rental')renderRentalDecks();
-    else renderOwnOnlineDeckSelector();
-  }
-
-  function applyOnlineState(st){
-    if(!st)return;
-    onlineMode=true;window.__onlineBattleMode=true;onlineLastState=st;
-    const isSpectator=st.yourSide==='spectator'||onlineSpectating;
-    const mySide=st.yourSide==='player2'?'player2':'player1';
-    const me=isSpectator?st.p1:(mySide==='player1'?st.p1:st.p2);
-    const opp=isSpectator?st.p2:(mySide==='player1'?st.p2:st.p1);
-    const localCards=new Map((allCards||[]).map(c=>[String(c.id),c]));
-    const registerPublicCard=(card)=>registerOnlinePublicCard(card);
-    (st.p1?.magicCards||[]).forEach(registerPublicCard);
-    (st.p2?.magicCards||[]).forEach(registerPublicCard);
-    (st.p1?.units||[]).forEach(u=>registerPublicCard({id:u.cardId,cardType:'unit',name:u.name,mainAttr:u.mainAttr,subAttrs:u.subAttrs,rank:u.rank,stats:{hp:u.maxHp,atk:u.atk,priority:u.priority},skills:u.skills||[],...(u.image||u.imageUrl?{image:u.image||u.imageUrl}:{})}));
-    (st.p2?.units||[]).forEach(u=>registerPublicCard({id:u.cardId,cardType:'unit',name:u.name,mainAttr:u.mainAttr,subAttrs:u.subAttrs,rank:u.rank,stats:{hp:u.maxHp,atk:u.atk,priority:u.priority},skills:u.skills||[],...(u.image||u.imageUrl?{image:u.image||u.imageUrl}:{})}));
-    const mapU=(u,side)=>({
-      ...u,
-      side:(side===mySide&&!isSpectator)?'player':'enemy',
-      image:getCardImage(getOnlinePublicCard(u.cardId))||getCardImage(localCards.get(String(u.cardId)))||u.image||u.imageUrl||createDummyCardImage('⚔️','#334155'),
-      skills:Array.isArray(u.skills)?u.skills:[],
-      reservedAction:{type:'attack',targetInstanceId:null}
-    });
-    const myUnits=(me?.units||[]).map(u=>mapU(u,mySide));
-    const oppUnits=(opp?.units||[]).map(u=>mapU(u,mySide==='player1'?'player2':'player1'));
-    const magicCards=(me?.magicCards||[]).length?me.magicCards.map(c=>({...c,...(getOnlinePublicCard(c.id)||{})})):((me?.magicIds||[]).map(id=>localCards.get(id)||getOnlinePublicCard(id)).filter(Boolean));
-    battleState={
-      battleId:st.battleId,phase:st.phase,turn:st.turn,playerAp:me?.ap??0,enemyAp:opp?.ap??0,
-      playerUnits:myUnits,enemyUnits:oppUnits,magicHand:magicCards,enemyMagicHand:(opp?.magicCards||[]).map(c=>({...c,...(getOnlinePublicCard(c.id)||{})})),usedMagicCardIds:new Set(me?.usedMagicIds||[]),enemyUsedMagicCardIds:new Set(opp?.usedMagicIds||[]),reservedMagic:null,reservedMagicTargetInstanceId:null,reservedMagicSubTargetInstanceId:null,reservedEnemyMagicTargetInstanceId:null,reservedEnemyMagicSubTargetInstanceId:null,
-      selectedPlayerInstanceId:onlineSelectedUnitId||(myUnits.find(u=>u.isActive&&u.currentHp>0)?.instanceId||null),
-      playerName:me?.name||'プレイヤー',enemyName:opp?.name||'ライバル',playerIconUrl:playerIcon,enemyIconUrl:null,
-      playerReserveQueue:[...(me?.reserveQueue||[])].map(String),enemyReserveQueue:[...(opp?.reserveQueue||[])].map(String),yourSide:st.yourSide
-    };
-    switchView('battle');initBattleUI();renderBattleState();renderOnlineBattleLog(st.events||[]);
-    const decision=st.phase==='decision'&&!isSpectator;
-    const paused=st.phase==='paused'&&!isSpectator;
-    const timerVisible=!!(onlineMode&&!isSpectator&&(decision||paused));
-    const panel=$('decision-command-panel');if(panel)panel.classList.toggle('hidden',!decision);
-    $('online-controls')?.classList.toggle('hidden',!decision);
-    $('online-timer')?.classList.toggle('hidden',!timerVisible);
-    $('online-battle-timer')?.classList.toggle('hidden',!timerVisible);
-    if(decision){
-      renderCommandPanel();renderMagicHand();renderEnemyMagicHand();updateReservationSummary();renderOnlineControls();
-      if(st.deadline)startOnlineTimer(st.deadline,st.remainingMs);else showOnlinePausedTimer();
-    }else if(st.phase==='execution'){
-      showOnlineExecutionTimer();
-    }else if(st.phase==='preparing'){
-      showOnlinePreparingTimer();
-    }else if(paused){
-      showOnlinePausedTimer();
-    }else{
-      clearInterval(onlineTimerHandle);onlineDeadline=0;onlineTimerEndMonotonic=0;
-      if($('online-confirmed-status'))$('online-confirmed-status').innerText='対戦状態を同期しています。';
-      if($('online-timer'))$('online-timer').innerText='—';
-      if($('online-battle-timer-value'))$('online-battle-timer-value').innerText='—';
-    }
-  }
-
-  function safeApplyOnlineState(st, allowRetry=true){
-    if(!st)return false;
-    try{
-      applyOnlineState(st);
-      return true;
-    }catch(e){
-      console.error('Online battle state render error:',e);
-      if(allowRetry){
-        setOnlineStatus('オンライン戦闘画面を再同期しています…');
-        setTimeout(()=>safeApplyOnlineState(st,false),100);
-      }else if((st.phase==='decision'||st.phase==='preparing')&&!onlineSpectating){
-        // UI描画が一部失敗しても、サーバーのフェーズをローカル状態へ反映して永久ロックを避ける。
-        if(window.battleState){
-          battleState.battleId=st.battleId||battleState.battleId;
-          battleState.turn=Number(st.turn||battleState.turn||1);
-          battleState.phase=st.phase;
-          battleState.decisionToken=st.decisionToken||battleState.decisionToken||null;
-        }
-        const preparing=st.phase==='preparing';
-        $('decision-command-panel')?.classList.toggle('hidden',preparing);
-        $('online-controls')?.classList.toggle('hidden',preparing);
-        $('online-timer')?.classList.toggle('hidden',preparing);
-        $('online-battle-timer')?.classList.add('hidden');
-        if(preparing) showOnlinePreparingTimer(); else renderOnlineControls();
-        setOnlineStatus(preparing
-          ? 'ターン準備の描画に失敗しました。同期処理を復旧しています。'
-          : '戦闘画面の再描画に失敗しました。入力状態を復旧し、最新状態を再同期しています。');
-        if(onlinePrepareMarker && st.phase==='preparing') scheduleOnlinePreparationRecovery(onlinePrepareMarker, 1500);
-      }
-      return false;
-    }
-  }
-
-  function renderOnlineBattleLog(events){
-    const log=$('battle-log');if(!log)return;
-    log.innerHTML='<div class="text-slate-500">--- オンライン戦闘ログ ---</div>';
-    for(const ev of events||[]){const who=ev.actor?.name||'プレイヤー',name=ev.actionName||ev.type||'行動',result=ev.result||ev.effect||'';const d=document.createElement('div');d.innerText=`${who}：${name}${result?` → ${result}`:''}`;log.appendChild(d);}
-    log.scrollTop=log.scrollHeight;
-  }
-  function renderOnlineControls(){
-    if(onlineSpectating||!onlineMode)return;
-    const left=onlineTimerEndMonotonic?Math.max(0,Math.ceil((onlineTimerEndMonotonic-onlineMonotonicNow())/1000)):0;
-    $('online-timer').innerText=String(left);
-    $('online-confirmed-status').innerText=onlineSubmitted?'行動送信済み。相手の入力を待っています。':'行動を選択して「行動決定」を押してください。';
-    const btn=$('btn-confirm-actions');if(btn){btn.innerText=onlineSubmitted?'送信済み':'🌐 行動決定（送信）';btn.disabled=onlineSubmitted||battleState?.phase!=='decision';btn.classList.toggle('opacity-50',btn.disabled);btn.classList.toggle('cursor-not-allowed',btn.disabled);}
-  }
-  function renderOnlineMagicTargets(){
-    const box=$('online-magic-targets');if(!box)return;
-    box.innerHTML='';box.classList.add('hidden');
-    const m=battleState?.reservedMagic;if(!onlineMode||!m||!m.effect)return;
-    const eff=m.effect;
-    const mainManual=isManualTargetType(eff.targetType);
-    const subManual=!!(eff.hasSubEffect&&eff.subEffect&&isManualTargetType(eff.subEffect.targetType));
-    if(!mainManual&&!subManual)return;
-    const actor={side:'player',currentHp:1,maxHp:1};
-    box.classList.remove('hidden');
-
-    if(mainManual){
-      const pool=(getTargetPool(eff.targetType,actor)||[]).filter(t=>matchesTargetCondition(t,eff.targetCond)&&!(actor&&t.side!==actor.side&&unitHasStatus(t,'stealth')));
-      const title=document.createElement('div');title.className='text-[10px] font-black text-amber-300 mb-2';title.innerText='マジック：メイン効果の対象を選択';box.appendChild(title);
-      const row=document.createElement('div');row.className='flex flex-wrap gap-2';box.appendChild(row);
-      pool.forEach(t=>{const b=document.createElement('button');b.className='px-2 py-1 rounded border text-[10px] '+(battleState.reservedMagicTargetInstanceId===t.instanceId?'border-emerald-400 bg-emerald-900/30':'border-slate-700 bg-slate-950');b.innerText=`${t.name} HP:${t.currentHp}`;b.onclick=()=>{battleState.reservedMagicTargetInstanceId=t.instanceId;renderMagicHand();updateReservationSummary();};row.appendChild(b);});
-      if(!pool.length){const e=document.createElement('div');e.className='text-[10px] text-rose-300';e.innerText='有効なメイン対象がいません';box.appendChild(e);}
-    }
-
-    if(subManual){
-      const sub=eff.subEffect;
-      const label=document.createElement('div');label.className='text-[10px] font-black text-emerald-300 mt-2 mb-2';label.innerText='マジック：追加効果の対象を選択';box.appendChild(label);
-      if(sub.targetType==='same_main_target'){
-        const info=document.createElement('div');info.className='text-[10px] text-emerald-200';info.innerText='↳ メイン効果と同じ対象を使用します。';box.appendChild(info);
-      }else{
-        const subPool=(getTargetPool(sub.targetType,actor)||[]).filter(t=>matchesTargetCondition(t,sub.targetCond)&&!(actor&&t.side!==actor.side&&unitHasStatus(t,'stealth')));
-        const row=document.createElement('div');row.className='flex flex-wrap gap-2';box.appendChild(row);
-        subPool.forEach(t=>{const b=document.createElement('button');b.className='px-2 py-1 rounded border text-[10px] '+(battleState.reservedMagicSubTargetInstanceId===t.instanceId?'border-emerald-400 bg-emerald-900/30':'border-slate-700 bg-slate-950');b.innerText=`${t.name} HP:${t.currentHp}`;b.onclick=()=>{battleState.reservedMagicSubTargetInstanceId=t.instanceId;renderMagicHand();updateReservationSummary();};row.appendChild(b);});
-        if(!subPool.length){const e=document.createElement('div');e.className='text-[10px] text-rose-300';e.innerText='有効な追加効果対象がいません';box.appendChild(e);}
-      }
-    }
-  }
-
-  function renderOnlineTargets(u,act){
-    const targetBox=$('online-target-buttons');if(!targetBox)return;
-    targetBox.innerHTML='';
-    if(act.type==='attack'){targetBox.innerHTML='<span class="text-[10px] text-slate-500">通常攻撃の対象は実行時に現在フィールドからランダム決定</span>';return;}
-    const sk=act.type==='skill'?u.skills?.[act.skillIndex]:null;if(!sk)return;
-    const renderPicker=(label,type,cond,field)=>{
-      if(!isManualTargetType(type))return;
-      const pool=(type==='select_enemy_1'?battleState.enemyUnits:battleState.playerUnits).filter(x=>x.isActive&&x.currentHp>0&&matchesTargetCondition(x,cond)&&!(x.side!==u.side&&unitHasStatus(x,'stealth')));
-      const wrap=document.createElement('div');wrap.className='mb-2';const title=document.createElement('div');title.className='text-[10px] font-bold text-cyan-300';title.innerText=label;wrap.appendChild(title);
-      for(const t of pool){const b=document.createElement('button');b.className='px-2 py-1 rounded border mr-1 mt-1 '+(act[field]===t.instanceId?'border-emerald-400 bg-emerald-900/30':'border-slate-700 bg-slate-900')+' text-[10px]';b.innerText=`${t.name} HP:${t.currentHp}`;b.onclick=()=>{const u2=battleState.playerUnits.find(x=>x.instanceId===onlineSelectedUnitId);if(!u2)return;u2.reservedAction=u2.reservedAction||{type:'attack',targetInstanceId:null};u2.reservedAction[field]=t.instanceId;renderCommandPanel();updateReservationSummary();};wrap.appendChild(b);}
-      if(!pool.length){const empty=document.createElement('div');empty.className='text-[10px] text-rose-300';empty.innerText='有効な対象がいません';wrap.appendChild(empty);}targetBox.appendChild(wrap);
-    };
-    renderPicker('メイン効果の対象',sk.targetType,sk.targetCond,'targetInstanceId');
-    if(sk.hasSubEffect&&sk.subEffect){if(sk.subEffect.targetType==='same_main_target'){const e=document.createElement('div');e.className='text-[10px] text-emerald-300';e.innerText='追加効果：メイン効果と同じ対象';targetBox.appendChild(e);}else renderPicker('追加効果の対象',sk.subEffect.targetType,sk.subEffect.targetCond,'subTargetInstanceId');}
-  }
-
-  window.setOnlineTarget=id=>{const u=battleState.playerUnits.find(x=>x.instanceId===onlineSelectedUnitId);if(!u)return;const t=(battleState.enemyUnits||[]).concat(battleState.playerUnits||[]).find(x=>x.instanceId===id);if(!t||(t.side!==u.side&&unitHasStatus(t,'stealth'))){showOnlineError('隠密中の敵は指定できません。');return;}u.reservedAction=u.reservedAction||{type:'attack',targetInstanceId:null};u.reservedAction.targetInstanceId=id;renderCommandPanel();updateReservationSummary();};
-
-  function submitOnlineActions(){
-    if(onlineSubmitted||!onlineMode||onlineSpectating||battleState?.phase!=='decision')return;
-    // 手動対象が未選択ならクライアントでも先に止める。最終判定は必ずサーバー。
-    for(const u of battleState.playerUnits.filter(u=>u.isActive&&u.currentHp>0)){
-      if(u.reservedAction?.type==='skill'){
-        const sk=u.skills?.[u.reservedAction.skillIndex];
-        if(!sk) continue;
-        if(evalCond(sk.selfCond,u,u.side==='player')){
-          const mainCandidates=isManualTargetType(sk.targetType) ? getManualTargetCandidates(sk,u) : [];
-          if(isManualTargetType(sk.targetType)&&mainCandidates.length&&(!u.reservedAction.targetInstanceId||!mainCandidates.some(t=>String(t.instanceId)===String(u.reservedAction.targetInstanceId)))){showOnlineError(`「${sk.name}」のメイン効果対象を選択してください。`);return;}
-          const subCandidates=sk.hasSubEffect&&sk.subEffect&&isManualTargetType(sk.subEffect.targetType) ? getManualSubTargetCandidates(sk,u) : [];
-          if(sk.hasSubEffect&&sk.subEffect&&isManualTargetType(sk.subEffect.targetType)&&subCandidates.length&&(!u.reservedAction.subTargetInstanceId||!subCandidates.some(t=>String(t.instanceId)===String(u.reservedAction.subTargetInstanceId)))){showOnlineError(`「${sk.name}」の追加効果対象を選択してください。`);return;}
-        }
-      }
-    }
-    const magic=battleState.reservedMagic?.effect;
-    if(magic && magicActivationConditionMet(magic,'player',battleState.playerAp)){
-      const actor={side:'player',currentHp:1,maxHp:1};
-      const mainCandidates=isManualTargetType(magic.targetType)
-        ? (getTargetPool(magic.targetType,actor)||[]).filter(t=>matchesTargetCondition(t,magic.targetCond)&&!(t.side!==actor.side&&unitHasStatus(t,'stealth'))) : [];
-      if(isManualTargetType(magic.targetType)&&mainCandidates.length&&(!battleState.reservedMagicTargetInstanceId||!mainCandidates.some(t=>String(t.instanceId)===String(battleState.reservedMagicTargetInstanceId)))){showOnlineError(`「${battleState.reservedMagic.name}」のメイン効果対象を選択してください。`);return;}
-      const sub=magic.hasSubEffect?magic.subEffect:null;
-      const subCandidates=sub&&isManualTargetType(sub.targetType)
-        ? (getTargetPool(sub.targetType,actor)||[]).filter(t=>matchesTargetCondition(t,sub.targetCond)&&!(t.side!==actor.side&&unitHasStatus(t,'stealth'))) : [];
-      if(sub&&isManualTargetType(sub.targetType)&&subCandidates.length&&(!battleState.reservedMagicSubTargetInstanceId||!subCandidates.some(t=>String(t.instanceId)===String(battleState.reservedMagicSubTargetInstanceId)))){showOnlineError(`「${battleState.reservedMagic.name}」の追加効果対象を選択してください。`);return;}
-    }
-    const units=battleState.playerUnits.filter(u=>u.isActive&&u.currentHp>0).map(u=>({unitInstanceId:u.instanceId,...(u.reservedAction||{type:'attack',targetInstanceId:null})}));
-    const actionId='act_'+Date.now()+'_'+Math.random().toString(36).slice(2);
-    onlineSubmitted=true;renderOnlineControls();
-    sendOnline('submit_actions',{actionId,battleId:battleState.battleId,turn:battleState.turn,actions:{actionId,units,magicId:battleState.reservedMagic?.id||null,magicTargetInstanceId:battleState.reservedMagicTargetInstanceId||null,magicSubTargetInstanceId:battleState.reservedMagicSubTargetInstanceId||null}});
-  }
-  window.submitOnlineActions=submitOnlineActions;
-  function onlineMonotonicNow(){return (typeof performance!=='undefined'&&typeof performance.now==='function')?performance.now():Date.now();}
-  function onlineTimerSecondsLeft(){return onlineTimerEndMonotonic?Math.max(0,Math.ceil((onlineTimerEndMonotonic-onlineMonotonicNow())/1000)):0;}
-  function startOnlineTimer(deadline,remainingMs=null){
-    clearInterval(onlineTimerHandle);
-    onlineDeadline=Number(deadline)||0;
-    const hasRemaining=remainingMs!==null&&remainingMs!==undefined&&Number.isFinite(Number(remainingMs));
-    const duration=hasRemaining?Math.max(0,Number(remainingMs)):(onlineDeadline?Math.max(0,onlineDeadline-Date.now()):0);
-    onlineTimerEndMonotonic=onlineMonotonicNow()+duration;
-    const tick=()=>{const left=onlineTimerSecondsLeft();if($('online-timer'))$('online-timer').innerText=String(left);if($('online-battle-timer-value'))$('online-battle-timer-value').innerText=String(left);if($('online-timer'))$('online-timer').classList.toggle('text-rose-400',left<=10);if($('online-battle-timer'))$('online-battle-timer').classList.toggle('text-rose-300',left<=10);if(left<=0){clearInterval(onlineTimerHandle);onlineTimerHandle=null;}};
-    tick();onlineTimerHandle=setInterval(tick,250);
-  }
-  function showOnlinePreparingTimer(){
-    clearInterval(onlineTimerHandle);onlineTimerHandle=null;onlineDeadline=0;onlineTimerEndMonotonic=0;
-    $('online-controls')?.classList.add('hidden');$('online-timer')?.classList.add('hidden');$('online-battle-timer')?.classList.add('hidden');$('decision-command-panel')?.classList.add('hidden');
-    if($('online-timer'))$('online-timer').innerText='—';if($('online-battle-timer-value'))$('online-battle-timer-value').innerText='—';
-    if($('online-confirmed-status'))$('online-confirmed-status').innerText='開始時・ターン開始パッシブを処理しています…';
-  }
-  function showOnlineExecutionTimer(){
-    clearInterval(onlineTimerHandle);onlineTimerHandle=null;onlineDeadline=0;onlineTimerEndMonotonic=0;
-    // The 90-second timer exists only during an actionable decision phase.
-    $('online-controls')?.classList.add('hidden');$('online-timer')?.classList.add('hidden');$('online-battle-timer')?.classList.add('hidden');$('decision-command-panel')?.classList.add('hidden');
-    if($('online-timer'))$('online-timer').innerText='—';
-    if($('online-battle-timer-value'))$('online-battle-timer-value').innerText='—';
-    if($('online-timer'))$('online-timer').classList.remove('text-rose-400');
-    if($('online-battle-timer'))$('online-battle-timer').classList.remove('text-rose-300');
-    if($('online-confirmed-status'))$('online-confirmed-status').innerText='行動を実行中です。';
-  }
-  function showOnlinePausedTimer(){clearInterval(onlineTimerHandle);onlineTimerHandle=null;onlineDeadline=0;onlineTimerEndMonotonic=0;$('online-timer')?.classList.remove('hidden');if($('online-timer'))$('online-timer').innerText='⏸';if($('online-battle-timer-value'))$('online-battle-timer-value').innerText='⏸';if($('online-confirmed-status'))$('online-confirmed-status').innerText='接続待ちのためタイマーを一時停止しています。';}
-  function clearOnlinePreparationWatchdog(){if(onlinePrepareWatchdog!==null){clearTimeout(onlinePrepareWatchdog);onlinePrepareWatchdog=null;}}
-  function resetOnlineTurn(){onlineSubmitted=false;onlinePending={units:{},magicId:null};onlineSelectedUnitId=null;if(window.battleState){battleState.reservedMagic=null;battleState.reservedMagicTargetInstanceId=null;battleState.reservedMagicSubTargetInstanceId=null;battleState.reservedEnemyMagicTargetInstanceId=null;battleState.reservedEnemyMagicSubTargetInstanceId=null;}renderOnlineControls();}
-
-  async function playOnlineEvent(ev){
-    if(!ev)return;
-    try{
-      logBattle(`${ev.actor?.name||'プレイヤー'}：${ev.actionName||ev.type||'行動'}${ev.result?` → ${ev.result}`:''}`);
-      const mySide=battleState.yourSide||'player1';
-      const mapSide=s=>s===(mySide==='player1'?'player1':'player2')?'player':'enemy';
-      const targetCard=ev.target?.cardId?getOnlinePublicCard(ev.target.cardId):null;
-      const actorCard=ev.actor?.cardId?getOnlinePublicCard(ev.actor.cardId):null;
-      const target=ev.target?{...ev.target,side:mapSide(ev.target.side),image:ev.target.image||targetCard?.image||targetCard?.imageUrl||null}:null;
-      const targetDetails=(Array.isArray(ev.targetDetails)?ev.targetDetails:[]).map(d=>{
-        const raw=d?.entity||d?.target||d?.unit; if(!raw)return null;
-        const c=raw.cardId?getOnlinePublicCard(raw.cardId):null;
-        return {entity:{...raw,side:mapSide(raw.side),image:raw.image||c?.image||c?.imageUrl||null},hpBefore:d.hpBefore||null,hpAfter:d.hpAfter||null};
-      }).filter(Boolean);
-      let actor=ev.actor?.side?{...ev.actor,side:mapSide(ev.actor.side),image:ev.actor.image||actorCard?.image||actorCard?.imageUrl||null}:ev.actor;
-      const card=ev.card||getOnlinePublicCard(ev.cardId)||((allCards||[]).find(c=>c.id===ev.cardId)||null);
-      let cardData;
-      if(ev.type==='MAGIC_USE'){
-        cardData=card||{cardType:'magic',name:ev.actionName,image:ev.actor?.image||null,desc:ev.description||''};
-        actor={...(actor||{}),side:mapSide(ev.actor?.side||'player1'),name:ev.actor?.name||'プレイヤー',image:cardData.image||ev.actor?.image||null};
-      }else cardData=card||{cardType:'unit',name:ev.actor?.name,image:actor?.image};
-      await showActionPopup(actor,ev.actionName,cardData,{target:targetDetails.length?targetDetails.map(d=>d.entity.name).filter(Boolean).join(' / '):(target?.name||'対象なし'),effect:ev.effect||'効果なし',result:ev.result||'変化なし',targetEntity:targetDetails[0]?.entity||target,targetDetails,description:ev.description||'',actorHpBefore:ev.actorHpBefore,actorHpAfter:ev.actorHpAfter,targetHpBefore:ev.targetHpBefore,targetHpAfter:ev.targetHpAfter});
-    }catch(e){console.error('Online popup error:',e);await new Promise(r=>setTimeout(r,500));}
-  }
-  function showOnlineBattleResult(winner, state=onlineLastState, reason=null){
-    const modal=$('battle-result-modal');
-    const title=$('battle-result-title');
-    const message=$('battle-result-message');
-    const reward=$('battle-result-reward');
-    const rematch=$('battle-result-rematch');
-    const back=$('battle-result-back');
-    if(!modal||!title||!message)return;
-    if(reward){reward.classList.add('hidden');reward.innerHTML='';}
-    onlineRematchRequested=false;
-    const st=state||{};
-    const spectator=onlineSpectating||st.yourSide==='spectator';
-    if(spectator){
-      const winnerName=winner==='draw'?'引き分け':winner==='player1'?(st.p1?.name||'プレイヤー1'):(st.p2?.name||'プレイヤー2');
-      title.innerText=winner==='draw'?'🤝 引き分け':`🏆 ${winnerName} の勝利`;
-      title.className=`text-4xl sm:text-6xl font-black leading-tight ${winner==='draw'?'text-amber-300':'text-emerald-300'}`;
-      message.innerText=`対戦が終了しました。${reason?`
-${reason}`:''}`;
-    }else{
-      const mySide=st.yourSide==='player2'?'player2':'player1';
-      const localWinner=winner==='draw'?'draw':(winner===mySide?'player':'enemy');
-      title.innerText=localWinner==='player'?'🎉 勝利！':localWinner==='enemy'?'💀 敗北…':'🤝 引き分け';
-      title.className=`text-4xl sm:text-6xl font-black leading-tight ${localWinner==='player'?'text-emerald-300':localWinner==='enemy'?'text-rose-300':'text-amber-300'}`;
-      message.innerText=`${localWinner==='player'?'おめでとうございます！勝利です。':localWinner==='enemy'?'今回は敗北しました。':'両者引き分けです。'}
-再戦するには、両方のプレイヤーが「再戦」を押してください。${reason?`
-${reason}`:''}`;
-    }
-    if(rematch){
-      rematch.classList.toggle('hidden',spectator);
-      rematch.disabled=false;
-      rematch.innerText='🔄 再戦';
-      rematch.onclick=()=>{
-        if(spectator||onlineRematchRequested||!onlineRoom)return;
-        onlineRematchRequested=true;
-        rematch.disabled=true;
-        rematch.innerText='再戦希望を送信中…';
-        sendOnline('rematch_request',{battleId:st.battleId||battleState?.battleId||null});
-      };
-    }
-    if(back){
-      back.innerText=spectator?'↩ 観戦を終了':'🚪 部屋を抜ける';
-      back.disabled=false;
-      back.onclick=()=>{
-        if(onlineRoom)sendOnline('room_leave');
-        hideBattleResultModal();
-        resetOnlineRoomLocal();
-        switchView('online');
-        setOnlineStatus(spectator?'観戦を終了しています…':'部屋から退出しています…');
-        sendOnline('room_list');
-      };
-    }
-    modal.classList.remove('hidden');
-  }
-
-  function applyOnlineRematchUpdate(m){
-    onlineRematchRequested=!!m.ready;
-    const modal=$('battle-result-modal');
-    const message=$('battle-result-message');
-    const rematch=$('battle-result-rematch');
-    if(rematch&&!onlineSpectating){
-      rematch.disabled=onlineRematchRequested;
-      rematch.innerText=onlineRematchRequested?'再戦希望送信済み':'🔄 再戦';
-      rematch.classList.toggle('opacity-50',onlineRematchRequested);
-    }
-    if(message&&modal&&!modal.classList.contains('hidden')){
-      if(onlineSpectating)return;
-      message.innerText=onlineRematchRequested
-        ? `再戦を希望しました。相手の選択を待っています（${m.votes||1}/2）。` 
-        : (Number(m.votes||0)>0
-          ? `相手は再戦を希望しています。再戦する場合は「再戦」を押してください（${m.votes}/2）。`
-          : '再戦を開始できるか確認しています。');
-    }
-  }
-
-  async function processOnlineEventQueue(){
-    if(onlineEventProcessing)return;
-    onlineEventProcessing=true;
-    try{
-      while(onlineEventQueue.length){const ev=onlineEventQueue.shift();await playOnlineEvent(ev);}
-      // ポップアップ中に届いた最新stateだけを最後に反映する。
-      // これにより、演出途中でコマンド画面が開閉して次ターン入力不能になる競合を避ける。
-      if(onlineDeferredEnd){
-        const end=onlineDeferredEnd;onlineDeferredEnd=null;onlineDeferredState=null;
-        safeApplyOnlineState(end.state);
-        $('online-controls')?.classList.add('hidden');$('online-timer')?.classList.add('hidden');
-        showOnlineBattleResult(end.winner,end.state,end.reason||null);
-      }else if(onlineDeferredState){
-        const st=onlineDeferredState;onlineDeferredState=null;
-        safeApplyOnlineState(st);
-      }
-    }finally{onlineEventProcessing=false;}
-    completeOnlinePreparationIfReady();
-  }
-
-  function scheduleOnlinePreparationRecovery(marker, delay=12000){
-    clearOnlinePreparationWatchdog();
-    if(!marker?.decisionToken)return;
-    onlinePrepareWatchdog=setTimeout(()=>{
-      onlinePrepareWatchdog=null;
-      const current=onlinePrepareMarker;
-      if(!current||current.decisionToken!==marker.decisionToken||onlinePrepareAckToken===current.decisionToken)return;
-      // Never skip queued action/passive popups. Recovery only runs once all queued presentation work is drained.
-      if(onlineEventProcessing||onlineEventQueue.length){scheduleOnlinePreparationRecovery(current,5000);return;}
-      const state=current.state||onlineLastState;
-      if(state?.battleId===current.battleId && state.phase==='preparing' &&
-         (battleState?.phase!=='preparing'||String(battleState?.battleId||'')!==String(current.battleId||''))){
-        safeApplyOnlineState(state,false);
-      }
-      if(!battleState || String(battleState.battleId||'')!==String(current.battleId||'')){
-        // Request the server's authoritative state and retry rather than waiting forever on a stale local battle.
-        sendOnline('battle_state');
-        scheduleOnlinePreparationRecovery(current,5000);
-        return;
-      }
-      if(battleState.phase!=='preparing'){
-        // If a render error prevented phase application, the received preparing snapshot is authoritative.
-        if(state?.phase==='preparing'&&String(state.battleId||'')===String(current.battleId||'')){
-          battleState.phase='preparing';battleState.turn=Number(current.turn||state.turn||battleState.turn||1);
-          battleState.decisionToken=current.decisionToken;
-        }else{
-          sendOnline('battle_state');scheduleOnlinePreparationRecovery(current,5000);return;
-        }
-      }
-      if(onlineEventProcessing||onlineEventQueue.length){scheduleOnlinePreparationRecovery(current,5000);return;}
-      onlinePrepareAckToken=current.decisionToken;onlinePrepareMarker=null;clearOnlinePreparationWatchdog();
-      if($('online-confirmed-status'))$('online-confirmed-status').innerText='ターン準備の同期を復旧しました。入力フェーズを開始します…';
-      sendOnline('decision_ready',{battleId:current.battleId,turn:current.turn,decisionToken:current.decisionToken});
-    },Math.max(1000,delay));
-  }
-
-  function completeOnlinePreparationIfReady(){
-    const marker=onlinePrepareMarker;
-    if(!marker||onlineSpectating||!onlineMode||onlineEventProcessing||onlineEventQueue.length)return;
-    if(onlinePrepareAckToken===marker.decisionToken){onlinePrepareMarker=null;clearOnlinePreparationWatchdog();return;}
-    // Apply the last preparing state only after all passive popups have completed.
-    if(onlineDeferredState){const st=onlineDeferredState;onlineDeferredState=null;safeApplyOnlineState(st);}
-    if(battleState?.phase!=='preparing'||String(battleState?.battleId||'')!==String(marker.battleId||''))return;
-    onlinePrepareAckToken=marker.decisionToken;onlinePrepareMarker=null;clearOnlinePreparationWatchdog();
-    if($('online-confirmed-status'))$('online-confirmed-status').innerText='開始時効果の表示完了。相手側の準備完了を待っています…';
-    sendOnline('decision_ready',{battleId:marker.battleId,turn:marker.turn,decisionToken:marker.decisionToken});
-  }
-
-  function handleOnlineMessage(m){
-    if(m.type==='hello'){
-      onlineAuthenticated=true;onlineSessionId=m.sessionId||onlineSessionId;localStorage.setItem('cardBattleOnlineSession',onlineSessionId);updateConnectionBadge('connected','接続済み');setOnlineStatus('オンライン接続済み。');syncProfileAfterHello();flushOnlineQueue();return;
-    }
-    if(m.type==='profile_assets_ack'){
-      if(m.done){
-        onlineAssetsSyncing=false;
-        onlineAssetsReady=!!m.ready;
-        if(onlineAssetsReady){setOnlineStatus(onlineRoom?'カード画像の同期が完了しました。':'オンライン接続済み。');if(onlineRoom?.rule==='card_exchange')renderCardExchangeSelection();}
-        else showOnlineError('一部カード画像をサーバーへ同期できませんでした。通信状態と画像形式を確認して再接続してください。');
-      }else if(window.__cardBattleAssetNext) window.__cardBattleAssetNext();
-      return;
-    }
-    if(m.type==='deployment_assets'){ mergeOnlinePublicAssets(m.items||[]); if(onlineDeckOptions)renderOnlineSelection(); return; }
-    if(m.type==='deployment_assets_end'){ if(onlineDeckOptions)renderOnlineSelection(); return; }
-    if(m.type==='battle_cards'){ (m.cards||[]).forEach(registerOnlinePublicCard); return; }
-    if(m.type==='battle_assets'){ mergeOnlinePublicAssets(m.items||[]); return; }
-    if(m.type==='battle_assets_end'){ mergeOnlinePublicAssets([]); return; }
-    if(m.type==='card_exchange_state'){
-      if(onlineRoom?.rule!=='card_exchange')return;
-      onlineExchangeSubmitted=!!m.submitted;onlineExchangeOpponentSubmitted=!!m.opponentSubmitted;
-      if(m.phase==='selecting'){
-        if(!onlineExchangeSubmitted)renderCardExchangeSelection();
-        else $('online-selection-area').innerHTML=`<div class="rounded-lg border border-amber-500/40 bg-amber-950/20 p-4 text-xs text-amber-200">交換内容を確定しました。相手の確定を待っています…</div>`;
-      }else if(m.phase==='delivering'){
-        $('online-selection-area').innerHTML='<div class="rounded-lg border border-cyan-500/40 bg-cyan-950/20 p-4 text-xs text-cyan-200">交換カードの情報と画像を保存しています。画面を閉じずにお待ちください…</div>';
-      }else if(m.phase==='decision'&&!document.getElementById('card-exchange-decision-modal')){
-        showCardExchangeDecision(Number(m.receivedCount||0),false);
-      }
-      return;
-    }
-    if(m.type==='card_exchange_result'){
-      onlineExchangePending={exchangeId:String(m.exchangeId||''),fromName:m.fromName||'相手',cards:Array.isArray(m.cards)?m.cards:[],assetTotal:Math.max(0,Number(m.assetTotal)||0),receivedBatches:new Set(),images:new Map(),saving:false};
-      if(onlineExchangePending.assetTotal===0)finalizeCardExchangeReceive();
-      return;
-    }
-    if(m.type==='card_exchange_assets'){
-      const pending=onlineExchangePending;if(!pending||String(m.exchangeId||'')!==pending.exchangeId)return;
-      for(const item of (m.items||[]))if(item?.sourceId&&typeof item.image==='string'&&item.image)pending.images.set(String(item.sourceId),item.image);
-      pending.receivedBatches.add(Number(m.batch));finalizeCardExchangeReceive();return;
-    }
-    if(m.type==='card_exchange_complete'){
-      onlineExchangeSubmitted=true;onlineExchangeReceivedCount=Number(m.receivedCount||0);showCardExchangeDecision(onlineExchangeReceivedCount,false);return;
-    }
-    if(m.type==='card_exchange_continue_waiting'){
-      onlineExchangeDecisionLocked=!!m.myVote;showCardExchangeDecision(onlineExchangeReceivedCount,!m.myVote);return;
-    }
-    if(m.type==='card_exchange_next_round'){
-      removeCardExchangeDecisionModal();onlineExchangeSelected=[];onlineExchangeSubmitted=false;onlineExchangePending=null;onlineExchangeDecisionLocked=false;onlineExchangeReceivedCount=0;onlineExchangeReceivedCards=[];onlineExchangeOpponentSubmitted=false;onlineExchangeFilter='all';onlineExchangeSearch='';setOnlineStatus('次のカード交換を開始できます。');renderOnlineSelection();return;
-    }
-    if(m.type==='room_list'){renderRooms(m.rooms||[]);return;}
-    if(m.type==='room_joined'){
-      onlineCreateInFlight=false; clearTimeout(onlineCreateWatchdog); const btn=$('online-create-room-btn'); if(btn){btn.disabled=false;btn.innerText='部屋を作成';}
-      clearTimeout(onlineDeckRequestTimer);onlineDeckRequestTimer=null;
-      onlineRoom=m.room;onlineSlot=m.slot;onlineSpectating=false;onlineReady=false;onlineAssetsReady=false;onlineSelection=null;onlinePool=null;onlineExchangeSelected=[];onlineExchangeSubmitted=false;onlineExchangePending=null;onlineExchangeDecisionLocked=false;onlineExchangeReceivedCount=0;onlineExchangeReceivedCards=[];onlineExchangeOpponentSubmitted=false;removeCardExchangeDecisionModal();onlineDeckOptions=null;onlineDeckRequestId=null;onlineDeckList=Array.isArray(m.myDecks)?m.myDecks:[];onlineRentalDecks=Array.isArray(m.rentalDecks)?m.rentalDecks:[];
-      // 部屋参加時は必ずオンライン画面へ移動し、アプリ本体のIndexedDB読込完了後にデッキUIを描画する。
-      switchView('online');renderRoomPanel();renderPlayerList([]);
-      $('online-selection-area').innerHTML='<div class="text-xs text-slate-400">オンライン用カード・デッキ情報を読み込んでいます…</div>';
-      setOnlineStatus('部屋に参加しました。カード画像を同期しています…');
-      sendCardAssets();
-      scheduleOnlineRoomRender(onlineRoom.roomId);
-      return;
-    }
-    if(m.type==='room_recovered'){
-      clearTimeout(onlineDeckRequestTimer);onlineDeckRequestTimer=null;
-      onlineRoom=m.room;onlineSlot=m.slot;onlineSpectating=false;onlineReady=!!m.ready;onlineAssetsReady=false;
-      onlineSelection={...(m.selection||{})};
-      // ページ更新時は「出撃設定(selection)」とは別に保存されている
-      // 「使用デッキ(deckSelection)」を必ず復元する。さらにサーバー上の
-      // 公開デッキ一覧も保持し、IndexedDBの読込完了前に先頭デッキへ戻らない。
-      const recoveredDeckId=m.deckSelection?.id||m.deploymentOptions?.deckId||onlineSelection.deckId||'';
-      if(recoveredDeckId) onlineSelection.deckId=String(recoveredDeckId);
-      onlinePool=null;onlineRentalDecks=Array.isArray(m.rentalDecks)?m.rentalDecks:[];onlineDeckList=Array.isArray(m.myDecks)?m.myDecks:[];onlineDeckOptions=null;onlineDeckRequestId=null;
-      switchView('online');
-      renderRoomPanel();renderPlayerList(m.players||[]);
-      if(m.deploymentOptions){
-        onlineDeckOptions=m.deploymentOptions;
-        if(onlineDeckOptions.deckId) onlineSelection.deckId=String(onlineDeckOptions.deckId);
-      }
-      // オフラインの対戦準備画面へ戻るレースを防ぐため、画面復元を遅延させるのは
-      // オンラインUIだけに限定し、戦闘snapshotは通常のbattle_state処理へ任せる。
-      scheduleOnlineRoomRender(onlineRoom.roomId);
-      sendCardAssets();
-      setOnlineStatus('部屋・デッキ・出撃設定を復元しています…');return;
-    }
-    if(m.type==='spectate_joined'){
-      onlineRoom=m.room;onlineSpectating=true;onlineReady=false;renderRoomPanel();$('online-selection-area').innerHTML='<div class="text-xs text-purple-300 font-bold">観戦中です。プレイヤー操作はできません。</div>';setOnlineStatus('観戦中です。');return;
-    }
-    if(m.type==='spectate_recovered'){
-      onlineRoom=m.room;onlineSpectating=true;renderRoomPanel();$('online-selection-area').innerHTML='<div class="text-xs text-purple-300 font-bold">観戦中です。プレイヤー操作はできません。</div>';setOnlineStatus('観戦状態を復元しました。');return;
-    }
-    if(m.type==='rental_decks'){onlineRentalDecks=m.decks||[];if(onlineRoom?.rule==='rental')renderOnlineSelection();return;}
-    if(m.type==='deployment_options'){
-      // deployment_options はカード本体、deployment_assets は画像を別送する。
-      // ここで存在しない旧関数名 registerPublicCard を呼ぶと受信処理全体が
-      // 例外停止し、キャラクターカードが表示されないため、共通キャッシュ登録関数を使う。
-      clearTimeout(onlineDeckRequestTimer);onlineDeckRequestTimer=null;
-      (m.units||[]).forEach(registerOnlinePublicCard);(m.magics||[]).forEach(registerOnlinePublicCard);
-      onlineDeckOptions={units:(m.units||[]).map(c=>({...c,...(getOnlinePublicCard(c.id)||{})})),magics:(m.magics||[]).map(c=>({...c,...(getOnlinePublicCard(c.id)||{})})),deckId:m.deckId,deckName:m.deckName};
-      onlineDeckRequestId=String(m.deckId||onlineSelection?.deckId||'');
-      onlineSelection=onlineSelection||{};onlineSelection.deckId=m.deckId;onlineSelection.unitIds=onlineDeckOptions.units.map(c=>String(c.id));onlineSelection.magicIds=onlineDeckOptions.magics.map(c=>String(c.id));onlineSelection.active=onlineSelection.active?.filter(id=>onlineSelection.unitIds.includes(id))||onlineDeckOptions.units.slice(0,3).map(c=>String(c.id));onlineSelection.reserve=(onlineSelection.reserve||[]).filter(id=>onlineSelection.unitIds.includes(id));onlineSelection.deployConfirmed=false;onlineReady=false;setOnlineStatus(`「${onlineDeckOptions.deckName||'選択したデッキ'}」のキャラクターカードを読み込みました。出撃3体を選択してください。`);renderOnlineSelection();return;
-    }
-    if(m.type==='battle_selection_confirmed'){
-      onlineSelection={...(onlineSelection||{}),...(m.selection||{}),deployConfirmed:true};setOnlineStatus('出撃設定をサーバーに確定しました。準備完了できます。');renderOnlineSelection();return;
-    }
-    if(m.type==='room_update'){
-      if(m.room){onlineRoom=m.room;renderRoomPanel();}const ps=m.players||[];onlineReady=!!ps[onlineSlot||0]?.ready;renderPlayerList(ps);if(onlineRoom?.rule==='card_exchange'&&!onlineExchangeSubmitted)renderCardExchangeSelection();return;
-    }
-    if(m.type==='pool_ready'){
-      onlinePool={units:m.units||[],magics:m.magics||[]};
-      [...onlinePool.units,...onlinePool.magics].forEach(registerOnlinePublicCard);
-      onlineSelection={unitIds:[],magicIds:[],deployConfirmed:false};onlineReady=true;renderOnlineSelection();setOnlineStatus('サーバー抽選候補が届きました。画像を読み込んでいます…');return;
-    }
-    if(m.type==='pool_assets'){
-      mergeOnlinePublicAssets(m.items||[]);
-      if(onlinePool)renderPoolBuilder();
-      return;
-    }
-    if(m.type==='pool_assets_end'){
-      if(onlinePool)renderPoolBuilder();
-      return;
-    }
-    if(m.type==='battle_preparing'){setOnlineStatus(m.message||'カード画像の同期完了を待っています…');return;}
-    if(m.type==='battle_start'){clearOnlinePreparationWatchdog();onlinePrepareMarker=null;onlineRematchRequested=false;hideBattleResultModal();resetOnlineTurn();onlineLastTurn=Number(m.state?.turn||1);onlineLastDecisionToken=null;onlinePrepareAckToken=null;safeApplyOnlineState(m.state);return;}
-    if(m.type==='turn_preparing'){
-      if(m.state){if(onlineEventQueue.length||onlineEventProcessing)onlineDeferredState=m.state;else safeApplyOnlineState(m.state);}
-      return;
-    }
-    if(m.type==='decision_prepare_end'){
-      if(m.state){if(onlineEventQueue.length||onlineEventProcessing)onlineDeferredState=m.state;else safeApplyOnlineState(m.state);}
-      if(!onlineSpectating&&m.state?.yourSide!=='spectator'){
-        onlinePrepareMarker={battleId:m.battleId||m.state?.battleId,turn:Number(m.turn||m.state?.turn||0),decisionToken:String(m.decisionToken||m.state?.decisionToken||''),state:m.state||onlineLastState};
-        scheduleOnlinePreparationRecovery(onlinePrepareMarker,12000);
-        completeOnlinePreparationIfReady();
-      }
-      return;
-    }
-    if(m.type==='battle_event'){
-      if(m.state?.phase==='execution')showOnlineExecutionTimer();
-      else if(m.state?.phase==='preparing')showOnlinePreparingTimer();
-      // イベント演出中は最新stateをUIへ即反映せず保留する。
-      // イベントごとにdecision UIを書き換えると、ポップアップ表示中に
-      // コマンド選択が消えたり次ターンへ進めなくなるため、最後に一度だけ描画する。
-      if(m.event) onlineEventQueue.push(m.event);
-      if(m.state) onlineDeferredState=m.state;
-      processOnlineEventQueue();return;
-    }
-    if(m.type==='battle_state' && m.state?.phase==='finished' && onlineRoom){
-      safeApplyOnlineState(m.state);showOnlineBattleResult(m.state.winner,m.state);return;
-    }
-    if(m.type==='turn_start'||m.type==='battle_state'||m.type==='turn_execution_start'){
-      const st=m.state;if(!st)return;
-      if(m.type==='turn_start'){
-        const nextTurn=Number(st.turn||0),token=String(st.decisionToken||'');
-        // turn_start is the authoritative signal that a fresh input phase is open. Do not rely on local
-        // turn/token comparisons: a timeout or resync race can leave those values stale and keep the button locked.
-        clearOnlinePreparationWatchdog();onlinePrepareMarker=null;resetOnlineTurn();
-        onlineLastTurn=nextTurn||onlineLastTurn;
-        if(token)onlineLastDecisionToken=token;
-      }else if(m.type==='turn_execution_start'){
-        // The submitted lock belongs to the phase that just ended. Clear it while execution UI is hidden,
-        // so a timeout-driven transition cannot carry the old lock into the next turn.
-        onlineSubmitted=false;
-      }
-      // Do not start/stop timers ahead of queued passive/action animations. State application owns the phase UI.
-      if(onlineEventQueue.length||onlineEventProcessing){onlineDeferredState=st;return;}
-      safeApplyOnlineState(st);return;
-    }
-    if(m.type==='battle_paused'){showOnlinePausedTimer();setOnlineStatus(m.reason||'対戦相手の接続待ちです。');return;}
-    if(m.type==='battle_resumed'){setOnlineStatus('接続が復帰しました。対戦を再開します。');return;}
-    if(m.type==='action_confirmed'){if(m.playerId===onlineSessionId) setOnlineStatus('行動をサーバーに確定しました。相手の入力を待っています。');else setOnlineStatus('相手の行動が確定しました。');return;}
-    if(m.type==='battle_error'){
-      onlineSubmitted=false;
-      showOnlineError(m.message||'戦闘処理エラー');
-      if(battleState?.phase==='decision'){$('decision-command-panel')?.classList.remove('hidden');renderOnlineControls();}
-      // A rejected action or execution recovery may leave the local phase stale. Always ask for the authoritative phase so the next input button cannot remain locked.
-      if(onlineRoom) sendOnline('battle_state');
-      return;
-    }
-    if(m.type==='player_disconnected'){showOnlinePausedTimer();setOnlineStatus('対戦プレイヤーの接続が切断されました。再接続を待っています。');return;}
-    if(m.type==='battle_end'){
-      if(onlineEventQueue.length||onlineEventProcessing){onlineDeferredEnd={winner:m.winner,state:m.state,reason:m.reason||null};return;}
-      safeApplyOnlineState(m.state);$('online-controls')?.classList.add('hidden');$('online-timer')?.classList.add('hidden');showOnlineBattleResult(m.winner,m.state,m.reason||null);return;
-    }
-    if(m.type==='rematch_update'){applyOnlineRematchUpdate(m);return;}
-    if(m.type==='rematch_starting'){onlineRematchRequested=false;hideBattleResultModal();setOnlineStatus('両者が再戦を希望しました。新しい対戦を準備しています…');return;}
-    if(m.type==='room_closed'){hideBattleResultModal();showOnlineError(m.reason||'部屋が終了しました。');resetOnlineRoomLocal();switchView('online');sendOnline('room_list');return;}
-    if(m.type==='left_room'){resetOnlineRoomLocal();setOnlineStatus('部屋から退出しました。');return;}
-    if(m.type==='error'){
-      if(String(m.code||'').startsWith('EXCHANGE_')||m.code==='NOT_CARD_EXCHANGE'||m.code==='EXCHANGE_WAITING_PLAYER'){
-        if(onlineRoom?.rule==='card_exchange'&&onlineExchangeSubmitted&&onlineExchangePending===null){onlineExchangeSubmitted=false;renderCardExchangeSelection();}
-      }
-      onlineCreateInFlight=false; clearTimeout(onlineCreateWatchdog); const btn=$('online-create-room-btn'); if(btn){btn.disabled=false;btn.innerText='部屋を作成';}
-
-      if(['INVALID_ACTION','NOT_DECISION','STALE_BATTLE','STALE_TURN','OFFLINE_PLAYER'].includes(m.code)){
-        onlineSubmitted=false;
-        if(battleState?.phase==='decision')renderOnlineControls();
-        // The rejection can mean our phase snapshot became stale. Ask the server for its current phase,
-        // rather than leaving the client stuck in the submitted/disabled state.
-        if(onlineRoom)sendOnline('battle_state');
-      }
-      if(m.code==='REMATCH_UNAVAILABLE'){
-        onlineRematchRequested=false;
-        const rematch=$('battle-result-rematch');if(rematch){rematch.disabled=false;rematch.innerText='🔄 再戦';rematch.classList.remove('opacity-50');}
-      }
-      if(['INVALID_DECK','NO_DECK','NO_SOURCE','PROFILE_NOT_READY','OUTSIDE_DECK','NOT_IN_ROOM'].includes(m.code)){
-        clearTimeout(onlineDeckRequestTimer);onlineDeckRequestTimer=null;onlineDeckRequestId=null;
-      }
-      showOnlineError(m.message||'オンライン処理でエラーが発生しました。');
-      return;
-    }
-  }
-
-  function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
-
-  // The offline reservation renderer may enable the confirm button. Reapply authoritative online phase/submission locks after it runs.
-  const originalRenderBattleState=window.renderBattleState;
-  if(typeof originalRenderBattleState==='function'){
-    window.renderBattleState=function(){const result=originalRenderBattleState.apply(this,arguments);if(onlineMode)renderOnlineControls();return result;};
-  }
-  const originalTriggerOmakase=window.triggerOmakase;
-  if(typeof originalTriggerOmakase==='function'){
-    window.triggerOmakase=function(){
-      if(onlineMode&&(onlineSpectating||onlineSubmitted||battleState?.phase!=='decision')){renderOnlineControls();return;}
-      const result=originalTriggerOmakase.apply(this,arguments);
-      if(onlineMode){$('decision-command-panel')?.classList.remove('hidden');renderCommandPanel();renderMagicHand();renderOnlineMagicTargets();renderOnlineControls();}
-      return result;
-    };
-  }
-
-  // オンライン版では既存のオフライン確定処理を使わない。
-  const originalConfirmPlayerActions=window.confirmPlayerActions;
-  window.confirmPlayerActions=function(){if(onlineMode){submitOnlineActions();return;}return originalConfirmPlayerActions.apply(this,arguments);};
-
-  // ページ更新時に保存済みセッションだけ自動復帰。新規セッションはユーザー操作時に接続する。
-  setTimeout(()=>{if(onlineSessionId){connectOnline();}},0);
-
-  // battle-state更新後にオンライン魔法ターゲットUIも同期するため、既存renderMagicHandをラップする。
-  const originalRenderMagicHand=window.renderMagicHand;
-  if(typeof originalRenderMagicHand==='function'){
-    window.renderMagicHand=function(){originalRenderMagicHand.apply(this,arguments);renderOnlineMagicTargets();};
-  }
-})();
-</script>
 </body>
 </html>
