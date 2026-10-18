@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.12 — offline campaign layer over the original card editor/battle engine */
+/* 都道府県カード戦争 v1.0.13 — offline campaign layer over the original card editor/battle engine */
 'use strict';
 
 let campaignState = null;
@@ -542,10 +542,11 @@ function prefRenderDashboard() {
   if(summary){summary.innerHTML=`<div class="flex justify-between gap-2"><span class="text-slate-400">代表</span><b class="text-white">${prefEsc(p.repName)}</b></div><div class="flex justify-between gap-2"><span class="text-slate-400">所持キャラ</span><b class="text-amber-200">${units.length} / 10枚</b></div><div class="flex justify-between gap-2"><span class="text-slate-400">マジック</span><b class="text-violet-200">${magics.length}枚</b></div><div class="flex justify-between gap-2"><span class="text-slate-400">連続未対戦</span><b class="${mustBattle?'text-rose-300':'text-white'}">${p.nonBattleStreak||0} / 3ターン</b></div><div class="flex justify-between gap-2"><span class="text-slate-400">通算成績</span><b class="text-white">${p.allTimeStats.wins||0}勝 ${p.allTimeStats.draws||0}分 ${p.allTimeStats.losses||0}敗</b></div><p class="text-[10px] leading-relaxed text-slate-500 border-t border-slate-800 pt-2 mt-2">次年度の資金提供額は、今年度最終ランキングのランクにより決定します。</p>`;}
   const ownedSummary=document.getElementById('pref-owned-summary');if(ownedSummary){ownedSummary.innerHTML=units.slice(0,5).map(i=>`<div>${prefCardDisplay(i.id,{small:true})}</div>`).join('')||'<p class="col-span-5 text-xs text-slate-500">キャラカードを所持していません。</p>';ownedSummary.querySelectorAll('[data-pref-action="details"]').forEach(el=>el.addEventListener('click',ev=>{ev.stopPropagation();prefOpenCardDetail(el.dataset.id);}));}
   const logs=document.getElementById('pref-recent-log');if(logs){logs.innerHTML=(campaignState.logs||[]).slice(0,8).map(l=>`<div class="flex gap-2 border-b border-slate-800/70 pb-2"><span class="shrink-0 text-amber-300 font-black">${l.year||campaignState.year}/${l.week||campaignState.week}</span><span class="text-slate-300 leading-relaxed">${prefEsc(l.message)}</span></div>`).join('')||'<p class="text-slate-500">まだ出来事はありません。</p>';}
-  const status=document.getElementById('pref-command-status');if(status)status.textContent=campaignState.turnProcessing?.stage==='player-preview'?'対戦相手決定・編成確定待ち':campaignState.turnProcessing?'ターン処理中':p.lastCommandAbs===prefAbsTurn()?(p.lastCommand==='battle'?'対戦コマンドを選択済み':'調査コマンドを選択済み'):'コマンド未選択';
+  const waitingForLoadout=campaignState.turnProcessing?.stage==='player-preview';
+  const pendingPanel=document.getElementById('pref-pending-battle-panel');if(pendingPanel)pendingPanel.classList.toggle('hidden',!waitingForLoadout);
+  const status=document.getElementById('pref-command-status');if(status)status.textContent=waitingForLoadout?'対戦相手決定・編成確定待ち':campaignState.turnProcessing?'ターン処理中':p.lastCommandAbs===prefAbsTurn()?(p.lastCommand==='battle'?'対戦コマンドを選択済み':'調査コマンドを選択済み'):'コマンド未選択';
   document.getElementById('pref-battle-selection')?.classList.add('hidden');document.getElementById('pref-investigation-selection')?.classList.add('hidden');
   const processing=!!campaignState.turnProcessing;
-  const waitingForLoadout=campaignState.turnProcessing?.stage==='player-preview';
   document.getElementById('pref-turn-progress')?.classList.toggle('hidden',!processing||waitingForLoadout);
   if(processing){document.getElementById('pref-command-panel')?.classList.add('hidden');} else {document.getElementById('pref-command-panel')?.classList.remove('hidden');}
 }
@@ -676,13 +677,18 @@ function prefRecoverPendingBattlePreview(tx=campaignState?.turnProcessing, silen
 }
 function prefEnsurePreviewResumeButton() {
   const button=document.getElementById('campaign-preview-resume');if(!button)return;
-  // Keep the rescue control outside all switchable views so it cannot disappear when navigating.
+  // Keep the rescue control outside switchable views so navigation cannot orphan it.
   if(button.parentElement!==document.body)document.body.appendChild(button);
   const tx=campaignState?.turnProcessing;
   const waiting=tx?.stage==='player-preview';
   const recoverable=!!tx && tx.stage!=='player-preview' && tx.stage==='battles' && tx.actions?.[PREF_PLAYER_ID]?.type==='battle' && (tx.pairs||[]).some(pair=>(pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID)&&pair.status!=='done') && !campaignBattlePending;
   const processing=!!tx && !waiting && !recoverable && !campaignBattlePending;
-  button.classList.toggle('hidden',!(waiting||recoverable||processing));
+  const currentView=document.querySelector('.view-section:not(.hidden)')?.id||'';
+  const loadoutOpen=currentView==='view-prefecture'&&!document.getElementById('pref-battle-selection')?.classList.contains('hidden');
+  const inlineReady=currentView==='view-prefecture'&&!document.getElementById('pref-pending-battle-panel')?.classList.contains('hidden');
+  // On the main game screen the large inline action is clearer; elsewhere keep the floating action visible.
+  const showFloating=waiting?!loadoutOpen&&!inlineReady:(recoverable||processing);
+  button.classList.toggle('hidden',!showFloating);
   button.dataset.prefAction=waiting?'battle-preview-continue':recoverable?'recover-pending-battle':'resume-turn-processing';
   button.textContent=waiting?'⚔️ 編成を確定して対戦開始':recoverable?'🛠️ 対戦準備を復旧する':'🔄 ターン処理を再開する';
   button.title=waiting?'対戦相手決定後の編成確認へ進みます':recoverable?'保存済みの未決着対戦を編成確認へ戻します':'保存済みのターン処理を再開します';
@@ -700,6 +706,7 @@ switchView = function(viewId) {
   if(viewId==='pref-gacha')prefRenderGacha();
   if(viewId==='pref-ranking')prefRenderRanking();
   if(viewId==='pref-investigations')prefRenderInvestigations();
+  prefEnsurePreviewResumeButton();
 };
 
 function prefShowModal(title, body, buttons=[]) {
@@ -814,7 +821,7 @@ function prefShowBattleSelection(finalizing=false) {
   if(reserve.length>2)reserve=reserve.slice(0,2);
   if(active.length<3){const rest=units.filter(x=>!active.includes(x.id)&&!reserve.includes(x.id));while(active.length<3&&rest.length)active.push(rest.shift().id);}
   const box=document.getElementById('pref-battle-selection');box.classList.remove('hidden');document.getElementById('pref-investigation-selection')?.classList.add('hidden');
-  if(finalizing){document.getElementById('pref-command-panel')?.classList.remove('hidden');document.getElementById('pref-turn-progress')?.classList.add('hidden');document.getElementById('campaign-preview-resume')?.classList.add('hidden');}
+  if(finalizing){document.getElementById('pref-command-panel')?.classList.remove('hidden');document.getElementById('pref-turn-progress')?.classList.add('hidden');document.getElementById('pref-pending-battle-panel')?.classList.add('hidden');document.getElementById('campaign-preview-resume')?.classList.add('hidden');}
   const pair=finalizing?(campaignState.turnProcessing?.pairs||[]).find(pair=>pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID):null;
   const rivalId=pair?(pair.a===PREF_PLAYER_ID?pair.b:pair.a):null;const rival=rivalId?prefRegion(rivalId):null;
   box.innerHTML=`<div class="flex flex-wrap justify-between gap-2 items-start"><div><h3 class="text-lg font-black text-rose-200">${finalizing?'対戦前の最終編成を確定':'対戦用の5枚を選出'}</h3><p class="text-xs text-slate-400 mt-1">${finalizing?`対戦相手：${prefEsc(rival?.prefecture||'決定済みの代表')}。出撃3体と控え2体までを選び、この編成で対戦を開始します。`:'出撃3体を必ず選択。残り2枚までは控えにできます。'} カードをタップして役割を変更できます。</p></div><button data-pref-action="cancel-command" class="px-3 py-2 bg-slate-800 rounded-lg text-xs font-bold">${finalizing?'編成を戻す':'キャンセル'}</button></div><div id="pref-loadout-counter" class="mt-3 text-xs font-black text-amber-200"></div><div id="pref-loadout-list" class="grid grid-cols-3 sm:grid-cols-5 gap-2 mt-3"></div><div class="flex flex-wrap gap-2 mt-4"><button data-pref-action="auto-loadout" class="px-4 py-3 rounded-lg bg-slate-800 text-xs font-black">自動選出</button><button data-pref-action="${finalizing?'confirm-final-loadout':'confirm-battle'}" class="flex-1 py-3 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-black text-sm">${finalizing?'この編成を確定して対戦開始':'仮編成で対戦相手を決定'}</button></div>${finalizing?'<p class="text-[10px] text-amber-200 mt-2">対戦相手は確定済みです。ここで編成を確定すると戦闘が始まります。</p>':'<p class="text-[10px] text-slate-500 mt-2">対戦相手が決まった後に、編成を変更して最終確定できます。</p>'}`;
@@ -980,11 +987,10 @@ async function prefBeginTurn(playerAction) {
   await prefSave();prefRenderAll();
   const playerPair=(tx.pairs||[]).find(pair=>pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID);
   if(playerPair){
-    const opponentId=playerPair.a===PREF_PLAYER_ID?playerPair.b:playerPair.a;const opponent=prefRegion(opponentId);const opponentLoadout=prefBattleOverrideForRegions(PREF_PLAYER_ID,opponentId,playerAction.loadout);
-    const opponentCards=opponentLoadout.selectedB.map(id=>{const card=prefCardForInstance(id);return card?`<span class=\"inline-block rounded bg-slate-800 px-2 py-1 m-1\">${prefEsc(card.name)} ★${prefRankStars(card)}</span>`:''}).join('');
+    const opponentId=playerPair.a===PREF_PLAYER_ID?playerPair.b:playerPair.a;const opponent=prefRegion(opponentId);
     campaignState.draftLoadout=JSON.parse(JSON.stringify(playerAction.loadout||prefDefaultLoadout(PREF_PLAYER_ID)));
     tx.stage='player-preview';await prefSave();prefRenderDashboard();prefEnsurePreviewResumeButton();
-    prefShowModal('⚔️ 対戦相手が決定',`<div class="text-center"><div class="text-4xl mb-2">${prefEsc(opponent?.icon||'🏯')}</div><div class="text-2xl font-black text-rose-200">${prefEsc(opponent?.prefecture||opponentId)}</div><div class="text-lg font-bold mt-1">${prefEsc(opponent?.repName||'代表')}</div><div class="mt-2 text-amber-200 font-black">現在順位：${prefRankOf(opponentId)}位（${prefEsc(opponent?.tier||'E')}ランク）</div><div class="text-xs text-slate-400 mt-1">所持資金：${prefFormatMoney(opponent?.funds||0)}</div><div class="text-left mt-4"><div class="font-black text-slate-200 mb-1">対戦相手の選出カード</div>${opponentCards||'カード情報なし'}</div><p class="text-xs text-slate-400 mt-3">相手は確定しました。編成はこの後で変更して最終確定できます。カードホルダーや調査結果を確認してから再開することもできます。</p></div>`,[{label:'閉じる',action:'close-modal'},{label:'編成・調査を確認',action:'battle-preview-back'},{label:'編成を選んで対戦開始',action:'battle-preview-continue',style:'primary'}]);
+    prefShowModal('⚔️ 対戦相手が決定',`<div class=\"text-center\"><div class=\"text-4xl mb-2\">${prefEsc(opponent?.icon||'🏯')}</div><div class=\"text-2xl font-black text-rose-200\">${prefEsc(opponent?.prefecture||opponentId)}</div><div class=\"text-lg font-bold mt-1\">${prefEsc(opponent?.repName||'代表')}</div><div class=\"mt-2 text-amber-200 font-black\">現在順位：${prefRankOf(opponentId)}位（${prefEsc(opponent?.tier||'E')}ランク）</div><div class=\"text-xs text-slate-400 mt-1\">所持資金：${prefFormatMoney(opponent?.funds||0)}</div><div class=\"mt-4 rounded-lg border border-rose-900/60 bg-slate-900 p-3 text-sm text-slate-200\">対戦相手のカード内容は、この時点では公開されません。カード情報は調査で判明した範囲だけ確認できます。</div><p class=\"text-xs text-slate-400 mt-3\">相手は確定しました。編成はこの後で変更して最終確定できます。カードホルダーや調査結果を確認した後も、ゲーム画面の「編成を確定して対戦開始」から再開できます。</p></div>`,[{label:'閉じる',action:'close-modal'},{label:'編成・調査を確認',action:'battle-preview-back'},{label:'編成を選んで対戦開始',action:'battle-preview-continue',style:'primary'}]);
     return;
   }
   await prefContinueTurn();
@@ -1122,7 +1128,7 @@ async function prefContinueTurn() {
         return;
       }
     }
-    if(tx.stage==='player-preview'){document.getElementById('campaign-preview-resume')?.classList.remove('hidden');return;}
+    if(tx.stage==='player-preview'){prefRenderDashboard();prefEnsurePreviewResumeButton();return;}
     if(tx.stage==='settling'){
       await prefCompleteTurn(tx);
       return;
@@ -1235,8 +1241,8 @@ async function prefPullAndAcquireMagic(regionId, templateId) {
 function prefShowPurchasePanel() {}
 
 async function prefHandleClick(action,id,button) {
-  if(action==='close-modal'){prefCloseModal();if(campaignState?.turnProcessing?.stage==='player-preview'){document.getElementById('pref-turn-progress')?.classList.add('hidden');prefEnsurePreviewResumeButton();}return;}
-  if(action==='battle-preview-back'){prefCloseModal();prefEnsurePreviewResumeButton();document.getElementById('pref-turn-progress')?.classList.add('hidden');return;}
+  if(action==='close-modal'){prefCloseModal();if(campaignState?.turnProcessing?.stage==='player-preview'){document.getElementById('pref-turn-progress')?.classList.add('hidden');if(document.querySelector('.view-section:not(.hidden)')?.id==='view-prefecture')prefRenderDashboard();prefEnsurePreviewResumeButton();}return;}
+  if(action==='battle-preview-back'){prefCloseModal();document.getElementById('pref-turn-progress')?.classList.add('hidden');if(document.querySelector('.view-section:not(.hidden)')?.id==='view-prefecture')prefRenderDashboard();prefEnsurePreviewResumeButton();return;}
   if(action==='battle-preview-continue'){prefCloseModal();if(campaignState?.turnProcessing?.stage==='player-preview'){prefEnsurePreviewResumeButton();if(document.querySelector('.view-section:not(.hidden)')?.id!=='view-prefecture')switchView('prefecture');prefShowBattleSelection(true);}return;}
   if(action==='recover-pending-battle'){
     const tx=campaignState?.turnProcessing;
@@ -1285,7 +1291,7 @@ async function prefHandleClick(action,id,button) {
     await prefBeginTurn({type:'battle',loadout:{active:[...loadout.active],reserve:[...loadout.reserve]}});return;
   }
   if(action==='choose-investigation'){if((prefPlayerRegion()?.nonBattleStreak||0)>=3)return;prefShowInvestigationSelection();return;}
-  if(action==='cancel-command'){document.getElementById('pref-battle-selection')?.classList.add('hidden');document.getElementById('pref-investigation-selection')?.classList.add('hidden');if(campaignState?.turnProcessing?.stage==='player-preview'){document.getElementById('pref-command-panel')?.classList.add('hidden');document.getElementById('pref-turn-progress')?.classList.add('hidden');prefEnsurePreviewResumeButton();}return;}
+  if(action==='cancel-command'){document.getElementById('pref-battle-selection')?.classList.add('hidden');document.getElementById('pref-investigation-selection')?.classList.add('hidden');if(campaignState?.turnProcessing?.stage==='player-preview'){document.getElementById('pref-turn-progress')?.classList.add('hidden');prefRenderDashboard();prefEnsurePreviewResumeButton();}return;}
   if(action==='toggle-loadout'){prefToggleLoadout(id);return;}
   if(action==='auto-loadout'){prefAutoLoadout();return;}
   if(action==='confirm-final-loadout'){

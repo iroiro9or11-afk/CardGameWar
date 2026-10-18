@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.12</title>
+  <title>都道府県カード戦争 v1.0.13</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -301,7 +301,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.12</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.13</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -336,6 +336,12 @@
         <div class="grid grid-cols-1 lg:grid-cols-5 gap-3">
           <div class="lg:col-span-3 rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5">
             <div class="flex flex-wrap items-center justify-between gap-2 mb-3"><h3 class="font-black text-white">今週のコマンド</h3><div class="flex flex-wrap items-center gap-2"><span id="pref-command-status" class="text-[10px] font-bold text-slate-400">未選択</span><button type="button" data-pref-action="new-game" class="px-3 py-2 rounded-lg border border-rose-500/40 bg-rose-950/50 hover:bg-rose-900/70 text-rose-200 text-[10px] font-black">🔄 最初からやり直す</button></div></div>
+            <div id="pref-pending-battle-panel" class="hidden mb-3 rounded-xl border-2 border-amber-400/70 bg-amber-950/40 p-4 shadow-lg">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="min-w-0"><div class="font-black text-amber-200">⚔️ 対戦相手が決定しています</div><p class="text-xs text-slate-200 mt-1">まだ対戦は始まっていません。カードホルダーや調査結果を確認した後も、ここから編成を確定して対戦を開始できます。</p></div>
+                <button type="button" data-pref-action="battle-preview-continue" class="shrink-0 rounded-xl bg-amber-500 hover:bg-amber-400 px-5 py-3 text-sm font-black text-slate-950 shadow">⚔️ 編成を確定して対戦開始</button>
+              </div>
+            </div>
             <div id="pref-command-panel" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button data-pref-action="choose-battle" class="rounded-xl border border-rose-500/40 bg-gradient-to-br from-rose-950/80 to-slate-950 p-4 text-left hover:border-rose-300 transition"><div class="text-2xl">⚔️</div><div class="font-black text-rose-200 mt-2">対戦コマンド</div><div class="text-xs text-slate-400 mt-1">カードを選出して代表同士の対戦に参加</div><div id="pref-battle-rule" class="text-[10px] text-rose-300 mt-3">4ターンに1回以上の対戦が必要</div></button>
               <button data-pref-action="choose-investigation" class="rounded-xl border border-cyan-500/40 bg-gradient-to-br from-cyan-950/70 to-slate-950 p-4 text-left hover:border-cyan-300 transition"><div class="text-2xl">🔎</div><div class="font-black text-cyan-200 mt-2">調査コマンド</div><div class="text-xs text-slate-400 mt-1">他の代表のカードや行動傾向を調査</div><div class="text-[10px] text-cyan-300 mt-3">成功率は相手とのランク差で変動</div></button>
