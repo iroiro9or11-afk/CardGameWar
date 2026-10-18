@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.11 — offline campaign layer over the original card editor/battle engine */
+/* 都道府県カード戦争 v1.0.12 — offline campaign layer over the original card editor/battle engine */
 'use strict';
 
 let campaignState = null;
@@ -275,6 +275,9 @@ async function prefLoadState() {
     if(campaignState.turnProcessing && campaignState.turnProcessing.stage==='battles') {
       const tx=campaignState.turnProcessing;
       if(tx.pairIndex==null)tx.pairIndex=0;
+      // v1.0.10以前の保存データには player-preview の段階がありません。
+      // プレイヤー対戦が未決着なら、AIの処理済み結果を保持したまま編成確認へ戻します。
+      prefRecoverPendingBattlePreview(tx, true);
     }
     await prefSave();
   }
@@ -639,12 +642,50 @@ function prefRenderInvestigations() {
 function renderPrefDashboard(){prefRenderDashboard();}
 function renderPrefMarket(){prefRenderMarket();}
 
+function prefRecoverPendingBattlePreview(tx=campaignState?.turnProcessing, silent=false) {
+  if(!campaignState||!tx||tx.stage==='player-preview')return tx?.stage==='player-preview';
+  const playerAction=tx.actions?.[PREF_PLAYER_ID];
+  if(playerAction?.type!=='battle'||!Array.isArray(tx.pairs))return false;
+  const pair=tx.pairs.find(item=>(item.a===PREF_PLAYER_ID||item.b===PREF_PLAYER_ID)&&item.status!=='done');
+  if(!pair)return false;
+  const pairIndex=tx.pairs.indexOf(pair);
+  const savedCursor=Number.isInteger(tx.pairIndex)?Math.max(0,tx.pairIndex):0;
+  // Battle outcomes are committed atomically before a pair becomes "done". A pending or
+  // player-running pair therefore has no saved result and can safely return to preview.
+  pair.status='pending';
+  tx.stage='player-preview';
+  // Keep any earlier unfinished AI matches queued; resume from the saved cursor, but never beyond this player pair.
+  tx.pairIndex=Math.min(savedCursor,pairIndex);
+  tx.currentPairId=null;
+  const units=prefOwnedUnits(PREF_PLAYER_ID);
+  const candidate=campaignState.draftLoadout||playerAction.loadout||prefDefaultLoadout(PREF_PLAYER_ID);
+  let active=(candidate.active||[]).filter(id=>units.some(unit=>String(unit.id)===String(id))).slice(0,3);
+  let reserve=(candidate.reserve||[]).filter(id=>units.some(unit=>String(unit.id)===String(id))&&!active.some(x=>String(x)===String(id))).slice(0,2);
+  // Preserve as much of the previously selected lineup as possible; fill missing slots only if needed.
+  for(const unit of units){
+    if(active.length>=3)break;
+    if(!active.some(x=>String(x)===String(unit.id))&&!reserve.some(x=>String(x)===String(unit.id)))active.push(unit.id);
+  }
+  for(const unit of units){
+    if(reserve.length>=2)break;
+    if(!active.some(x=>String(x)===String(unit.id))&&!reserve.some(x=>String(x)===String(unit.id)))reserve.push(unit.id);
+  }
+  campaignState.draftLoadout={active,reserve};
+  if(!silent)prefLog('保存データの復旧：未決着の対戦を、対戦相手決定後の編成確認に戻しました。','warning');
+  return true;
+}
 function prefEnsurePreviewResumeButton() {
   const button=document.getElementById('campaign-preview-resume');if(!button)return;
+  // Keep the rescue control outside all switchable views so it cannot disappear when navigating.
   if(button.parentElement!==document.body)document.body.appendChild(button);
-  const waiting=campaignState?.turnProcessing?.stage==='player-preview';
-  button.classList.toggle('hidden',!waiting);
-  button.textContent='⚔️ 編成を確定して対戦開始';
+  const tx=campaignState?.turnProcessing;
+  const waiting=tx?.stage==='player-preview';
+  const recoverable=!!tx && tx.stage!=='player-preview' && tx.stage==='battles' && tx.actions?.[PREF_PLAYER_ID]?.type==='battle' && (tx.pairs||[]).some(pair=>(pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID)&&pair.status!=='done') && !campaignBattlePending;
+  const processing=!!tx && !waiting && !recoverable && !campaignBattlePending;
+  button.classList.toggle('hidden',!(waiting||recoverable||processing));
+  button.dataset.prefAction=waiting?'battle-preview-continue':recoverable?'recover-pending-battle':'resume-turn-processing';
+  button.textContent=waiting?'⚔️ 編成を確定して対戦開始':recoverable?'🛠️ 対戦準備を復旧する':'🔄 ターン処理を再開する';
+  button.title=waiting?'対戦相手決定後の編成確認へ進みます':recoverable?'保存済みの未決着対戦を編成確認へ戻します':'保存済みのターン処理を再開します';
 }
 function prefRenderAll() {
   prefSyncCampaignClones();
@@ -1072,6 +1113,14 @@ async function prefContinueTurn() {
       const actions=prefMakeTurnActions(playerAction);prefApplyCommandStreaks(actions);
       const matched=prefPairBattlers(actions);tx.actions=actions;tx.pairs=matched.pairs;tx.unmatched=matched.unmatched;tx.stage='battles';tx.pairIndex=0;
       await prefSave();prefRenderAll();
+      if(playerAction.type==='battle'&&prefRecoverPendingBattlePreview(tx,true)){
+        await prefSave();prefRenderAll();prefEnsurePreviewResumeButton();
+        const playerPair=tx.pairs.find(pair=>(pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID)&&pair.status!=='done');
+        const opponentId=playerPair?(playerPair.a===PREF_PLAYER_ID?playerPair.b:playerPair.a):null;
+        const opponent=opponentId?prefRegion(opponentId):null;
+        if(opponent)prefShowModal('⚔️ 対戦準備を復旧しました',`<div class="text-center"><div class="text-3xl mb-2">${prefEsc(opponent.icon||'🏯')}</div><div class="text-xl font-black text-rose-200">${prefEsc(opponent.prefecture||opponentId)}</div><div class="font-bold mt-1">${prefEsc(opponent.repName||'代表')}</div><p class="text-xs text-slate-300 mt-3">更新前の保存データから、未決着の対戦を復旧しました。編成を確認して対戦を開始できます。</p></div>`,[{label:'あとで再開',action:'close-modal'},{label:'編成を確認',action:'battle-preview-continue',style:'primary'}]);
+        return;
+      }
     }
     if(tx.stage==='player-preview'){document.getElementById('campaign-preview-resume')?.classList.remove('hidden');return;}
     if(tx.stage==='settling'){
@@ -1189,9 +1238,25 @@ async function prefHandleClick(action,id,button) {
   if(action==='close-modal'){prefCloseModal();if(campaignState?.turnProcessing?.stage==='player-preview'){document.getElementById('pref-turn-progress')?.classList.add('hidden');prefEnsurePreviewResumeButton();}return;}
   if(action==='battle-preview-back'){prefCloseModal();prefEnsurePreviewResumeButton();document.getElementById('pref-turn-progress')?.classList.add('hidden');return;}
   if(action==='battle-preview-continue'){prefCloseModal();if(campaignState?.turnProcessing?.stage==='player-preview'){prefEnsurePreviewResumeButton();if(document.querySelector('.view-section:not(.hidden)')?.id!=='view-prefecture')switchView('prefecture');prefShowBattleSelection(true);}return;}
+  if(action==='recover-pending-battle'){
+    const tx=campaignState?.turnProcessing;
+    if(prefRecoverPendingBattlePreview(tx,false)){
+      await prefSave();prefRenderAll();switchView('prefecture');prefShowBattleSelection(true);
+    } else {
+      prefEnsurePreviewResumeButton();prefShowModal('対戦準備を復旧できません','未決着のプレイヤー対戦を特定できませんでした。保存データは消去していません。「最初からやり直す」から新しいキャンペーンを開始することもできます。',[{label:'閉じる',action:'close-modal'}]);
+    }
+    return;
+  }
+  if(action==='resume-turn-processing'){
+    const tx=campaignState?.turnProcessing;
+    if(tx?.stage==='matching'&&prefRecoverPendingBattlePreview(tx,false)){
+      await prefSave();prefRenderAll();switchView('prefecture');prefShowBattleSelection(true);return;
+    }
+    await prefContinueTurn();prefEnsurePreviewResumeButton();return;
+  }
   if(action==='toggle-autobuy'){const p=prefPlayerRegion();p.autoBuyMagicTemplateIds=Array.isArray(p.autoBuyMagicTemplateIds)?p.autoBuyMagicTemplateIds:[];const key=String(id||button?.dataset?.id||'');const enabled=button?.checked??!p.autoBuyMagicTemplateIds.includes(key);p.autoBuyMagicTemplateIds=enabled?[...new Set([...p.autoBuyMagicTemplateIds,key])]:p.autoBuyMagicTemplateIds.filter(x=>x!==key);await prefSave();prefRenderHolder();return;}
   if(action==='gacha-result-close'){prefCloseModal();if(campaignState?.pendingAcquisition)prefShowReplaceModal();return;}
-  if(campaignState?.turnProcessing && ['new-game','confirm-new-game','restart-game','list-card','confirm-list-card','withdraw-listing','buy-card','confirm-buy-card','pull-gacha','replace-held','confirm-battle','confirm-investigation'].includes(action)){
+  if(campaignState?.turnProcessing && ['list-card','confirm-list-card','withdraw-listing','buy-card','confirm-buy-card','pull-gacha','replace-held','confirm-battle','confirm-investigation'].includes(action)){
     prefShowModal('ターン処理中','47都道府県のAI対戦と決算処理を行っています。二重処理を防ぐため、完了するまでカードの購入・出品・ガチャ利用・コマンド変更はできません。',[{label:'閉じる',action:'close-modal',style:'primary'}]);return;
   }
   if(action==='new-game'){
