@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.14 — configurable rival AI and synergy-aware campaign layer */
+/* 都道府県カード戦争 v1.0.15 — configurable rival AI and synergy-aware campaign layer */
 'use strict';
 
 let campaignState = null;
@@ -376,6 +376,18 @@ function prefAbsTurn(state=campaignState) { return Math.max(1, Number(state?.abs
 function prefTierForPosition(pos) { if(pos===1)return 'S'; if(pos<=4)return 'A'; if(pos<=9)return 'B'; if(pos<=19)return 'C'; if(pos<=29)return 'D'; return 'E'; }
 function prefRankStars(card) { return Math.max(1,Math.min(5,Math.round(Number(card?.rank ?? estimateUnitRank(card?.stats||{}))||1))); }
 function prefRegion(regionId) { return campaignState?.regions?.[regionId] || null; }
+function prefRegionIconUrl(region) {
+  if(!region) return null;
+  // The icon image stays in the profile store, not duplicated in campaign localStorage.
+  if(region.isPlayer) return (typeof playerIcon !== 'undefined' && playerIcon) ? playerIcon : null;
+  const profileId=region.profileRivalId;
+  if(profileId!=null && profileId!=='') {
+    const profile=(Array.isArray(allRivals)?allRivals:[]).find(r=>String(r.id)===String(profileId));
+    if(profile && typeof profile.iconImage==='string' && profile.iconImage.length) return profile.iconImage;
+  }
+  return null;
+}
+
 function prefPlayerRegion() { return prefRegion(PREF_PLAYER_ID); }
 function prefInstances(filter=()=>true) { return Object.values(campaignState?.instances||{}).filter(filter); }
 function prefOwnedInstances(regionId, kind=null) {
@@ -967,7 +979,11 @@ function prefRenderRanking() {
   if(!campaignState){const b=document.getElementById('pref-ranking-body');if(b)b.innerHTML='<tr><td colspan="7" class="p-8 text-center text-slate-500">ゲームを開始してください。</td></tr>';return;}
   const rows=prefCurrentRegionRankList();const p=prefPlayerRegion();
   document.getElementById('pref-ranking-header').innerHTML=`<div class="flex flex-wrap justify-between gap-2"><span>第${campaignState.year}年度・第${campaignState.week}週</span><span>京都府：<b class="text-amber-200">${prefRankLabel(p)} / ランク${p.tier}</b></span><span>年間資産額は資金提供を含む収支指標</span></div>`;
-  document.getElementById('pref-ranking-body').innerHTML=rows.map((r,i)=>`<tr class="${r.id===PREF_PLAYER_ID?'bg-amber-950/25':''}"><td class="p-3 font-black text-amber-200 whitespace-nowrap">${prefEsc(prefRankLabel(r))}</td><td class="p-3 font-bold whitespace-nowrap">${prefEsc(r.prefecture)} ${r.id===PREF_PLAYER_ID?'<span class="text-[9px] text-amber-300">PLAYER</span>':''}</td><td class="p-3 text-slate-300 whitespace-nowrap">${prefEsc(r.repName)}</td><td class="p-3 text-right tabular-nums ${Number(r.yearStats?.assetMetric||0)<0?'text-rose-300':'text-white'}">${prefFormatMoney(r.yearStats?.assetMetric||0)}</td><td class="p-3 text-right text-cyan-200 tabular-nums">${prefEsc(prefFormatWinRate(r))}</td><td class="p-3 text-center">${prefTierBadge(r.tier)}</td><td class="p-3 text-center">${r.id===PREF_PLAYER_ID?'—':`<button data-pref-action="ai-thoughts" data-id="${prefEsc(r.id)}" class="px-2 py-1 rounded bg-slate-800 hover:bg-indigo-800 text-[10px] text-cyan-200 font-bold whitespace-nowrap">AI思考</button>`}</td></tr>`).join('');
+  document.getElementById('pref-ranking-body').innerHTML=rows.map((r,i)=>{
+    const avatar=prefRegionIconUrl(r);
+    const avatarHtml=avatar?`<img src="${prefEsc(avatar)}" alt="" class="w-full h-full object-cover" onerror="this.parentElement.textContent='🏯';this.remove()">`:'🏯';
+    return `<tr class="${r.id===PREF_PLAYER_ID?'bg-amber-950/25':''}"><td class="p-3 font-black text-amber-200 whitespace-nowrap">${prefEsc(prefRankLabel(r))}</td><td class="p-3 font-bold whitespace-nowrap"><div class="flex items-center gap-2"><span class="w-8 h-8 rounded-full overflow-hidden bg-slate-950 border border-slate-700 flex-shrink-0 inline-flex items-center justify-center">${avatarHtml}</span><span>${prefEsc(r.prefecture)} ${r.id===PREF_PLAYER_ID?'<span class="text-[9px] text-amber-300">PLAYER</span>':''}</span></div></td><td class="p-3 text-slate-300 whitespace-nowrap">${prefEsc(r.repName)}</td><td class="p-3 text-right tabular-nums ${Number(r.yearStats?.assetMetric||0)<0?'text-rose-300':'text-white'}">${prefFormatMoney(r.yearStats?.assetMetric||0)}</td><td class="p-3 text-right text-cyan-200 tabular-nums">${prefEsc(prefFormatWinRate(r))}</td><td class="p-3 text-center">${prefTierBadge(r.tier)}</td><td class="p-3 text-center">${r.id===PREF_PLAYER_ID?'—':`<button data-pref-action="ai-thoughts" data-id="${prefEsc(r.id)}" class="px-2 py-1 rounded bg-slate-800 hover:bg-indigo-800 text-[10px] text-cyan-200 font-bold whitespace-nowrap">AI思考</button>`}</td></tr>`;
+  }).join('');
 }
 function prefShowAIThoughts(regionId) {
   const region=prefRegion(regionId);if(!region)return;
@@ -1396,7 +1412,9 @@ async function prefBeginTurn(playerAction) {
     const opponentId=playerPair.a===PREF_PLAYER_ID?playerPair.b:playerPair.a;const opponent=prefRegion(opponentId);
     campaignState.draftLoadout=JSON.parse(JSON.stringify(playerAction.loadout||prefDefaultLoadout(PREF_PLAYER_ID)));
     tx.stage='player-preview';await prefSave();prefRenderDashboard();prefEnsurePreviewResumeButton();
-    prefShowModal('⚔️ 対戦相手が決定',`<div class=\"text-center\"><div class=\"text-4xl mb-2\">${prefEsc(opponent?.icon||'🏯')}</div><div class=\"text-2xl font-black text-rose-200\">${prefEsc(opponent?.prefecture||opponentId)}</div><div class=\"text-lg font-bold mt-1\">${prefEsc(opponent?.repName||'代表')}</div><div class=\"mt-2 text-amber-200 font-black\">現在順位：${prefRankOf(opponentId)}位（${prefEsc(opponent?.tier||'E')}ランク）</div><div class=\"text-xs text-slate-400 mt-1\">所持資金：${prefFormatMoney(opponent?.funds||0)}</div><div class=\"mt-4 rounded-lg border border-rose-900/60 bg-slate-900 p-3 text-sm text-slate-200\">対戦相手のカード内容は、この時点では公開されません。カード情報は調査で判明した範囲だけ確認できます。</div><p class=\"text-xs text-slate-400 mt-3\">相手は確定しました。編成はこの後で変更して最終確定できます。カードホルダーや調査結果を確認した後も、ゲーム画面の「編成を確定して対戦開始」から再開できます。</p></div>`,[{label:'閉じる',action:'close-modal'},{label:'編成・調査を確認',action:'battle-preview-back'},{label:'編成を選んで対戦開始',action:'battle-preview-continue',style:'primary'}]);
+    const opponentIconUrl=prefRegionIconUrl(opponent);
+    const opponentAvatar=opponentIconUrl?`<img src=\"${prefEsc(opponentIconUrl)}\" alt=\"\" class=\"w-16 h-16 rounded-full object-cover mx-auto mb-2 border-2 border-rose-500\" onerror=\"this.remove()\">`:`<div class=\"text-4xl mb-2\">${prefEsc(opponent?.icon||'🏯')}</div>`;
+    prefShowModal('⚔️ 対戦相手が決定',`<div class=\"text-center\">${opponentAvatar}<div class=\"text-2xl font-black text-rose-200\">${prefEsc(opponent?.prefecture||opponentId)}</div><div class=\"text-lg font-bold mt-1\">${prefEsc(opponent?.repName||'代表')}</div><div class=\"mt-2 text-amber-200 font-black\">現在順位：${prefRankOf(opponentId)}位（${prefEsc(opponent?.tier||'E')}ランク）</div><div class=\"text-xs text-slate-400 mt-1\">所持資金：${prefFormatMoney(opponent?.funds||0)}</div><div class=\"mt-4 rounded-lg border border-rose-900/60 bg-slate-900 p-3 text-sm text-slate-200\">対戦相手のカード内容は、この時点では公開されません。カード情報は調査で判明した範囲だけ確認できます。</div><p class=\"text-xs text-slate-400 mt-3\">相手は確定しました。編成はこの後で変更して最終確定できます。カードホルダーや調査結果を確認した後も、ゲーム画面の「編成を確定して対戦開始」から再開できます。</p></div>`,[{label:'閉じる',action:'close-modal'},{label:'編成・調査を確認',action:'battle-preview-back'},{label:'編成を選んで対戦開始',action:'battle-preview-continue',style:'primary'}]);
     return;
   }
   await prefContinueTurn();
@@ -1547,7 +1565,7 @@ function prefBattleOverrideForRegions(aId,bId,playerLoadout=null) {
     enemyIntelligence:b.aiIntelligence||'normal',playerIntelligence:a.aiIntelligence||'expert',enemyTacticalIQ:profileB?.tacticalIQ,playerTacticalIQ:profileA?.tacticalIQ,
     enemyAIProfile:profileB,playerAIProfile:profileA,enemyPersonality:b.personality,playerPersonality:a.personality,
     enemyOpponentMemory:prefGetOpponentIntel(b,aId),playerOpponentMemory:prefGetOpponentIntel(a,bId),
-    playerName:a.repName,enemyName:b.repName,enemyRivalId:null,enemyIconUrl:null,playerIconUrl:null,regionA:aId,regionB:bId,selectedA,selectedB};
+    playerName:a.repName,enemyName:b.repName,enemyRivalId:null,enemyIconUrl:prefRegionIconUrl(b),playerIconUrl:prefRegionIconUrl(a),regionA:aId,regionB:bId,selectedA,selectedB};
 }
 function prefBattleResultFromEngine() { return {winner:battleState.resultWinner||'draw',usedAMagic:[...(battleState.usedMagicCardIds||[])],usedBMagic:[...(battleState.enemyUsedMagicCardIds||[])],selectedA:(campaignBattleOverride?.selectedA||[]).slice(),selectedB:(campaignBattleOverride?.selectedB||[]).slice()}; }
 function prefConsumeMagic(regionId, ids) {
