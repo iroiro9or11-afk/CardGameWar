@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.8</title>
+  <title>都道府県カード戦争 v1.0.10</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -301,7 +301,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.8</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.10</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -365,7 +365,7 @@
     <!-- カードホルダー -->
     <section id="view-pref-holder" class="view-section hidden space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-xl sm:text-2xl font-black text-cyan-200">🎴 カードホルダー</h2><p class="text-xs text-slate-400 mt-1">キャラカードは最大10枚、マジックカードは種類ごとに1枚まで。</p></div><button onclick="switchView('prefecture')" class="px-4 py-2 bg-slate-800 rounded-lg text-xs font-bold">ゲームへ戻る</button></div>
-      <div class="flex flex-wrap gap-2"><button data-pref-action="holder-tab-unit" class="px-4 py-2 rounded-lg bg-amber-600 text-xs font-black">キャラカード <span id="pref-holder-unit-count">0/10</span></button><button data-pref-action="holder-tab-magic" class="px-4 py-2 rounded-lg bg-slate-700 text-xs font-black">マジックカード <span id="pref-holder-magic-count">0</span></button></div>
+      <div class="flex flex-wrap gap-2"><button data-pref-action="holder-tab-unit" class="px-4 py-2 rounded-lg bg-amber-600 text-xs font-black">キャラカード <span id="pref-holder-unit-count">0/10</span></button><button data-pref-action="holder-tab-magic" class="px-4 py-2 rounded-lg bg-slate-700 text-xs font-black">マジックカード <span id="pref-holder-magic-count">0</span></button><button data-pref-action="holder-tab-autobuy" class="px-4 py-2 rounded-lg bg-slate-700 text-xs font-black">🤖 自動購入設定</button></div>
       <div id="pref-holder-actions" class="flex flex-wrap gap-2"></div><div id="pref-holder-list" class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-2 sm:gap-3"></div>
     </section>
 
@@ -857,6 +857,8 @@
       </div>
 
       <!-- 行動決定操作・確認パネル -->
+      <button type="button" id="campaign-preview-resume" data-pref-action="battle-preview-continue" class="hidden fixed bottom-3 right-3 z-[70] rounded-xl border border-amber-400 bg-amber-700 px-4 py-3 text-sm font-black text-white shadow-lg">⚔️ 確定した対戦を開始</button>
+      <button type="button" id="battle-surrender-button" onclick="confirmSurrenderBattle()" class="fixed bottom-3 right-3 z-40 rounded-xl border border-rose-400 bg-rose-900/95 px-4 py-3 text-sm font-black text-white shadow-lg">🏳️ 降参</button>
       <div id="decision-command-panel" class="bg-slate-900 p-3 rounded-xl border-2 border-cyan-500/80 space-y-3 shadow-2xl">
         <div class="flex justify-between items-center border-b border-slate-800 pb-2">
           <span class="text-xs font-black text-cyan-300">🎮 行動予約変更: <span id="command-active-actor" class="text-amber-300">キャラを選択してください</span></span>
@@ -1115,7 +1117,9 @@
       slow: { name: '鈍足', kind: 'debuff' },
       weak: { name: '虚弱', kind: 'debuff' },
       taunt: { name: '挑発', kind: 'debuff' },
-      stealth: { name: '隠密', kind: 'buff' }
+      stealth: { name: '隠密', kind: 'buff' },
+      mark: { name: '印', kind: 'debuff' },
+      defect: { name: '欠陥', kind: 'debuff' }
     };
     // 状態異常は statuses に保持。duration=-1は解除されるまで続く永続効果。
     function durationActive(value) { const n=Number(value); return n === -1 || n > 0; }
@@ -1293,9 +1297,13 @@
           ally_death: "味方死亡時",
           hp_increase: "HP増加時",
           hp_decrease: "HP減少時",
-          damage_taken: "ダメージを受けたとき"
+          damage_taken: "ダメージを受けたとき",
+          before_action: "自分の行動前",
+          after_action: "自分の行動後"
         }[skill.timing] || "パッシブ発動時";
         parts.push(`【パッシブ：${timingText}】`);
+        const passiveChance = clamp(Number(skill.chance ?? 100), 0, 100);
+        if (passiveChance < 100) parts.push(`発動確率${passiveChance}％で、`);
       }
 
       if (skill.selfCond && skill.selfCond.type !== "none") {
@@ -1315,7 +1323,7 @@
       if (skill.hasSubEffect && skill.subEffect && skill.subEffect.type !== "none") {
         let subTargetText = getTargetText(skill.subEffect.targetType || skill.targetType, skill.subEffect.targetCond || {type:'none'});
         let subEffText = getEffectText(skill.subEffect);
-        if (subEffText) res += `さらに${subTargetText}に${subEffText}。`;
+        if (subEffText) res += `さらに${subTargetText}に${subEffText}${Number(skill.subEffect.chance ?? 100) < 100 ? `（発動確率${clamp(Number(skill.subEffect.chance)||0,0,100)}％）` : ''}。`;
       }
       return res || "効果なし";
     }
@@ -1393,6 +1401,7 @@
         case "dmg_fixed": return `${eff.val}の固定ダメージ`;
         case "dmg_fixed_pierce": return `${eff.val}の固定貫通ダメージ(受けるダメージ増減・シールドを無視)`;
         case "shield": return `${eff.val}のシールドを付与${durText}`;
+        case "sub_chance_mod": return `追加効果の発動確率を${eff.val>=0?'+':''}${eff.val}％${eff.val>=0?'増加':'減少'}${durText}`;
         case "dmg_atk_ratio": return `攻撃力×${eff.val}%のダメージ`;
         case "heal_fixed": return `${eff.val}回復`;
         case "heal_max_hp_ratio": return `最大HPの${eff.val}%回復`;
@@ -1908,7 +1917,11 @@
               <option value="hp_increase">HP増加時</option>
               <option value="hp_decrease">HP減少時</option>
               <option value="damage_taken">ダメージを受けたとき</option>
+              <option value="before_action">自分の行動前</option>
+              <option value="after_action">自分の行動後</option>
             </select>
+            <label class="text-[9px] text-slate-300 block mt-2">パッシブ発動確率（0〜100％）</label>
+            <input type="number" class="${prefix}-passive-chance bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs w-full" value="100" min="0" max="100" oninput="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">
           </div>
           ` : ''}
 
@@ -1995,6 +2008,7 @@
                 <option value="dmg_fixed">○の固定ダメージ</option>
                 <option value="dmg_fixed_pierce">○の固定貫通ダメージ（受けるダメージ増減・シールドを無視）</option>
                 <option value="shield">○のシールドを付与</option>
+                <option value="sub_chance_mod">追加効果の発動確率を○％増加/減少</option>
                 <option value="heal_max_hp_ratio">最大HPの○％回復</option>
                 <option value="heal_fixed">○回復</option>
                 <option value="mod_atk_ratio">攻撃力を○％増加/減少(バフ/デバフ)</option>
@@ -2052,6 +2066,7 @@
                     <option value="dmg_fixed">○の固定ダメージ</option>
                     <option value="dmg_fixed_pierce">○の固定貫通ダメージ（受けるダメージ増減・シールドを無視）</option>
                     <option value="shield">○のシールドを付与</option>
+                    <option value="sub_chance_mod">追加効果の発動確率を○％増加/減少</option>
                     <option value="heal_max_hp_ratio">最大HPの○％回復</option>
                     <option value="heal_fixed">○回復</option>
                     <option value="mod_atk_ratio">攻撃力を○％増加/減少</option>
@@ -2086,7 +2101,7 @@
               <div class="grid grid-cols-2 gap-1">
                 <input type="number" class="${prefix}-sub-eff-val bg-slate-950 border border-slate-700 rounded px-1 text-[10px]" value="500" placeholder="効果量" oninput="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">
                 <select class="${prefix}-sub-eff-status bg-slate-800 text-[10px] rounded" onchange="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">${statusOptions()}</select>
-                <div class="grid grid-cols-2 gap-1"><input type="number" min="1" class="${prefix}-sub-eff-dur bg-slate-950 border border-slate-700 rounded px-1 text-[10px]" value="2" placeholder="持続ターン数" oninput="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})"><select class="${prefix}-sub-eff-duration-mode bg-slate-800 text-[10px] rounded" onchange="toggleDurationMode('${prefix}','sub-eff','${skillType}',${isMagic})"><option value="turns">ターン数</option><option value="permanent">永続</option></select></div>
+                <div class="grid grid-cols-3 gap-1"><input type="number" min="0" max="100" class="${prefix}-sub-eff-chance bg-slate-950 border border-slate-700 rounded px-1 text-[10px]" value="100" placeholder="発動確率％" oninput="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})"><input type="number" min="1" class="${prefix}-sub-eff-dur bg-slate-950 border border-slate-700 rounded px-1 text-[10px]" value="2" placeholder="持続ターン数" oninput="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})"><select class="${prefix}-sub-eff-duration-mode bg-slate-800 text-[10px] rounded" onchange="toggleDurationMode('${prefix}','sub-eff','${skillType}',${isMagic})"><option value="turns">ターン数</option><option value="permanent">永続</option></select></div>
               </div>
             </div>
           </div>
@@ -2120,6 +2135,7 @@
       const name = isMagic ? (document.getElementById("edit-magic-name")?.value.trim() || "マジック") : (getVal(`${prefix}-name`) || "スキル");
       const cost = skillType === "passive" ? 0 : clamp(parseInt(getVal(`${prefix}-cost`)) || 0, 0, 100);
       const timing = getVal(`${prefix}-timing`) || "turn_start";
+      const chance = skillType === "passive" ? clamp(parseInt(getVal(`${prefix}-passive-chance`) ?? 100), 0, 100) : 100;
 
       const selfCond = {
         type: getVal(`${prefix}-self-cond-type`) || "none",
@@ -2151,11 +2167,12 @@
         type: getVal(`${prefix}-sub-eff-type`) || "heal_fixed",
         val: parseInt(getVal(`${prefix}-sub-eff-val`)) || 0,
         duration: getVal(`${prefix}-sub-eff-duration-mode`) === "permanent" ? -1 : (parseInt(getVal(`${prefix}-sub-eff-dur`)) || 1),
-        status: getVal(`${prefix}-sub-eff-status`) || "poison"
+        status: getVal(`${prefix}-sub-eff-status`) || "poison",
+        chance: clamp(parseInt(getVal(`${prefix}-sub-eff-chance`) ?? 100), 0, 100)
       };
 
       const rawSkill = {
-        id: generateUniqueId("sk"), type: skillType, timing, name, cost,
+        id: generateUniqueId("sk"), type: skillType, timing, name, cost, chance,
         selfCond, targetType, targetCond, mainEffect,
         hasSubEffect, subEffect
       };
@@ -2760,12 +2777,12 @@
     }
     function setEditorChecked(prefix, cls, value) { const el=document.querySelector(`.${prefix}-${cls}`); if(el) el.checked=!!value; }
     function populateSkillEditor(prefix, skill, type, isMagic=false) {
-      setEditorField(prefix,'name',skill.name); setEditorField(prefix,'cost',skill.cost||0); setEditorField(prefix,'timing',skill.timing||'turn_start');
+      setEditorField(prefix,'name',skill.name); setEditorField(prefix,'cost',skill.cost||0); setEditorField(prefix,'timing',skill.timing||'turn_start'); setEditorField(prefix,'passive-chance',skill.chance ?? 100);
       setEditorField(prefix,'self-cond-type',skill.selfCond?.type||'none'); setEditorField(prefix,'self-cond-val',skill.selfCond?.val||0); setEditorField(prefix,'self-cond-attr',skill.selfCond?.attr||'炎'); setEditorField(prefix,'self-cond-status',skill.selfCond?.status||'poison');
       setEditorField(prefix,'target-type',skill.targetType||'self'); setEditorField(prefix,'target-cond-type',skill.targetCond?.type||'none'); setEditorField(prefix,'target-cond-val',skill.targetCond?.val||0); setEditorField(prefix,'target-cond-attr',skill.targetCond?.attr||'炎'); setEditorField(prefix,'target-cond-status',skill.targetCond?.status||'poison');
       const mainPermanent = Number(skill.mainEffect?.duration) === -1;
       setEditorField(prefix,'main-eff-type',skill.mainEffect?.type||'dmg_atk_ratio'); setEditorField(prefix,'main-eff-val',skill.mainEffect?.val||0); setEditorField(prefix,'main-eff-dur',mainPermanent?2:(skill.mainEffect?.duration||1)); setEditorField(prefix,'main-eff-duration-mode',mainPermanent?'permanent':'turns'); setEditorField(prefix,'main-eff-status',skill.mainEffect?.status||'poison');
-      setEditorChecked(prefix,'has-sub',skill.hasSubEffect); setEditorField(prefix,'sub-target-type',skill.subEffect?.targetType||'same_main_target'); setEditorField(prefix,'sub-target-cond-type',skill.subEffect?.targetCond?.type||'none'); setEditorField(prefix,'sub-target-cond-val',skill.subEffect?.targetCond?.val||0); setEditorField(prefix,'sub-target-cond-attr',skill.subEffect?.targetCond?.attr||'炎'); setEditorField(prefix,'sub-target-cond-status',skill.subEffect?.targetCond?.status||'poison'); setEditorField(prefix,'sub-eff-type',skill.subEffect?.type||'heal_fixed'); setEditorField(prefix,'sub-eff-val',skill.subEffect?.val||0); const subPermanent=Number(skill.subEffect?.duration)===-1; setEditorField(prefix,'sub-eff-dur',subPermanent?2:(skill.subEffect?.duration||1)); setEditorField(prefix,'sub-eff-duration-mode',subPermanent?'permanent':'turns'); setEditorField(prefix,'sub-eff-status',skill.subEffect?.status||'poison');
+      setEditorChecked(prefix,'has-sub',skill.hasSubEffect); setEditorField(prefix,'sub-target-type',skill.subEffect?.targetType||'same_main_target'); setEditorField(prefix,'sub-target-cond-type',skill.subEffect?.targetCond?.type||'none'); setEditorField(prefix,'sub-target-cond-val',skill.subEffect?.targetCond?.val||0); setEditorField(prefix,'sub-target-cond-attr',skill.subEffect?.targetCond?.attr||'炎'); setEditorField(prefix,'sub-target-cond-status',skill.subEffect?.targetCond?.status||'poison'); setEditorField(prefix,'sub-eff-type',skill.subEffect?.type||'heal_fixed'); setEditorField(prefix,'sub-eff-val',skill.subEffect?.val||0); const subPermanent=Number(skill.subEffect?.duration)===-1; setEditorField(prefix,'sub-eff-dur',subPermanent?2:(skill.subEffect?.duration||1)); setEditorField(prefix,'sub-eff-duration-mode',subPermanent?'permanent':'turns'); setEditorField(prefix,'sub-eff-status',skill.subEffect?.status||'poison'); setEditorField(prefix,'sub-eff-chance',skill.subEffect?.chance ?? 100);
       toggleDurationMode(prefix,'main-eff',type,isMagic); toggleDurationMode(prefix,'sub-eff',type,isMagic); updateSkillFormDisplay(prefix,type,isMagic);
     }
     function openCardEditor(cardId) {
@@ -5530,7 +5547,13 @@
               await executeMagicCard(item.card, item.side);
             } else {
               pendingUnits.delete(item.unit);
-              if (item.unit.currentHp > 0 && item.unit.isActive) await executeUnitAction(item.unit);
+              if (item.unit.currentHp > 0 && item.unit.isActive) {
+                runPassiveSkills('before_action', item.unit);
+                await actionPopupQueue;
+                if (item.unit.currentHp > 0 && item.unit.isActive) await executeUnitAction(item.unit);
+                if (item.unit.currentHp > 0 && item.unit.isActive) runPassiveSkills('after_action', item.unit);
+                await actionPopupQueue;
+              }
             }
           } catch (actionError) {
             console.error('Battle action error:', actionError);
@@ -5643,6 +5666,7 @@
           if (effectResultSucceeded(r)) mainEffectSucceeded=true; if (r) { effectLines.push(r.effect); resultLines.push(r.result); }
         });
         if (mainEffectSucceeded && eff.hasSubEffect && eff.subEffect) {
+          const subChance=getSubEffectChance(eff, actor); if(Math.random()*100>=subChance){effectLines.push(`追加効果不発（発動確率${subChance}%）`); } else {
           const subType=eff.subEffect.targetType||'same_main_target';
           const subTargets = subType==='same_main_target' ? mainTargets.filter(t => matchesTargetCondition(t, eff.subEffect.targetCond || {type:'none'})) : resolveTargets(subType, eff.subEffect.targetCond || {type:'none'}, actor, isPlayerActor, magicSubTargetId || null, true);
           subTargets.forEach(t => {
@@ -5650,7 +5674,7 @@
             if (t && !t.__playerTarget) { if(!targetHpBeforeMap.has(t.instanceId))targetHpBeforeMap.set(t.instanceId,{current:t.currentHp,max:t.maxHp}); if(!targetEntities.some(x=>x.instanceId===t.instanceId))targetEntities.push(t); }
             const r = applyEffect(eff.subEffect, t, isPlayerActor, true, actor);
             if (r) { effectLines.push(r.effect); resultLines.push(r.result); }
-          });
+          }); }
         }
       }
       const actorName = isPlayerActor ? battleState.playerName : battleState.enemyName;
@@ -5902,9 +5926,17 @@
         return {effect:eff.type==='dmg_fixed_pierce'?`${eff.val}の固定貫通ダメージ`:`${eff.val}の固定ダメージ${damageResult.absorbed ? `（シールドが${damageResult.absorbed}吸収）` : ''}`, result:`${target.name} に ${actual} ダメージ${damageResult.absorbed ? `（シールド吸収 ${damageResult.absorbed}）` : ''}${target.currentHp<=0?'／撃破！':''}`};
       }
 
+      if (eff.type === "sub_chance_mod") {
+        const value=Number(eff.val)||0;const bucket=value>=0?'buffs':'debuffs';target[bucket]=Array.isArray(target[bucket])?target[bucket]:[];
+        target[bucket].push({type:'sub_chance_mod',val:value,duration,source:value>=0?'buff':'debuff'});
+        logBattle(`🎲 ${target.name} の追加効果発動確率が ${value>=0?'+':''}${value}% 変化した！`);
+        return {effect:`追加効果発動確率${value>=0?'+':''}${value}%（${durationText(duration)}）`,result:`${target.name}の追加効果発動確率が${value>=0?'+':''}${value}%`};
+      }
+
       if (eff.type === "shield") {
         const amount = Math.max(0, Math.round(Number(eff.val) || 0));
         if (amount <= 0) return {effect:'シールド付与失敗',result:`${target.name}にシールドを付与できない（値が0）`};
+        if (unitHasStatus(target, 'defect')) { logBattle(`🚫 ${target.name} は欠陥状態のためシールドを新たに付与できない！`); return {effect:'シールド付与失敗（欠陥）',result:`${target.name}は欠陥状態のためシールドを付与できない`}; }
         target.shields = Array.isArray(target.shields) ? target.shields : [];
         const appliedTurn = battleState._statusApplicationTiming === 'battle_start' ? battleState.turn - 1 : battleState.turn;
         target.shields.push({amount,remaining:amount,duration,appliedTurn,source:actor?.name||'effect'});
@@ -6115,6 +6147,7 @@
     }
 
     let passiveTriggerDepth = 0;
+    let passiveLoopGuard = new Set();
     // 行動の効果によって発生したパッシブ演出は、原因となった行動ポップアップの後ろへ積む。
     let passivePopupDeferralDepth = 0;
     let deferredPassivePopupJobs = [];
@@ -6132,6 +6165,8 @@
         if((u.currentHp<=0 && timing!=='death' && timing!=='hp_decrease' && timing!=='damage_taken') || !u.isActive)return;
         (u.skills||[]).forEach(sk=>{
           if(sk.type==='passive' && sk.timing===timing && evalCond(sk.selfCond,u,u.side==='player')){
+            const passiveChance = clamp(Number(sk.chance ?? 100), 0, 100);
+            if (Math.random() * 100 >= passiveChance) { logBattle(`🌀 ${u.name} のパッシブ【${sk.name}】不発（発動確率${passiveChance}%）`); return; }
             logBattle(`🌀 ${u.name} のパッシブ【${sk.name}】発動！`);
             const isPlayer=u.side==='player';
             const previousTiming = battleState._statusApplicationTiming;
@@ -6141,9 +6176,10 @@
               const mainTargets=sk.targetType==='attacker' ? (timing==='damage_taken' && attacker?.instanceId ? [attacker].filter(t=>matchesTargetCondition(t,sk.targetCond||{type:'none'})) : []) : resolveTargets(sk.targetType,sk.targetCond,u,isPlayer,sk.targetInstanceId);
               mainTargets.forEach(t=>{ if(!t.__playerTarget){if(!firstTarget)firstTarget=t;if(!passiveTargetBefore.has(t.instanceId))passiveTargetBefore.set(t.instanceId,{current:t.currentHp,max:t.maxHp});if(!passiveTargets.some(x=>x.instanceId===t.instanceId))passiveTargets.push(t);} const r=applyEffect(sk.mainEffect,t,isPlayer,false,u); if(effectResultSucceeded(r)){mainEffectSucceeded=true;} if(r){effectLines.push(r.result||r.effect||r);} });
               if(mainEffectSucceeded&&sk.hasSubEffect&&sk.subEffect){
+                const subChance=getSubEffectChance(sk,u);if(Math.random()*100>=subChance){effectLines.push(`追加効果不発（発動確率${subChance}%）`);}else{
                 const subType=sk.subEffect.targetType||'same_main_target';
                 const subTargets=subType==='same_main_target'?mainTargets.filter(t=>matchesTargetCondition(t,sk.subEffect.targetCond||{type:'none'})):subType==='attacker'?(timing==='damage_taken'&&attacker?.instanceId?[attacker].filter(t=>matchesTargetCondition(t,sk.subEffect.targetCond||{type:'none'})):[]):resolveTargets(subType,sk.subEffect.targetCond||{type:'none'},u,isPlayer);
-                subTargets.forEach(t=>{if(t&&!t.__playerTarget){if(!passiveTargetBefore.has(t.instanceId))passiveTargetBefore.set(t.instanceId,{current:t.currentHp,max:t.maxHp});if(!passiveTargets.some(x=>x.instanceId===t.instanceId))passiveTargets.push(t);} const r=applyEffect(sk.subEffect,t,isPlayer,false,u); if(r)effectLines.push(r.result||r.effect||r); });
+                subTargets.forEach(t=>{if(t&&!t.__playerTarget){if(!passiveTargetBefore.has(t.instanceId))passiveTargetBefore.set(t.instanceId,{current:t.currentHp,max:t.maxHp});if(!passiveTargets.some(x=>x.instanceId===t.instanceId))passiveTargets.push(t);} const r=applyEffect(sk.subEffect,t,isPlayer,false,u); if(r)effectLines.push(r.result||r.effect||r); }); }
               }
             } finally { battleState._statusApplicationTiming = previousTiming; }
             queuePassivePopup(() => showActionPopup(u, sk.name, {cardType:'unit',name:u.name,image:getCardImage(u)||u.image,hp:u.maxHp,atk:getEffectiveAtk(u),prio:getEffectiveSpeed(u)}, {target:passiveTargets.map(x=>x.name).join(' / ')||'対象なし',effect:effectLines.join('\n')||'効果なし',result:effectLines.join('\n')||'発動',targetEntity:firstTarget||null,targetDetails:passiveTargets.map(entity=>({entity,hpBefore:passiveTargetBefore.get(entity.instanceId)||{current:entity.currentHp,max:entity.maxHp},hpAfter:{current:entity.currentHp,max:entity.maxHp}})),description:sk.desc||sk.description||buildAutoSkillDescriptionFromData(sk),actorHpBefore:{current:u.currentHp,max:u.maxHp},actorHpAfter:{current:u.currentHp,max:u.maxHp}}));
@@ -6151,10 +6187,20 @@
         });
       });
     }
+    function getSubEffectChance(skill, actor) {
+      const base=clamp(Number(skill?.subEffect?.chance ?? 100),0,100);
+      const modifiers=[...(actor?.buffs||[]),...(actor?.debuffs||[])].filter(x=>x.type==='sub_chance_mod'&&durationActive(x.duration)).reduce((sum,x)=>sum+(Number(x.val)||0),0);
+      return clamp(base+modifiers,0,100);
+    }
     function triggerPassiveEvent(timing, subject, attacker=null) {
       if(!subject || passiveTriggerDepth>=10) return;
-      // ダメージ反応パッシブは被害者だけを対象にし、攻撃相手を明示的に渡す。
-      passiveTriggerDepth++; try { runPassiveSkills(timing,subject,attacker); } finally { passiveTriggerDepth--; }
+      const guarded=['damage_taken','hp_increase','hp_decrease'].includes(timing);
+      const signature=guarded?`${timing}:${subject.instanceId||subject.id||subject.name}:${attacker?.instanceId||attacker?.id||attacker?.name||'environment'}`:null;
+      if(guarded&&passiveLoopGuard.has(signature))return;
+      if(guarded)passiveLoopGuard.add(signature);
+      // 反応パッシブが相互に同じイベントを再発生させた場合、同じ組み合わせは一連の処理中に一度だけ許可する。
+      const root=passiveTriggerDepth===0;
+      passiveTriggerDepth++; try { runPassiveSkills(timing,subject,attacker); } finally { passiveTriggerDepth--; if(root)passiveLoopGuard.clear(); }
     }
 
     async function processEndTurnAbnormalitiesOffline() {
@@ -6203,6 +6249,12 @@
       });
     }
 
+    function confirmSurrenderBattle(){
+      if(!battleState||battleState.phase==='result'||battleState.resultWinner)return;
+      if(typeof prefShowModal==='function'&&battleState.campaignMode){prefShowModal('降参の確認','降参するとこの対戦は敗北扱いになります。本当に降参しますか？',[{label:'対戦を続ける',action:'close-modal'},{label:'降参する',action:'confirm-surrender',style:'danger'}]);return;}
+      if(!confirm('降参すると敗北扱いになります。本当に降参しますか？'))return;finalizeSurrenderBattle();
+    }
+    function finalizeSurrenderBattle(){if(!battleState||battleState.resultWinner)return;battleState.resultWinner='enemy';battleState.phase='result';document.getElementById('decision-command-panel')?.classList.add('hidden');logBattle('🏳️ プレイヤーが降参しました。');if(battleState.campaignMode&&typeof prefFinalizePlayerBattle==='function'&&campaignBattlePending){prefFinalizePlayerBattle('enemy').then(()=>showBattleResultModal('enemy'));}else showBattleResultModal('enemy');}
     function showBattleResultModal(winner) {
       const modal = document.getElementById('battle-result-modal');
       const title = document.getElementById('battle-result-title');
@@ -6273,7 +6325,7 @@
       const playerAlive=playerAliveCount>0, enemyAlive=enemyAliveCount>0;
       let winner=null;
       if(!playerAlive||!enemyAlive) winner=playerAlive&&!enemyAlive?'player':(!playerAlive&&enemyAlive?'enemy':'draw');
-      else if(includeTurnLimit && battleState.turn>=20 && battleState.phase==='execution') winner=playerAliveCount>enemyAliveCount?'player':(enemyAliveCount>playerAliveCount?'enemy':'draw');
+      else if(includeTurnLimit && battleState.turn>=20 && battleState.phase==='execution') winner='draw';
       if(winner){
         battleState.resultWinner = winner;
         battleState.phase = 'result';

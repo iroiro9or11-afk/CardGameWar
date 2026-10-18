@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.8 — offline campaign layer over the original card editor/battle engine */
+/* 都道府県カード戦争 v1.0.9 — offline campaign layer over the original card editor/battle engine */
 'use strict';
 
 let campaignState = null;
@@ -550,6 +550,13 @@ function prefRenderHolder() {
   const units=prefOwnedUnits(PREF_PLAYER_ID),magics=prefOwnedMagics(PREF_PLAYER_ID);
   const uc=document.getElementById('pref-holder-unit-count'),mc=document.getElementById('pref-holder-magic-count');if(uc)uc.textContent=`${units.length}/10`;if(mc)mc.textContent=`${magics.length}`;
   const list=document.getElementById('pref-holder-list');if(!list)return;
+  if(prefCurrentHolderTab==='autobuy'){
+    const player=prefPlayerRegion();player.autoBuyMagicTemplateIds=Array.isArray(player.autoBuyMagicTemplateIds)?player.autoBuyMagicTemplateIds:[];
+    const templates=prefCardTemplates().filter(c=>c.cardType==='magic').filter(c=>normalizeCardSearchText(c.name||'').includes(normalizeCardSearchText(prefHolderSearch)));
+    list.innerHTML=templates.map(c=>{const enabled=player.autoBuyMagicTemplateIds.includes(String(c.id));const owned=magics.some(i=>String(i.templateId)===String(c.id));const market=prefMarketListings('magic').some(i=>String(i.templateId)===String(c.id)&&i.sellerRegionId!==PREF_PLAYER_ID);return `<div class=\"rounded-xl border border-slate-800 bg-slate-900 p-2 ${owned?'':'opacity-50'}\"><div class=\"pointer-events-none\">${prefCardDisplay(c.id,{small:true})}</div><div class=\"text-xs font-black mt-2\">${prefEsc(c.name)}</div><div class=\"text-[10px] text-slate-400\">${owned?'所持中':market?'未所持・市場に出品中':'未所持'}</div><label class=\"flex items-center gap-2 mt-2 text-xs\"><input type=\"checkbox\" data-pref-action=\"toggle-autobuy\" data-id=\"${prefEsc(c.id)}\" ${enabled?'checked':''}>自動購入を許可</label></div>`}).join('')||'<div class=\"col-span-full text-slate-500\">マジックカードが登録されていません。</div>';
+    const actions=document.getElementById('pref-holder-actions');if(actions)actions.innerHTML=`<input id=\"pref-holder-search\" type=\"search\" value=\"${prefEsc(prefHolderSearch)}\" oninput=\"setPrefHolderSearch(this.value)\" placeholder=\"カード名で検索\" class=\"w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs\"><p class=\"text-xs text-slate-400\">許可したマジックが未所持で市場に出品され、購入しても資金がマイナスにならない場合、ターン処理中に自動購入します。</p>`;
+    return;
+  }
   const shown=(prefCurrentHolderTab==='unit'?units:magics).filter(inst=>{const c=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);return normalizeCardSearchText(c?.name||'').includes(normalizeCardSearchText(prefHolderSearch));});
   list.innerHTML=shown.map(inst=>{
     const card=prefCardForInstance(inst.id);const extra=prefCurrentHolderTab==='unit'?`<div class="mt-1 text-[10px] font-bold text-emerald-300">価値 ${prefFormatMoney(prefCardValue(card))}</div><div class="text-[9px] text-slate-500">残り${Math.max(0,(inst.expiresAtAbs||prefAbsTurn()+PREF_CARD_LIFETIME)-prefAbsTurn())}ターン</div>`:`<div class="mt-1 text-[10px] font-bold text-emerald-300">価値 ${prefFormatMoney(prefCardValue(card))}</div>`;
@@ -565,6 +572,7 @@ function prefRenderMarket() {
   const search=normalizeCardSearchText(String(input?.value??prefMarketSearch).trim());
   prefMarketSearch=search;
   const base=prefMarketListings(prefMarketOwnOnly?null:(prefCurrentMarketTab==='unit'?'unit':'magic'),prefMarketOwnOnly)
+    .filter(inst=>prefMarketOwnOnly ? inst.sellerRegionId===PREF_PLAYER_ID : inst.sellerRegionId!==PREF_PLAYER_ID)
     .filter(inst=>{
       const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
       return !!card&&(!search||normalizeCardSearchText(card.name||'').includes(search));
@@ -631,7 +639,7 @@ function renderPrefMarket(){prefRenderMarket();}
 
 function prefRenderAll() {
   prefSyncCampaignClones();
-  prefRenderDashboard();prefRenderHolder();prefRenderMarket();prefRenderGacha();prefRenderRanking();prefRenderInvestigations();
+  prefRenderDashboard();prefRenderHolder();prefRenderMarket();prefRenderGacha();prefRenderRanking();prefRenderInvestigations();document.getElementById('campaign-preview-resume')?.classList.toggle('hidden',campaignState?.turnProcessing?.stage!=='player-preview');
 }
 const prefOriginalSwitchView = switchView;
 switchView = function(viewId) {
@@ -659,7 +667,8 @@ function prefOpenCardDetail(id) {
   const body=document.getElementById('detail-card-body');if(body){
     const expires=inst?.kind==='unit'&&inst.zone==='owner'&&inst.expiresAtAbs!=null?`<div><b>残り期限：</b>${Math.max(0,inst.expiresAtAbs-prefAbsTurn())}ターン（52ターン経過でガチャへ戻ります）</div>`:'';
     const value=`<div><b>市場価値：</b>${prefFormatMoney(prefCardValue(card))}</div>`;
-    body.insertAdjacentHTML('beforeend',`<div class="mt-3 pt-3 border-t border-slate-700 text-sm text-emerald-200 space-y-2">${value}${expires}</div>`);
+    let autoBuy='';if(card.cardType==='magic'&&campaignState?.regions?.[PREF_PLAYER_ID]){const player=prefPlayerRegion();player.autoBuyMagicTemplateIds=Array.isArray(player.autoBuyMagicTemplateIds)?player.autoBuyMagicTemplateIds:[];const templateId=String(inst?.templateId||card.id);const checked=player.autoBuyMagicTemplateIds.includes(templateId);autoBuy=`<label class=\"flex items-center gap-2 mt-2 text-sm text-cyan-200\"><input type=\"checkbox\" data-pref-action=\"toggle-autobuy\" data-id=\"${prefEsc(templateId)}\" ${checked?'checked':''}>このマジックカードの自動購入を許可</label><div class=\"text-[10px] text-slate-400\">未所持で市場に出品されている場合、資金がマイナスにならない範囲で自動購入します。</div>`;}
+    body.insertAdjacentHTML('beforeend',`<div class=\"mt-3 pt-3 border-t border-slate-700 text-sm text-emerald-200 space-y-2\">${value}${expires}${autoBuy}</div>`);
   }
 }
 
@@ -868,6 +877,15 @@ function prefApplyCommandStreaks(actions) {
     else region.nonBattleStreak=Math.min(3,(region.nonBattleStreak||0)+1);
   }
 }
+function prefAutoBuyListedMagics(region){
+  if(!campaignState||!region)return;region.autoBuyMagicTemplateIds=Array.isArray(region.autoBuyMagicTemplateIds)?region.autoBuyMagicTemplateIds:[];
+  for(const templateId of region.autoBuyMagicTemplateIds){
+    if(prefOwnedMagics(region.id).some(i=>String(i.templateId)===String(templateId)))continue;
+    const listing=prefMarketListings('magic').find(i=>String(i.templateId)===String(templateId)&&i.sellerRegionId!==region.id);
+    if(!listing)continue;const cost=prefValueFromInstance(listing);if(Number(region.funds)<cost||Number(region.funds)-cost<0)continue;
+    prefBook(region.id,-cost,'auto-buy-magic');prefSetInstanceOwner(listing,region.id);prefLog(`${region.prefecture}が自動購入設定によりマジックカード「${prefTemplate(templateId)?.name||'カード'}」を${prefFormatMoney(cost)}で購入しました。`,'info');
+  }
+}
 function prefMakeTurnActions(playerAction) {
   const actions={[PREF_PLAYER_ID]:playerAction};
   for(const r of Object.values(campaignState.regions).filter(x=>!x.isPlayer)){
@@ -888,6 +906,7 @@ async function prefBeginTurn(playerAction) {
   if(playerAction.type==='battle') p.lastLoadout=JSON.parse(JSON.stringify(playerAction.loadout||{active:[],reserve:[]}));
   await prefSave();
   // AI shopping and command decisions are now a saved part of the turn transaction.
+  for(const region of Object.values(campaignState.regions))prefAutoBuyListedMagics(region);
   const actions=prefMakeTurnActions(playerAction);
   prefApplyCommandStreaks(actions);
   const matched=prefPairBattlers(actions);
@@ -895,6 +914,14 @@ async function prefBeginTurn(playerAction) {
   if(matched.unmatched)prefLog(`${prefRegion(matched.unmatched)?.prefecture||matched.unmatched}は対戦希望者が奇数だったため、今週は対戦不成立（対戦扱い）となりました。`,'info');
   Object.entries(actions).forEach(([id,a])=>{if(id!==PREF_PLAYER_ID&&a.type==='investigate')tx.actions[id]={...a};});
   await prefSave();prefRenderAll();
+  const playerPair=(tx.pairs||[]).find(pair=>pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID);
+  if(playerPair){
+    const opponentId=playerPair.a===PREF_PLAYER_ID?playerPair.b:playerPair.a;const opponent=prefRegion(opponentId);const opponentLoadout=prefBattleOverrideForRegions(PREF_PLAYER_ID,opponentId,playerAction.loadout);
+    const opponentCards=opponentLoadout.selectedB.map(id=>{const card=prefCardForInstance(id);return card?`<span class=\"inline-block rounded bg-slate-800 px-2 py-1 m-1\">${prefEsc(card.name)} ★${prefRankStars(card)}</span>`:''}).join('');
+    tx.stage='player-preview';await prefSave();document.getElementById('campaign-preview-resume')?.classList.add('hidden');
+    prefShowModal('⚔️ 対戦相手が決定',`<div class=\"text-center\"><div class=\"text-4xl mb-2\">${prefEsc(opponent?.icon||'🏯')}</div><div class=\"text-2xl font-black text-rose-200\">${prefEsc(opponent?.prefecture||opponentId)}</div><div class=\"text-lg font-bold mt-1\">${prefEsc(opponent?.repName||'代表')}</div><div class=\"mt-2 text-amber-200 font-black\">現在順位：${prefRankOf(opponentId)}位（${prefEsc(opponent?.tier||'E')}ランク）</div><div class=\"text-xs text-slate-400 mt-1\">所持資金：${prefFormatMoney(opponent?.funds||0)}</div><div class=\"text-left mt-4\"><div class=\"font-black text-slate-200 mb-1\">対戦相手の選出カード</div>${opponentCards||'カード情報なし'}</div><p class=\"text-xs text-slate-400 mt-3\">開始前に閉じて、カードホルダーや調査結果を確認できます。対戦はこの相手に確定しています。</p></div>`,[{label:'閉じる',action:'close-modal'},{label:'編成・調査を確認',action:'battle-preview-back'},{label:'この相手と対戦開始',action:'battle-preview-continue',style:'primary'}]);
+    return;
+  }
   await prefContinueTurn();
 }
 function prefDefaultLoadout(regionId) {
@@ -953,7 +980,7 @@ async function prefApplyBattleOutcome(aId,bId,engineResult,selectedA,selectedB) 
     const amount=Math.max(30000000,Math.floor(Math.max(0,Number(l.funds)||0)*0.30));
     prefBook(winnerId,amount,'battle-win');prefBook(loserId,-amount,'battle-loss');
     const loserDeck=loserId===aId?selectedA:selectedB;
-    const destroyed=prefRandomDestroyUnits(loserId,loserDeck);
+    const destroyed=prefRandomDestroyUnits(loserId,loserDeck);if(loserId===PREF_PLAYER_ID)campaignState.lastPlayerBattleDestroyed=destroyed.map(id=>prefTemplate(campaignState.instances[id]?.templateId)?.name||'キャラカード');else campaignState.lastPlayerBattleDestroyed=[];
     prefLog(`${w.prefecture}が${l.prefecture}に勝利。${prefFormatMoney(amount)}を獲得しました。${l.prefecture}は${prefFormatMoney(amount)}を支払い、キャラカード${destroyed.length}枚を失いました。`,'success');
     if(!l.isPlayer && l.funds<0)prefResignRival(l);
   }
@@ -1022,6 +1049,7 @@ async function prefContinueTurn() {
       const matched=prefPairBattlers(actions);tx.actions=actions;tx.pairs=matched.pairs;tx.unmatched=matched.unmatched;tx.stage='battles';tx.pairIndex=0;
       await prefSave();prefRenderAll();
     }
+    if(tx.stage==='player-preview'){document.getElementById('campaign-preview-resume')?.classList.remove('hidden');return;}
     if(tx.stage==='settling'){
       await prefCompleteTurn(tx);
       return;
@@ -1135,6 +1163,9 @@ function prefShowPurchasePanel() {}
 
 async function prefHandleClick(action,id,button) {
   if(action==='close-modal'){prefCloseModal();return;}
+  if(action==='battle-preview-back'){prefCloseModal();document.getElementById('campaign-preview-resume')?.classList.remove('hidden');document.getElementById('pref-turn-progress')?.classList.remove('hidden');return;}
+  if(action==='battle-preview-continue'){prefCloseModal();document.getElementById('campaign-preview-resume')?.classList.add('hidden');if(campaignState?.turnProcessing){campaignState.turnProcessing.stage='battles';await prefSave();await prefContinueTurn();}return;}
+  if(action==='toggle-autobuy'){const p=prefPlayerRegion();p.autoBuyMagicTemplateIds=Array.isArray(p.autoBuyMagicTemplateIds)?p.autoBuyMagicTemplateIds:[];const key=String(id||button?.dataset?.id||'');const enabled=button?.checked??!p.autoBuyMagicTemplateIds.includes(key);p.autoBuyMagicTemplateIds=enabled?[...new Set([...p.autoBuyMagicTemplateIds,key])]:p.autoBuyMagicTemplateIds.filter(x=>x!==key);await prefSave();prefRenderHolder();return;}
   if(action==='gacha-result-close'){prefCloseModal();if(campaignState?.pendingAcquisition)prefShowReplaceModal();return;}
   if(campaignState?.turnProcessing && ['new-game','confirm-new-game','restart-game','list-card','confirm-list-card','withdraw-listing','buy-card','confirm-buy-card','pull-gacha','replace-held','confirm-battle','confirm-investigation'].includes(action)){
     prefShowModal('ターン処理中','47都道府県のAI対戦と決算処理を行っています。二重処理を防ぐため、完了するまでカードの購入・出品・ガチャ利用・コマンド変更はできません。',[{label:'閉じる',action:'close-modal',style:'primary'}]);return;
@@ -1154,6 +1185,7 @@ async function prefHandleClick(action,id,button) {
   if(action==='go-investigations'){switchView('pref-investigations');return;}
   if(action==='holder-tab-unit'){prefCurrentHolderTab='unit';prefRenderHolder();return;}
   if(action==='holder-tab-magic'){prefCurrentHolderTab='magic';prefRenderHolder();return;}
+  if(action==='holder-tab-autobuy'){prefCurrentHolderTab='autobuy';prefRenderHolder();return;}
   if(action==='market-tab-unit'){prefCurrentMarketTab='unit';prefMarketOwnOnly=false;prefRenderMarket();return;}
   if(action==='market-tab-magic'){prefCurrentMarketTab='magic';prefMarketOwnOnly=false;prefRenderMarket();return;}
   if(action==='market-tab-own'){prefMarketOwnOnly=true;prefRenderMarket();return;}
