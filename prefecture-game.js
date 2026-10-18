@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.13 — offline campaign layer over the original card editor/battle engine */
+/* 都道府県カード戦争 v1.0.14 — configurable rival AI and synergy-aware campaign layer */
 'use strict';
 
 let campaignState = null;
@@ -48,6 +48,311 @@ const PREF_PERSONALITIES = [
   {id:'collector',name:'カード収集派',battle:0.54,investigate:0.46,focus:'市場とガチャでカードを集める',intelligence:'normal'},
   {id:'trickster',name:'技巧派',battle:0.63,investigate:0.37,focus:'属性やスキル効果の相性を重視',intelligence:'master'}
 ];
+
+// AI設定は性格・戦術の好み・賢さを分離して保存する。ランクは通常ライバルの賢さに影響しない。
+const PREF_AI_STRATEGIES = [
+  {id:'combo',label:'コンボ・連携重視'}, {id:'rush',label:'速攻・高火力'},
+  {id:'heavy',label:'高AP消費の大技主体'}, {id:'basic',label:'通常攻撃主体'},
+  {id:'ap_efficiency',label:'AP供給・AP効率重視'}, {id:'sustain',label:'回復・シールド主体'},
+  {id:'status',label:'状態異常・弱体化主体'}, {id:'buff',label:'バフ・強化主体'},
+  {id:'protect',label:'挑発・味方保護'}, {id:'extra',label:'追加効果コンボ'},
+  {id:'passive',label:'パッシブ連携'}, {id:'attribute',label:'属性統一コンボ'},
+  {id:'adaptive',label:'相手に応じた対応型'}, {id:'counter',label:'カウンター・耐久戦'}
+];
+const PREF_AI_EFFECT_PREFERENCES = [
+  {id:'ap_supply',label:'AP供給・AP効率'}, {id:'shield_defense',label:'シールド・防御'},
+  {id:'attribute_support',label:'属性サポート'}, {id:'attack_speed_buff',label:'攻撃力・行動値強化'},
+  {id:'healing',label:'回復・最大HP強化'}, {id:'status_debuff',label:'状態異常・弱体化'},
+  {id:'status_condition',label:'状態異常を条件にする効果'}, {id:'extra_effect',label:'追加効果・発動確率'},
+  {id:'passive_chain',label:'パッシブ同士の連携'}, {id:'target_control',label:'対象・条件を活用する効果'},
+  {id:'high_rank',label:'高ランク・高基礎性能'}, {id:'low_cost',label:'低コストで効率のよいカード'}
+];
+const PREF_AI_PRESETS = {
+  balanced:{label:'バランス型',tacticalIQ:55,cardIQ:55,primaryStrategy:'adaptive',secondaryStrategies:['combo','ap_efficiency','sustain']},
+  combo:{label:'コンボ構築型',tacticalIQ:65,cardIQ:85,primaryStrategy:'combo',secondaryStrategies:['ap_efficiency','extra','passive']},
+  rush:{label:'速攻・火力型',tacticalIQ:60,cardIQ:65,primaryStrategy:'rush',secondaryStrategies:['heavy','buff','ap_efficiency']},
+  defense:{label:'耐久・保護型',tacticalIQ:65,cardIQ:65,primaryStrategy:'sustain',secondaryStrategies:['protect','counter','ap_efficiency']},
+  status:{label:'状態異常型',tacticalIQ:65,cardIQ:75,primaryStrategy:'status',secondaryStrategies:['extra','passive','adaptive']},
+  attribute:{label:'属性統一型',tacticalIQ:60,cardIQ:75,primaryStrategy:'attribute',secondaryStrategies:['combo','buff','protect']},
+  basic:{label:'単体性能重視型',tacticalIQ:45,cardIQ:40,primaryStrategy:'basic',secondaryStrategies:['rush','sustain','adaptive']}
+};
+const PREF_AI_LEGACY_IQ = {novice:20,normal:45,expert:75,master:95};
+const PREF_AI_TIER_IQ = {S:96,A:82,B:68,C:53,D:37,E:20};
+function prefDefaultAIProfileForTier(tier='C', personality='careful') {
+  const iq=PREF_AI_TIER_IQ[tier]||50;
+  const byPersonality={aggressive:'rush',careful:'sustain',scout:'adaptive',collector:'combo',trickster:'combo'};
+  const primary=byPersonality[personality]||'adaptive';
+  const secondary=primary==='rush'?['heavy','buff','ap_efficiency']:primary==='sustain'?['protect','counter','ap_efficiency']:primary==='combo'?['passive','extra','ap_efficiency']:['combo','sustain','adaptive'];
+  return {version:1,tacticalIQ:iq,cardIQ:Math.max(10,Math.min(100,iq-4)),primaryStrategy:primary,secondaryStrategies:secondary,
+    mainAttrPriority:[],subAttrPriority:[],effectPriority:['ap_supply','shield_defense','passive_chain','extra_effect','healing'],preset:'balanced'};
+}
+function prefNormalizeAIProfile(raw={}, fallback={}) {
+  const oldIQ=PREF_AI_LEGACY_IQ[String(fallback.intelligence||'').toLowerCase()];
+  const base=fallback.tier?prefDefaultAIProfileForTier(fallback.tier,fallback.personality):prefDefaultAIProfileForTier('C',fallback.personality);
+  const src=raw&&typeof raw==='object'?raw:{};
+  const number=(v,d)=>Math.max(0,Math.min(100,Number.isFinite(Number(v))?Math.round(Number(v)):d));
+  const strategyIds=new Set(PREF_AI_STRATEGIES.map(x=>x.id));
+  const orderList=(v,max)=>Array.isArray(v)?[...new Set(v.map(String).filter(x=>x.length>0))].slice(0,max):[];
+  const primaryStrategy=strategyIds.has(src.primaryStrategy)?src.primaryStrategy:base.primaryStrategy;
+  return {version:1,
+    tacticalIQ:number(src.tacticalIQ??fallback.tacticalIQ, oldIQ??base.tacticalIQ),
+    cardIQ:number(src.cardIQ??fallback.cardIQ, oldIQ??base.cardIQ),
+    primaryStrategy,
+    secondaryStrategies:orderList(src.secondaryStrategies,10).filter(x=>strategyIds.has(x)&&x!==primaryStrategy).slice(0,3),
+    mainAttrPriority:orderList(src.mainAttrPriority,20),subAttrPriority:orderList(src.subAttrPriority,30),
+    effectPriority:orderList(src.effectPriority,20).filter(x=>PREF_AI_EFFECT_PREFERENCES.some(p=>p.id===x)),
+    preset:String(src.preset||'custom')};
+}
+function prefAIProfileForRegion(region) {
+  if(!region) return prefNormalizeAIProfile({});
+  region.aiProfile=prefNormalizeAIProfile(region.aiProfile,{tier:region.tier,personality:region.personality,intelligence:region.aiIntelligence});
+  return region.aiProfile;
+}
+function prefAIProfileFromRival(rival,tier,personality) {
+  if(rival?.aiProfile) return prefNormalizeAIProfile(rival.aiProfile,{tier,personality,intelligence:rival.intelligence});
+  // Existing profile migration: retain its old intelligence level as a numeric starting point.
+  if(rival?.intelligence && PREF_AI_LEGACY_IQ[rival.intelligence]!=null) return prefNormalizeAIProfile({}, {tier,personality,intelligence:rival.intelligence});
+  return prefDefaultAIProfileForTier(tier,personality);
+}
+function prefEnsureCampaignAIConfig() {
+  if(!campaignState?.regions) return;
+  for(const region of Object.values(campaignState.regions)) {
+    if(region.isPlayer) continue;
+    if(!region.aiProfile) {
+      const profile=(Array.isArray(allRivals)?allRivals:[]).find(r=>String(r.id)===String(region.profileRivalId||''));
+      region.aiProfile=prefAIProfileFromRival(profile,region.tier,region.personality);
+    } else region.aiProfile=prefNormalizeAIProfile(region.aiProfile,{tier:region.tier,personality:region.personality,intelligence:region.aiIntelligence});
+    region.aiTacticalIQ=region.aiProfile.tacticalIQ;region.aiCardIQ=region.aiProfile.cardIQ;
+    region.aiMemory=region.aiMemory&&typeof region.aiMemory==='object'?region.aiMemory:{opponents:{},decisions:[]};
+    region.aiMemory.opponents=region.aiMemory.opponents&&typeof region.aiMemory.opponents==='object'?region.aiMemory.opponents:{};
+    region.aiMemory.decisions=Array.isArray(region.aiMemory.decisions)?region.aiMemory.decisions:[];
+  }
+}
+function prefRecordAIThought(region,kind,title,reasons=[],details={}) {
+  if(!region||region.isPlayer||!campaignState)return;
+  region.aiMemory=region.aiMemory&&typeof region.aiMemory==='object'?region.aiMemory:{opponents:{},decisions:[]};
+  region.aiMemory.decisions=Array.isArray(region.aiMemory.decisions)?region.aiMemory.decisions:[];
+  region.aiMemory.decisions.unshift({abs:prefAbsTurn(),year:campaignState.year,week:campaignState.week,kind:String(kind||'判断'),title:String(title||'AI判断'),
+    reasons:(Array.isArray(reasons)?reasons:[]).map(String).slice(0,8),details:details&&typeof details==='object'?JSON.parse(JSON.stringify(details)): {}});
+  region.aiMemory.decisions=region.aiMemory.decisions.slice(0,40);
+}
+function prefRankedPreferenceBonus(list,value,unit=1) {
+  const idx=(list||[]).findIndex(x=>String(x)===String(value));
+  return idx<0?0:Math.max(0,8-idx)*unit;
+}
+function prefCardEffectNodes(card) {
+  const out=[];const seen=new Set();
+  const walk=(node,depth=0)=>{
+    if(!node||typeof node!=='object'||depth>7||seen.has(node))return;seen.add(node);
+    if(typeof node.type==='string')out.push(node);
+    if(Array.isArray(node)){node.forEach(x=>walk(x,depth+1));return;}
+    for(const [k,v] of Object.entries(node)) if(['skills','effect','mainEffect','subEffect','passive','passives'].includes(k)||typeof v==='object') walk(v,depth+1);
+  };
+  walk(card?.skills||[]);walk(card?.effect||null);walk(card?.effects||null);
+  return out;
+}
+function prefCardProfile(card) {
+  if(!card)return {tags:new Set(),mainAttr:'',subAttrs:[],supportsAttrs:[],activeCosts:[],maxCost:0,skillCount:0,passiveCount:0,atk:0,hp:0,rank:1};
+  const tags=new Set(),costs=[],supportsAttrs=new Set();const nodes=prefCardEffectNodes(card);const skills=Array.isArray(card.skills)?card.skills:[];
+  const addAttr=value=>{if(typeof value==='string'&&value.trim()&&!['none','any','all','null','undefined'].includes(value.trim().toLowerCase()))supportsAttrs.add(value.trim());};
+  const tagNode=(n)=>{
+    const t=String(n?.type||'');const val=Number(n?.val??n?.value??0);
+    if(t==='mod_ap'&&val>0)tags.add('ap_supply');
+    if(t==='mod_ap'&&val<0)tags.add('ap_disrupt');
+    if(t==='shield'||t==='damage_cut_ratio'||(t==='damage_taken_ratio'&&val<0))tags.add('shield_defense');
+    if(t.startsWith('heal_')||(t==='mod_max_hp_val'&&val>0))tags.add('healing');
+    if(t.startsWith('dmg_')||t==='atk_ratio'||t==='atk_val')tags.add('damage');
+    if(['mod_atk_ratio','mod_atk_val','atk_ratio','atk_val','mod_speed'].includes(t))tags.add('attack_speed_buff');
+    if(['status_apply','status_remove','clear_statuses','skill_block','heal_block','clear_buffs','clear_debuffs'].includes(t)||(t==='damage_taken_ratio'&&val>0))tags.add('status_debuff');
+    if(t==='sub_chance_mod'||n?.hasSubEffect||n?.subEffect)tags.add('extra_effect');
+    const conditions=[n?.targetCond,n?.selfCond,n?.subEffect?.targetCond,n?.subEffect?.selfCond].filter(Boolean);
+    if(conditions.some(c=>['status_is','any_status','self_status','self_any_status','ally_has_status','enemy_has_status','ally_has_any_status','enemy_has_any_status'].includes(String(c.type||''))))tags.add('status_condition');
+    if(conditions.some(c=>['attr_is','attr_not','ally_attr','enemy_attr','any_ally_attr','any_enemy_attr','all_ally_attr','all_enemy_attr'].includes(String(c.type||''))))tags.add('attribute_support');
+    if(n?.targetAttr||n?.targetMainAttr||n?.mainAttr||n?.attribute||n?.attr){tags.add('attribute_support');addAttr(n.targetAttr);addAttr(n.targetMainAttr);addAttr(n.mainAttr);addAttr(n.attribute);addAttr(n.attr);}
+    conditions.forEach(c=>{if(['attr_is','attr_not'].includes(String(c.type||'')))addAttr(c.attr);});
+    if((n?.targetCond&&n.targetCond.type&&n.targetCond.type!=='none')||(n?.selfCond&&n.selfCond.type&&n.selfCond.type!=='none'))tags.add('target_control');
+    if(t==='mod_max_hp_val'&&val<0)tags.add('status_debuff');
+  };
+  nodes.forEach(tagNode);
+  if(skills.some(s=>s.type==='passive'))tags.add('passive_chain');
+  if(skills.some(s=>s.hasSubEffect||s.subEffect))tags.add('extra_effect');
+  if(skills.some(s=>Number(s.cost||0)>=25))tags.add('heavy_cost');
+  if(skills.some(s=>Number(s.cost||0)<=10))tags.add('low_cost');
+  if(String(card.cardType||'')==='magic'){
+    tags.add('magic');
+    if(card.effect)costs.push(Math.max(0,Number(card.effect.cost)||0));
+    const magicEff=card.effect||{};
+    [magicEff.mainEffect,magicEff.hasSubEffect?magicEff.subEffect:null].filter(Boolean).forEach(e=>{
+      if(e.targetAttr||e.targetMainAttr||e.attribute||e.attr){addAttr(e.targetAttr);addAttr(e.targetMainAttr);addAttr(e.attribute);addAttr(e.attr);tags.add('attribute_support');}
+      if(e.targetCond?.type==='attr_is'||e.targetCond?.type==='attr_not'){addAttr(e.targetCond.attr);tags.add('attribute_support');}
+    });
+  }
+  skills.filter(s=>s.type==='active').forEach(s=>costs.push(Math.max(0,Number(s.cost)||0)));
+  const atk=Number(card.stats?.atk||0),hp=Number(card.stats?.hp||0),rank=prefRankStars(card);
+  if(rank>=4)tags.add('high_rank');if(atk>0)tags.add('attack_role');if(hp>0&&card.cardType!=='magic')tags.add('unit');
+  const subs=Array.isArray(card.subAttrs)?card.subAttrs.map(x=>typeof x==='string'?x:(x?.name||x?.id||x?.value||'')).filter(Boolean):[];
+  return {tags,mainAttr:String(card.mainAttr||''),subAttrs:subs,supportsAttrs:[...supportsAttrs],activeCosts:costs,maxCost:Math.max(0,...costs),skillCount:skills.length+(card.effect?1:0),passiveCount:skills.filter(s=>s.type==='passive').length,atk,hp,rank};
+}
+function prefCardPreferenceScore(region,card) {
+  const profile=prefAIProfileForRegion(region);const cp=prefCardProfile(card);let score=0;
+  score+=prefRankedPreferenceBonus(profile.mainAttrPriority,cp.mainAttr,1.1);
+  cp.subAttrs.forEach(a=>{score+=prefRankedPreferenceBonus(profile.subAttrPriority,a,0.6);});
+  for(const pref of profile.effectPriority){
+    if(cp.tags.has(pref)) score+=Math.max(0,8-profile.effectPriority.indexOf(pref))*0.48;
+  }
+  return score;
+}
+function prefPairSynergyRaw(cardA,cardB,profile) {
+  if(!cardA||!cardB)return 0;
+  const a=prefCardProfile(cardA),b=prefCardProfile(cardB);let pair=0;
+  const heavyA=a.maxCost>=25||a.tags.has('heavy_cost'),heavyB=b.maxCost>=25||b.tags.has('heavy_cost');
+  if((a.tags.has('ap_supply')&&heavyB)||(b.tags.has('ap_supply')&&heavyA))pair+=7.5;
+  if((a.tags.has('attack_speed_buff')&&b.tags.has('damage'))||(b.tags.has('attack_speed_buff')&&a.tags.has('damage')))pair+=4.0;
+  if((a.tags.has('healing')||a.tags.has('shield_defense'))&&(b.tags.has('attack_role')||heavyB))pair+=3.0;
+  if((b.tags.has('healing')||b.tags.has('shield_defense'))&&(a.tags.has('attack_role')||heavyA))pair+=3.0;
+  if((a.tags.has('status_debuff')&&b.tags.has('status_condition'))||(b.tags.has('status_debuff')&&a.tags.has('status_condition')))pair+=7.0;
+  if((a.tags.has('extra_effect')&&b.tags.has('status_debuff'))||(b.tags.has('extra_effect')&&a.tags.has('status_debuff')))pair+=4.0;
+  if((a.tags.has('extra_effect')&&b.tags.has('passive_chain'))||(b.tags.has('extra_effect')&&a.tags.has('passive_chain')))pair+=4.0;
+  if(a.tags.has('shield_defense')&&b.tags.has('ap_supply')||b.tags.has('shield_defense')&&a.tags.has('ap_supply'))pair+=1.8;
+  if(a.supportsAttrs.some(attr=>attr===b.mainAttr||b.subAttrs.includes(attr))||b.supportsAttrs.some(attr=>attr===a.mainAttr||a.subAttrs.includes(attr)))pair+=5.0;
+  if(a.mainAttr&&a.mainAttr===b.mainAttr&&profile?.primaryStrategy==='attribute')pair+=2.4;
+  if(a.subAttrs.some(x=>b.subAttrs.includes(x))&&profile?.primaryStrategy==='attribute')pair+=0.8;
+  // High-IQ rivals can detect multi-step effect chains. Lower-IQ rivals tend to miss them.
+  const complex=(a.tags.has('status_condition')&&b.tags.has('status_debuff'))||(b.tags.has('status_condition')&&a.tags.has('status_debuff'))||a.tags.has('passive_chain')&&b.tags.has('extra_effect')||b.tags.has('passive_chain')&&a.tags.has('extra_effect');
+  if(Number(profile?.cardIQ||0)<25&&complex)pair*=0.15;
+  else if(Number(profile?.cardIQ||0)<50&&complex)pair*=0.5;
+  if(Number(profile?.cardIQ||0)<20){
+    // Very low card IQ mainly recognizes obvious raw-stat/straight AP combinations.
+    const obvious=(a.tags.has('ap_supply')&&heavyB)||(b.tags.has('ap_supply')&&heavyA)||(a.tags.has('healing')&&b.tags.has('attack_role'))||(b.tags.has('healing')&&a.tags.has('attack_role'));
+    if(!obvious)pair*=0.25;
+  }
+  return Math.min(14,pair);
+}
+function prefCardEstimateError(cardIQ) {return (Math.random()-0.5)*(100-prefClamp(cardIQ,0,100))/100*4;}
+function prefCardSynergyScore(region,card,extraCards=[],includeOwned=true) {
+  if(!region||!card)return 0;
+  const profile=prefAIProfileForRegion(region);const own=includeOwned?[...prefOwnedUnits(region.id),...prefOwnedMagics(region.id)].map(i=>prefCardForInstance(i.id)||prefTemplate(i.templateId)).filter(Boolean):[];
+  const candidates=[...own,...(extraCards||[]).filter(Boolean)];const seen=new Set();let synergy=0;
+  for(const other of candidates){const key=String(other.id??other.name??'');if(key===String(card.id??card.name??'')||seen.has(key))continue;seen.add(key);synergy+=prefPairSynergyRaw(card,other,profile);}
+  const scale=0.25+0.75*(profile.cardIQ/100);
+  return Math.max(0,Math.min(32,synergy*scale));
+}
+function prefRefreshAIPlan(region,trigger='市場確認',force=false) {
+  if(!region||region.isPlayer||!campaignState)return null;
+  const profile=prefAIProfileForRegion(region),abs=prefAbsTurn();
+  const owned=[...prefOwnedUnits(region.id),...prefOwnedMagics(region.id)].map(inst=>prefCardForInstance(inst.id)||prefTemplate(inst.templateId)).filter(Boolean);
+  const market=prefMarketListings(null,false).filter(inst=>inst.sellerRegionId!==region.id).map(inst=>`${inst.id}:${inst.kind}:${inst.templateId}`).sort();
+  const rosterSignature=[...prefOwnedUnits(region.id),...prefOwnedMagics(region.id)].map(x=>`${x.id}:${x.templateId}`).sort().join('|');
+  const marketSignature=market.join('|');
+  const old=region.aiPlan;
+  if(!force&&old&&old.rosterSignature===rosterSignature&&old.marketSignature===marketSignature&&Number(old.lastEvaluatedAbs)===abs)return old;
+  const tagged=new Set();owned.forEach(c=>prefCardProfile(c).tags.forEach(t=>tagged.add(t)));
+  const units=prefOwnedUnits(region.id).map(x=>prefCardForInstance(x.id)||prefTemplate(x.templateId)).filter(Boolean);
+  const goals=[];
+  const add=(id,title,missingTags,reason,priority=5,mainAttr='')=>{
+    if(!goals.some(x=>x.id===id))goals.push({id,title,missingTags:[...new Set(missingTags)],reason,priority,mainAttr});
+  };
+  const highCost=units.filter(c=>prefCardProfile(c).maxCost>=25);
+  if((highCost.length||profile.primaryStrategy==='heavy')&&!tagged.has('ap_supply'))add('ap-cycle','高コスト主力のAP循環',['ap_supply'],'高コストスキルを使用できるターンを増やす',10);
+  if(tagged.has('status_condition')&&!tagged.has('status_debuff'))add('status-setup','条件成立用の状態異常付与',['status_debuff'],'状態異常を条件にする効果を成立させる',9);
+  if(tagged.has('status_debuff')&&!tagged.has('status_condition'))add('status-payoff','状態異常からの追撃',['status_condition'],'付与した状態異常を活用する効果を探す',8);
+  if((tagged.has('attack_role')||profile.primaryStrategy==='rush'||profile.primaryStrategy==='heavy')&&!tagged.has('healing')&&!tagged.has('shield_defense'))add('main-survival','主力の生存支援',['healing','shield_defense'],'火力役が行動する前に倒される危険を減らす',7);
+  if(profile.primaryStrategy==='attribute'){
+    const attr=profile.mainAttrPriority[0]||units.map(c=>String(c.mainAttr||'')).filter(Boolean).sort((a,b)=>units.filter(c=>c.mainAttr===b).length-units.filter(c=>c.mainAttr===a).length)[0]||'';
+    const count=attr?units.filter(c=>String(c.mainAttr||'')===attr).length:0;
+    if(attr&&(count>=1||profile.mainAttrPriority.length))add('attribute-core',`${attr}属性を中心とした連携`,['attribute_support'],'属性サポートと主力属性を合わせる',7,attr);
+  }
+  if(['combo','passive','extra'].includes(profile.primaryStrategy)||profile.secondaryStrategies.some(x=>['combo','passive','extra'].includes(x))){
+    if(!tagged.has('passive_chain'))add('passive-chain','パッシブ・追加効果の連携',['passive_chain','extra_effect'],'複数段階の効果連鎖を成立させる',6);
+  }
+  if(!goals.length){
+    const prefTag=(profile.effectPriority||[]).find(x=>!tagged.has(x));
+    if(prefTag)add('preferred-effect',`好みの効果「${(PREF_AI_EFFECT_PREFERENCES.find(x=>x.id===prefTag)||{}).label||prefTag}」を補強`,[prefTag],'好みの効果カテゴリを補強し、既存構成との相性を探す',4);
+  }
+  goals.sort((a,b)=>b.priority-a.priority);
+  const options=goals.slice(0,3).map(g=>({...g,priority:g.priority+profile.cardIQ/100*1.5}));
+  const chosen=options[0]||{id:'balanced',title:'デッキ全体の穴を補完',missingTags:[],reason:'特定の不足がないため全体性能を維持',priority:1,mainAttr:''};
+  region.aiPlan={version:1,createdAtAbs:old?.createdAtAbs||abs,lastEvaluatedAbs:abs,updatedAtAbs:abs,trigger:String(trigger),rosterSignature,marketSignature,
+    primaryStrategy:profile.primaryStrategy,coreCardName:highCost[0]?.name||units.slice().sort((a,b)=>prefCardIntrinsicScore(region,b)-prefCardIntrinsicScore(region,a))[0]?.name||'',
+    goalId:chosen.id,title:chosen.title,missingTags:chosen.missingTags,mainAttr:chosen.mainAttr||'',reason:chosen.reason,options,confidence:0.4+0.55*profile.cardIQ/100};
+  const changed=!old||old.goalId!==chosen.id||old.mainAttr!==region.aiPlan.mainAttr||String(old.missingTags||[]).join(',')!==chosen.missingTags.join(',')||old.rosterSignature!==rosterSignature;
+  if(changed||force){
+    prefRecordAIThought(region,'長期構築計画',`目標を再評価：${chosen.title}`,[chosen.reason,`カード選びの賢さ${profile.cardIQ}/100`,`比較中の構築案${options.length||1}案`,`再評価の契機：${trigger}`,...(region.aiPlan.coreCardName?[`主力候補：「${region.aiPlan.coreCardName}」を活かす計画`]:[])],
+      {goalId:chosen.id,missingTags:chosen.missingTags,mainAttr:chosen.mainAttr,options:options.map(x=>({title:x.title,reason:x.reason,priority:Math.round(x.priority*10)/10})),confidence:region.aiPlan.confidence});
+  }
+  return region.aiPlan;
+}
+function prefAIPlanFitScore(region,card) {
+  const plan=region?.aiPlan;if(!plan||!card)return 0;
+  const cp=prefCardProfile(card);const options=Array.isArray(plan.options)&&plan.options.length?plan.options:[plan];let best=0;
+  for(const goal of options){
+    const match=(goal.missingTags||[]).filter(tag=>cp.tags.has(tag)).length;
+    let score=match*(2.5+3*(Number(plan.confidence)||0));
+    if(goal.mainAttr&&(cp.mainAttr===goal.mainAttr||cp.subAttrs.includes(goal.mainAttr)||cp.supportsAttrs.includes(goal.mainAttr)))score+=2.5*(Number(plan.confidence)||0.5);
+    if(goal.id==='main-survival'&&(cp.tags.has('healing')||cp.tags.has('shield_defense')))score+=1.5;
+    // Lower priority plans remain viable market alternatives, but never outrank a clearly better strategic fit by label alone.
+    score*=0.7+0.3*Math.max(0,Math.min(1,(Number(goal.priority)||0)/12));
+    best=Math.max(best,score);
+  }
+  return Math.min(14,best);
+}
+
+function prefCardIntrinsicScore(region,card) {
+  if(!card)return 0;const rank=prefRankStars(card),p=prefCardProfile(card),val=Math.log10(Math.max(10000,prefCardValue(card)));
+  const profile=prefAIProfileForRegion(region);let score=rank*5.2+val;
+  score+=Math.min(8,p.atk/1200)+Math.min(6,p.hp/6000)+p.skillCount*0.8+p.passiveCount*1.2;
+  if(profile.primaryStrategy==='rush'||profile.secondaryStrategies.includes('rush'))score+=Math.min(5,p.atk/1600);
+  if(profile.primaryStrategy==='sustain'||profile.secondaryStrategies.includes('sustain'))score+=Math.min(3,p.hp/7000);
+  if(profile.primaryStrategy==='ap_efficiency'&&p.tags.has('ap_supply'))score+=4;
+  return score;
+}
+function prefGetOpponentIntel(region,opponentId) {
+  if(!region||!opponentId)return null;
+  const memory=region.aiMemory?.opponents?.[String(opponentId)]||region.aiMemory?.opponents?.[opponentId];if(!memory)return null;
+  const now=prefAbsTurn();const observations=Array.isArray(memory.observations)?memory.observations:[];
+  const battleObs=observations.slice().sort((a,b)=>(b.abs||0)-(a.abs||0))[0]||null;
+  const scout=memory.scouting&&memory.scouting.success?memory.scouting:null;
+  const scoutAbs=Number(scout?.absoluteTurn)||0,battleAbs=Number(battleObs?.abs)||0;
+  let source='battle',observedAbs=battleAbs,cards=battleObs?.opponentCards||memory.opponentCards||[],actions=battleObs?.actions||[];
+  if(scout&&scoutAbs>=battleAbs){source='scouting';observedAbs=scoutAbs;cards=scout.cards||[];actions=[];}
+  if(!observedAbs)return null;
+  const age=Math.max(0,now-observedAbs);
+  // Directly observed cards are reliable, but old rosters slowly lose predictive value.
+  const repeatFactor=source==='scouting'?1:0.35+0.65*(Math.max(1,Number(memory.matches)||1)/(Math.max(1,Number(memory.matches)||1)+2));
+  const freshness=1/(1+age/26);
+  const confidence=Math.max(0,Math.min(0.98,(source==='scouting'?0.9:0.96)*repeatFactor*freshness));
+  const recentActions=observations.filter(o=>now-(Number(o.abs)||0)<=52).flatMap(o=>o.actions||[]);
+  const actionTypes={attack:0,skill:0,magic:0};
+  recentActions.forEach(a=>{if(Object.prototype.hasOwnProperty.call(actionTypes,a.type))actionTypes[a.type]++;});
+  return {opponentId:String(opponentId),source,observedAbs,age,confidence,cards:Array.isArray(cards)?cards:[],actions:Array.isArray(actions)?actions:[],recentActions,matches:Number(memory.matches)||0,actionTypes,topic:source==='scouting'?(scout?.topic||'cards'):'battle',behavior:source==='scouting'?(scout?.summary||''):'',targetTier:scout?.targetTier||null,opponentName:memory.opponentName||prefRegion(opponentId)?.repName||String(opponentId)};
+}
+function prefRecordAIScouting(region,target,result) {
+  if(!region||region.isPlayer||!target||!result)return;
+  region.aiMemory=region.aiMemory&&typeof region.aiMemory==='object'?region.aiMemory:{opponents:{},decisions:[]};
+  region.aiMemory.opponents=region.aiMemory.opponents&&typeof region.aiMemory.opponents==='object'?region.aiMemory.opponents:{};
+  const old=region.aiMemory.opponents[target.id]||{matches:0,wins:0,losses:0,draws:0,observations:[],actionCounts:{}};
+  old.opponentName=target.repName||target.prefecture;old.lastSeenAbs=prefAbsTurn();
+  old.scouting={success:!!result.success,absoluteTurn:prefAbsTurn(),year:campaignState.year,week:campaignState.week,topic:result.topic||'cards',cards:(result.cards||[]).map(c=>({name:String(c.name||'不明'),rank:Number(c.rank)||1,mainAttr:String(c.mainAttr||''),subAttrs:Array.isArray(c.subAttrs)?c.subAttrs.slice(0,5):[],templateId:c.templateId?String(c.templateId):''})),summary:String(result.summary||''),targetTier:result.targetTier||target.tier};
+  region.aiMemory.opponents[target.id]=old;
+  prefRecordAIThought(region,'調査','対戦候補の情報を記録',[result.success?'調査に成功し、確認できた情報を保存':'調査に失敗。新たな情報は得られず',`対象：${target.prefecture||target.id}`,`内容：${result.topic||'cards'}`],{opponentId:target.id,success:!!result.success,cardCount:(result.cards||[]).length});
+}
+function prefRecordBattleAIObservation(region,opponentId,match) {
+  if(!region||region.isPlayer)return;
+  region.aiMemory=region.aiMemory&&typeof region.aiMemory==='object'?region.aiMemory:{opponents:{},decisions:[]};
+  region.aiMemory.opponents=region.aiMemory.opponents&&typeof region.aiMemory.opponents==='object'?region.aiMemory.opponents:{};
+  const old=region.aiMemory.opponents[opponentId]||{matches:0,wins:0,losses:0,draws:0,observations:[]};
+  old.matches=(old.matches||0)+1;old.wins+=(match.result==='win'?1:0);old.losses+=(match.result==='loss'?1:0);old.draws+=(match.result==='draw'?1:0);
+  old.lastSeenAbs=prefAbsTurn();old.lastResult=match.result;old.opponentName=match.opponentName;old.opponentCards=match.opponentCards||[];
+  old.observations=Array.isArray(old.observations)?old.observations:[];
+  old.observations.unshift({abs:prefAbsTurn(),result:match.result,opponentCards:match.opponentCards||[],actions:match.actions||[]});old.observations=old.observations.slice(0,5);
+  old.actionCounts=old.actionCounts&&typeof old.actionCounts==='object'?old.actionCounts:{};
+  old.actionTypeCounts=old.actionTypeCounts&&typeof old.actionTypeCounts==='object'?old.actionTypeCounts:{attack:0,skill:0,magic:0};
+  (match.actions||[]).forEach(a=>{const k=String(a.name||a.type||'行動');old.actionCounts[k]=(old.actionCounts[k]||0)+1;if(Object.prototype.hasOwnProperty.call(old.actionTypeCounts,String(a.type||'')))old.actionTypeCounts[String(a.type)]++;});
+  // Limit long-lived per-rival memory to the 20 most recently observed opponents.
+  region.aiMemory.opponents[opponentId]=old;
+  const keys=Object.entries(region.aiMemory.opponents).sort((a,b)=>(b[1].lastSeenAbs||0)-(a[1].lastSeenAbs||0)).map(([k])=>k);
+  keys.slice(20).forEach(k=>delete region.aiMemory.opponents[k]);
+}
 
 function prefRandom(arr) { return arr[Math.floor(Math.random()*arr.length)]; }
 function prefShuffle(arr) { const out=[...(arr||[])]; for(let i=out.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[out[i],out[j]]=[out[j],out[i]];} return out; }
@@ -156,7 +461,8 @@ function prefNewStats() { return {assetMetric:0,wins:0,losses:0,draws:0,battles:
 function prefDefaultRegion(prefecture, isPlayer, repName, personality, initialPosition) {
   const tier=prefTierForPosition(initialPosition);
   return {id:prefecture,prefecture,repName,personality:personality.id,personalityLabel:personality.name,personalityFocus:personality.focus,
-    aiIntelligence:personality.intelligence||'normal',isPlayer:!!isPlayer,funds:0,initialPosition,rankPosition:initialPosition,rankEndPosition:initialPosition,rankTieCount:1,tier,
+    aiIntelligence:personality.intelligence||'normal',aiProfile:prefDefaultAIProfileForTier(tier,personality.id),aiTacticalIQ:prefDefaultAIProfileForTier(tier,personality.id).tacticalIQ,aiCardIQ:prefDefaultAIProfileForTier(tier,personality.id).cardIQ,
+    aiMemory:{opponents:{},decisions:[]},isPlayer:!!isPlayer,funds:0,initialPosition,rankPosition:initialPosition,rankEndPosition:initialPosition,rankTieCount:1,tier,
     supportTier:tier,unitSlots:PREF_RIVAL_UNIT_LIMIT,lastBattleAbs:0,nonBattleStreak:0,resignations:0,yearStats:prefNewStats(),allTimeStats:{wins:0,losses:0,draws:0,battles:0,assetMetric:0},
     lastCommand:null,lastCommandAbs:0,lastLoadout:{active:[],reserve:[]}};
 }
@@ -241,6 +547,10 @@ function prefCreateNewCampaign() {
     region.profileRivalId=existing?.id||null;
     region.cardPreference=existing?.cardPreference||'rank-value';
     region.tier=row.tier; region.supportTier=row.tier; region.aiIntelligence=existing?.intelligence||personality.intelligence||'normal';
+    // Custom rival profiles use their explicit 0-100 ratings. Automatically generated rivals are initialized from starting tier.
+    region.aiProfile=prefAIProfileFromRival(existing,row.tier,personality.id);
+    region.aiTacticalIQ=region.aiProfile.tacticalIQ;region.aiCardIQ=region.aiProfile.cardIQ;
+    region.aiMemory={opponents:{},decisions:[]};
     state.regions[row.prefecture]=region;
     (pool.assigned[row.prefecture]||[]).forEach(inst=>{inst.ownerId=row.prefecture;inst.zone='owner';inst.acquiredAtAbs=1;inst.expiresAtAbs=1+PREF_CARD_LIFETIME;});
   }
@@ -256,6 +566,7 @@ function prefCreateNewCampaign() {
   state.rankingOrder.forEach((id,i)=>{const r=state.regions[id];r.rankPosition=i+1;r.rankEndPosition=i+1;r.rankTieCount=1;r.tier=prefTierForPosition(i+1);r.supportTier=r.tier;});
   prefLog('京都府代表として全国47位から参戦。第1週の資金提供が初期資金になります。','success');
   prefLog(`初期配布完了：キャラカード原本${units.length}枚。${units.length<240?'必要枠に満たないため、初期配布に限り複製を許可。初期ガチャのキャラカードは0枚です。':'初期配布後のキャラカードはガチャに残ります。'}`,'info');
+  prefEnsureCampaignAIConfig();
   prefOpenWeek();
   prefSave().then(()=>{prefSyncCampaignClones();prefRenderAll();}).catch(console.error);
   return state;
@@ -267,6 +578,7 @@ async function prefLoadState() {
   if(campaignState && (!campaignState.regions || !campaignState.instances)) campaignState=null;
   if(campaignState){
     prefSyncCampaignClones();
+    prefEnsureCampaignAIConfig();
     // Cards authored after the campaign started are immediately placed in the shared character gacha.
     const known=new Set(Object.values(campaignState.instances).map(i=>String(i.templateId)));
     for(const t of prefCardTemplates().filter(c=>c.cardType==='unit')){
@@ -412,26 +724,51 @@ function prefOpenWeek() {
   prefTurnStartAbs=prefAbsTurn();
 }
 
+function prefCardStrategyScore(region,card) {
+  if(!region||!card)return 0;
+  const profile=prefAIProfileForRegion(region),cp=prefCardProfile(card),tags=cp.tags;
+  const weights={
+    combo:{passive_chain:2.0,extra_effect:2.2,status_condition:1.5,ap_supply:1.1},
+    rush:{damage:2.6,attack_role:1.8,attack_speed_buff:1.7,heavy_cost:0.7},
+    heavy:{heavy_cost:2.6,damage:1.8,ap_supply:1.1},
+    basic:{attack_role:2.3,low_cost:1.1,high_rank:0.5},
+    ap_efficiency:{ap_supply:3.0,low_cost:1.5,heavy_cost:-0.4},
+    sustain:{healing:2.2,shield_defense:2.4,hp_role:1.0},
+    status:{status_debuff:2.3,status_condition:2.2,extra_effect:0.8},
+    buff:{attack_speed_buff:2.6,damage:0.8,passive_chain:0.5},
+    protect:{shield_defense:2.2,healing:1.4,target_control:1.6},
+    extra:{extra_effect:2.7,status_debuff:0.8},
+    passive:{passive_chain:2.8,extra_effect:1.0},
+    attribute:{attribute_support:2.8,attack_speed_buff:0.6,shield_defense:0.6},
+    adaptive:{healing:0.4,shield_defense:0.4,damage:0.4,ap_supply:0.4},
+    counter:{shield_defense:1.8,healing:1.3,status_debuff:1.5,target_control:1.0}
+  };
+  const one=id=>{const row=weights[id]||{};let val=0;for(const [tag,w] of Object.entries(row))if(tags.has(tag))val+=w;return val;};
+  // Main strategy strongly shapes evaluation; secondary strategies are smaller but meaningful influences.
+  let score=one(profile.primaryStrategy)+profile.secondaryStrategies.reduce((sum,id)=>sum+one(id)*0.34,0);
+  // A card's raw role is still more important than stylistic preference for low card-IQ rivals.
+  return score*(0.45+0.55*(profile.cardIQ/100));
+}
+
 function prefCardScoreForRegion(region, inst) {
   const c=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);if(!c)return 0;
-  const tier=PREF_TIER_VALUE[region.tier||'E']||1; const rank=prefRankStars(c); const val=Math.log10(Math.max(10000,prefCardValue(c)));
-  const personality=region.personality||'careful';
-  let score;
-  if(personality==='trickster')score=rank*6+val+((c.skills||[]).length)*1.6;
-  else if(personality==='collector')score=rank*4+val*2;
-  else if(personality==='scout')score=rank*5+((c.skills||[]).filter(s=>s.type==='passive').length)*2+val;
-  else if(personality==='aggressive')score=rank*7+Number(c.stats?.atk||0)/1000+val;
-  else score=rank*5+val+Number(c.stats?.hp||0)/3000;
+  const profile=prefAIProfileForRegion(region);const personality=region.personality||'careful';
+  let score=prefCardIntrinsicScore(region,c)+prefCardStrategyScore(region,c)+prefCardPreferenceScore(region,c)+prefCardSynergyScore(region,c)+prefAIPlanFitScore(region,c);
+  // The operational personality is separate from combat style and numeric card-building IQ.
+  if(personality==='trickster')score+=(c.skills||[]).length*0.8;
+  else if(personality==='collector')score+=Math.log10(Math.max(10000,prefCardValue(c)))*0.35;
+  else if(personality==='scout')score+=(c.skills||[]).filter(s=>s.type==='passive').length*0.8;
+  else if(personality==='aggressive')score+=Math.min(4,Number(c.stats?.atk||0)/2200);
+  else score+=Math.min(3,Number(c.stats?.hp||0)/7000);
   const focus=region.cardPreference||'rank-value';
-  if(focus==='highest-rank')score+=rank*3;
-  else if(focus==='strongest-stats')score+=(Number(c.stats?.hp||0)/1000)+(Number(c.stats?.atk||0)/500);
-  else if(focus==='skill-effects')score+=(c.skills||[]).length*2.5+(c.skills||[]).filter(x=>x.type==='passive').length*2;
+  if(focus==='highest-rank')score+=prefRankStars(c)*1.5;
+  else if(focus==='strongest-stats')score+=(Number(c.stats?.hp||0)/2200)+(Number(c.stats?.atk||0)/1300);
+  else if(focus==='skill-effects')score+=(c.skills||[]).length*1.2+(c.skills||[]).filter(x=>x.type==='passive').length*1.4;
   else if(focus==='attribute-diversity'){
     const existing=prefOwnedUnits(region.id).filter(x=>String(x.id)!==String(inst.id)).map(x=>prefCardForInstance(x.id)||prefTemplate(x.templateId)).filter(Boolean);
-    const attr=String(c.mainAttr||'');
-    score+=attr&&!existing.some(x=>String(x.mainAttr||'')===attr)?4:0;
+    const attr=String(c.mainAttr||'');score += (attr && !existing.some(x => String(x.mainAttr || '') === attr)) ? 1.5 : 0;
   }
-  return score + tier*0.01;
+  return score + prefCardEstimateError(profile.cardIQ);
 }
 
 function prefAiReplacementChoice(region, unitInstances, incomingInst) {
@@ -627,10 +964,22 @@ function prefRenderGacha() {
   document.getElementById('pref-gacha-note').textContent=`現在の京都府ランク：${tier}。AランクガチャはBランク以上、BランクガチャはDランク以上で解放されます。キャラカードの排出候補が無いときは、設定確率にかかわらずマジックカードが排出されます。重複マジックは自動で市場に出品されます。`;
 }
 function prefRenderRanking() {
-  if(!campaignState){const b=document.getElementById('pref-ranking-body');if(b)b.innerHTML='<tr><td colspan="6" class="p-8 text-center text-slate-500">ゲームを開始してください。</td></tr>';return;}
+  if(!campaignState){const b=document.getElementById('pref-ranking-body');if(b)b.innerHTML='<tr><td colspan="7" class="p-8 text-center text-slate-500">ゲームを開始してください。</td></tr>';return;}
   const rows=prefCurrentRegionRankList();const p=prefPlayerRegion();
   document.getElementById('pref-ranking-header').innerHTML=`<div class="flex flex-wrap justify-between gap-2"><span>第${campaignState.year}年度・第${campaignState.week}週</span><span>京都府：<b class="text-amber-200">${prefRankLabel(p)} / ランク${p.tier}</b></span><span>年間資産額は資金提供を含む収支指標</span></div>`;
-  document.getElementById('pref-ranking-body').innerHTML=rows.map((r,i)=>`<tr class="${r.id===PREF_PLAYER_ID?'bg-amber-950/25':''}"><td class="p-3 font-black text-amber-200 whitespace-nowrap">${prefEsc(prefRankLabel(r))}</td><td class="p-3 font-bold whitespace-nowrap">${prefEsc(r.prefecture)} ${r.id===PREF_PLAYER_ID?'<span class="text-[9px] text-amber-300">PLAYER</span>':''}</td><td class="p-3 text-slate-300 whitespace-nowrap">${prefEsc(r.repName)}</td><td class="p-3 text-right tabular-nums ${Number(r.yearStats?.assetMetric||0)<0?'text-rose-300':'text-white'}">${prefFormatMoney(r.yearStats?.assetMetric||0)}</td><td class="p-3 text-right text-cyan-200 tabular-nums">${prefEsc(prefFormatWinRate(r))}</td><td class="p-3 text-center">${prefTierBadge(r.tier)}</td></tr>`).join('');
+  document.getElementById('pref-ranking-body').innerHTML=rows.map((r,i)=>`<tr class="${r.id===PREF_PLAYER_ID?'bg-amber-950/25':''}"><td class="p-3 font-black text-amber-200 whitespace-nowrap">${prefEsc(prefRankLabel(r))}</td><td class="p-3 font-bold whitespace-nowrap">${prefEsc(r.prefecture)} ${r.id===PREF_PLAYER_ID?'<span class="text-[9px] text-amber-300">PLAYER</span>':''}</td><td class="p-3 text-slate-300 whitespace-nowrap">${prefEsc(r.repName)}</td><td class="p-3 text-right tabular-nums ${Number(r.yearStats?.assetMetric||0)<0?'text-rose-300':'text-white'}">${prefFormatMoney(r.yearStats?.assetMetric||0)}</td><td class="p-3 text-right text-cyan-200 tabular-nums">${prefEsc(prefFormatWinRate(r))}</td><td class="p-3 text-center">${prefTierBadge(r.tier)}</td><td class="p-3 text-center">${r.id===PREF_PLAYER_ID?'—':`<button data-pref-action="ai-thoughts" data-id="${prefEsc(r.id)}" class="px-2 py-1 rounded bg-slate-800 hover:bg-indigo-800 text-[10px] text-cyan-200 font-bold whitespace-nowrap">AI思考</button>`}</td></tr>`).join('');
+}
+function prefShowAIThoughts(regionId) {
+  const region=prefRegion(regionId);if(!region)return;
+  const playerKnowsCards=(id)=>id===PREF_PLAYER_ID||(campaignState?.investigations||[]).some(x=>x.success&&x.targetPrefecture===prefRegion(id)?.prefecture&&['cards','both'].includes(x.topic));
+  const subjectCardsKnown=playerKnowsCards(regionId);
+  const profile=prefAIProfileForRegion(region);const main=PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)?.label||profile.primaryStrategy;
+  const secondary=profile.secondaryStrategies.map(id=>PREF_AI_STRATEGIES.find(x=>x.id===id)?.label||id);
+  const decisions=(region.aiMemory?.decisions||[]).slice(0,12);
+  const opponentEntries=Object.entries(region.aiMemory?.opponents||{}).sort((a,b)=>(b[1].lastSeenAbs||0)-(a[1].lastSeenAbs||0)).slice(0,5);
+  const timeline=decisions.map(d=>`<article class="rounded-lg border border-slate-800 bg-slate-950 p-3"><div class="flex flex-wrap justify-between gap-2"><b class="text-cyan-200 text-sm">${prefEsc(!subjectCardsKnown&&['カード購入','マジック購入','ガチャ'].includes(d.kind)?`${d.kind}（カード名は未公開）`:d.title||d.kind)}</b><span class="text-[10px] text-slate-500">${d.year||campaignState.year}年 ${d.week||campaignState.week}週 · ${prefEsc(d.kind||'判断')}</span></div><ul class="list-disc pl-5 mt-2 space-y-1 text-xs text-slate-300">${(d.reasons||[]).map(r=>`<li>${prefEsc(!subjectCardsKnown&&String(r).startsWith('主力候補：')?'主力カードを活かす計画':r)}</li>`).join('')}</ul>${d.details?.activeNames?.length?`<div class="text-[10px] text-amber-200 mt-2">${subjectCardsKnown?'選出：'+d.details.activeNames.map(prefEsc).join('、'):'出撃候補を評価（カード名は未公開）'}</div>`:''}${d.details?.cardName&&subjectCardsKnown?`<div class="text-[10px] text-amber-200 mt-2">対象カード：${prefEsc(d.details.cardName)}</div>`:''}${d.details?.alternatives?.length?`<div class="mt-2 rounded bg-slate-900 p-2 text-[10px] text-slate-300"><b>比較した候補：</b>${subjectCardsKnown?d.details.alternatives.map(a=>`${(a.names||[]).map(prefEsc).join('・')}（評価 ${prefEsc(a.score)}${a.scenarioMean!=null?` · 想定戦況平均 ${prefEsc(a.scenarioMean)}`:''}）`).join(' ／ '):`カード名を伏せた${d.details.alternatives.length}案を比較`}</div>`:''}${d.details?.myActions?.length?`<div class="mt-2 text-[10px] text-cyan-100"><b>実行行動：</b>${subjectCardsKnown?d.details.myActions.map(prefEsc).join(' ／ '):'実行行動を記録済み（カード名は未公開）'}</div>`:''}${d.details?.plans?.length?`<div class="mt-2 space-y-1 text-[10px] text-cyan-100"><b>行動計画：</b>${subjectCardsKnown?d.details.plans.map(p=>`<div>第${prefEsc(p.turn)}ターン：${(p.actions||[]).map(prefEsc).join(' ／ ')}</div>`).join(''):'行動計画を記録済み（カード名は未公開）'}</div>`:''}</article>`).join('');
+  const memories=opponentEntries.map(([id,m])=>{const intel=prefGetOpponentIntel(region,id);return `<div class="rounded-lg bg-slate-950 border border-slate-800 p-3"><div class="font-bold text-sm text-white">${prefEsc(m.opponentName||prefRegion(id)?.repName||id)}</div><div class="text-[10px] text-slate-400 mt-1">対戦${m.matches||0}回 · ${m.wins||0}勝 ${m.losses||0}敗 ${m.draws||0}分 · 信頼度 ${Math.round((intel?.confidence||0)*100)}% · 最終情報から${intel?.age??'—'}週</div><div class="text-xs text-slate-300 mt-2">情報源：${intel?.source==='scouting'?'調査情報':'過去の対戦で観測'}${intel?.topic==='behavior'&&intel?.behavior?` · ${prefEsc(intel.behavior)}`:''}</div><div class="text-xs text-slate-300 mt-2">観測カード：${playerKnowsCards(id)?((intel?.cards||m.opponentCards||[]).map(c=>prefEsc(c.name)).join('、')||'記録なし'):'未調査の相手カードは非公開'}</div><div class="text-xs text-slate-400 mt-1">主な行動：${playerKnowsCards(id)?(Object.entries(m.actionCounts||{}).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([n,c])=>`${prefEsc(n)}×${c}`).join('、')||'記録なし'):'過去の対戦行動を記録（詳細は調査後に表示）'}</div></div>`;}).join('');
+  prefShowModal(`🧠 ${region.prefecture}・${region.repName}のAI思考`,`<div class="max-h-[75vh] overflow-y-auto space-y-4 pr-1"><section class="rounded-xl border border-indigo-500/30 bg-slate-950 p-3"><div class="font-black text-white text-lg">AI能力</div><div class="grid grid-cols-2 gap-2 mt-3"><div class="rounded-lg bg-slate-900 p-3"><div class="text-[10px] text-slate-400">戦術の賢さ</div><div class="text-2xl font-black text-emerald-200">${profile.tacticalIQ}/100</div></div><div class="rounded-lg bg-slate-900 p-3"><div class="text-[10px] text-slate-400">カード選び</div><div class="text-2xl font-black text-cyan-200">${profile.cardIQ}/100</div></div></div><div class="text-sm text-slate-300 mt-3">主戦術：<b>${prefEsc(main)}</b></div><div class="text-xs text-slate-400 mt-1">副戦術：${secondary.map(prefEsc).join('、')||'なし'}</div><div class="text-xs text-slate-400 mt-2">属性の好み（メイン）：${profile.mainAttrPriority.map(prefEsc).join(' ＞ ')||'指定なし'}</div><div class="text-xs text-slate-400 mt-1">属性の好み（サブ）：${profile.subAttrPriority.map(prefEsc).join(' ＞ ')||'指定なし'}</div><div class="text-xs text-slate-400 mt-1">効果の好み：${profile.effectPriority.map(id=>prefEsc(PREF_AI_EFFECT_PREFERENCES.find(x=>x.id===id)?.label||id)).join(' ＞ ')||'指定なし'}</div></section><section class="rounded-lg border border-emerald-500/20 bg-slate-950 p-3"><h4 class="font-black text-emerald-200 mb-2">長期構築計画</h4>${region.aiPlan?`<div class="text-sm text-slate-100 font-bold">${prefEsc(region.aiPlan.title||'デッキ全体の補完')}</div><div class="text-xs text-slate-400 mt-1">目標：${prefEsc(region.aiPlan.reason||'全体性能を維持')} · 評価信頼度 ${Math.round((region.aiPlan.confidence||0)*100)}%</div><div class="mt-2 space-y-1 text-xs text-slate-300">${(region.aiPlan.options||[]).map(o=>`<div>・${prefEsc(o.title)}（優先度 ${Math.round((o.priority||0)*10)/10}）</div>`).join('')}</div>`:'<div class="text-xs text-slate-500">まだ構築計画は作成されていません。</div>'}</section><section><h4 class="font-black text-amber-200 mb-2">最近の判断理由</h4><div class="space-y-2">${timeline||'<div class="text-xs text-slate-500">まだ判断記録がありません。行動・購入・対戦の節目で記録されます。</div>'}</div></section><section><h4 class="font-black text-cyan-200 mb-2">対戦相手の記憶</h4><div class="space-y-2">${memories||'<div class="text-xs text-slate-500">まだ対戦記憶がありません。</div>'}</div><p class="text-[10px] text-slate-500 mt-2">記憶の信頼度は観測回数と情報の古さに応じて扱います。非公開カードを直接読み取ることはありません。</p></section></div>`,[{label:'閉じる',action:'close-modal',style:'primary'}]);
 }
 function prefRenderInvestigations() {
   const wrap=document.getElementById('pref-investigation-list');if(!wrap)return;
@@ -870,9 +1219,10 @@ function prefDecideAiCommand(region) {
   let battleProb=p.battle;
   if(units<3)battleProb=0;
   if(region.funds<15000000)battleProb=Math.min(battleProb,0.35);
-  if(Math.random()<battleProb)return {type:'battle'};
-  const target=prefRandom(Object.keys(campaignState.regions).filter(x=>x!==region.id));
-  return {type:'investigate',target,topic:region.personality==='scout'?'both':region.personality==='careful'?'behavior':'cards'};
+  if(Math.random()<battleProb){prefRecordAIThought(region,'コマンド選択','今週は対戦を選択',[`運営方針「${p.name}」の対戦傾向を適用`,`所持キャラ${units}枚、資金${prefFormatMoney(region.funds)}`,`対戦確率の基準${Math.round(battleProb*100)}%`]);return {type:'battle'};}
+  const target=prefRandom(Object.keys(campaignState.regions).filter(x=>x!==region.id));const topic=region.personality==='scout'?'both':region.personality==='careful'?'behavior':'cards';
+  prefRecordAIThought(region,'コマンド選択','今週は調査を選択',[`運営方針「${p.name}」に基づき対戦より調査を選択`,`調査対象：${prefRegion(target)?.prefecture||target}`,`調査内容：${topic==='both'?'カードと行動方針':topic==='behavior'?'行動方針':'カード'}`]);
+  return {type:'investigate',target,topic};
 }
 function prefAiGachaAllowed(region,key) {
   if(region.funds<PREF_GACHA[key].price)return false;
@@ -880,7 +1230,44 @@ function prefAiGachaAllowed(region,key) {
   if(key==='B')return ['S','A','B','C','D'].includes(region.tier);
   return true;
 }
+function prefAiMarketUtility(region,instance) {
+  const card=prefCardForInstance(instance?.id)||prefTemplate(instance?.templateId);if(!card)return -Infinity;
+  const profile=prefAIProfileForRegion(region);const ownUnits=prefOwnedUnits(region.id);const ownMagics=prefOwnedMagics(region.id);
+  const scoreOf=inst=>prefCardScoreForRegion(region,inst);
+  const candidateScore=prefCardIntrinsicScore(region,card)+prefCardStrategyScore(region,card)+prefCardPreferenceScore(region,card)+prefCardSynergyScore(region,card)+prefAIPlanFitScore(region,card);
+  let improvement=0;
+  if(instance.kind==='unit'){
+    if(ownUnits.length<3) improvement=18+candidateScore*0.25;
+    else if(ownUnits.length<5){const avg=ownUnits.reduce((sum,x)=>sum+scoreOf(x),0)/Math.max(1,ownUnits.length);improvement=5+candidateScore-avg*0.78;}
+    else {
+      const weakest=ownUnits.map(inst=>({inst,score:scoreOf(inst)})).sort((a,b)=>a.score-b.score)[0];
+      improvement=weakest?candidateScore-weakest.score:-2;
+      // A full roster must not buy a card that would immediately be rejected instead of replacing a weaker card.
+      if(improvement<=0)improvement-=4;
+    }
+  } else {
+    if(ownMagics.length>=5)return -Infinity;
+    if(!ownMagics.length)improvement=4+candidateScore*0.25+prefCardSynergyScore(region,card)*0.35;
+    else {const avg=ownMagics.reduce((sum,x)=>sum+scoreOf(x),0)/Math.max(1,ownMagics.length);improvement=4+candidateScore*0.48-avg*0.28;}
+  }
+  const cost=prefCardValue(card);const reserve=region.funds-cost;
+  const shortage=instance.kind==='unit'&&ownUnits.length<3;
+  const pricePenalty=Math.min(12,Math.log10(Math.max(1,cost/10000))*1.8);
+  const reservePenalty=reserve<10000000&&!shortage?8:reserve<30000000&&!shortage?3:0;
+  return improvement-pricePenalty-reservePenalty+(shortage?18:0)+(profile.cardIQ/100)*2+prefCardEstimateError(profile.cardIQ);
+}
+function prefAiMarketReasons(region,instance) {
+  const card=prefCardForInstance(instance?.id)||prefTemplate(instance?.templateId);const profile=prefAIProfileForRegion(region);const cp=prefCardProfile(card);const reasons=[];
+  if(prefCardSynergyScore(region,card)>3)reasons.push('手持ちのキャラやマジックとのシナジーを評価');
+  if(cp.tags.has('ap_supply')&&prefOwnedUnits(region.id).some(u=>prefCardProfile(prefCardForInstance(u.id)).maxCost>=25))reasons.push('AP供給が高コストスキルの使用機会を増やす');
+  if(cp.tags.has('shield_defense')||cp.tags.has('healing'))reasons.push('主力の生存率を支える役割を補完');
+  if(profile.effectPriority.some(x=>cp.tags.has(x)))reasons.push('好みの効果カテゴリに一致');
+  const planFit=prefAIPlanFitScore(region,card);if(planFit>1)reasons.push(`長期計画「${region.aiPlan?.title||'シナジー補完'}」に合致（計画適合度${planFit.toFixed(1)}）`);
+  if(!reasons.length)reasons.push('カード単体性能・価格・所持構成を総合評価');
+  return reasons.slice(0,6);
+}
 function prefAiTryEconomy(region) {
+  prefRefreshAIPlan(region,'市場・所持カードの確認');
   const units=prefOwnedUnits(region.id),magics=prefOwnedMagics(region.id);
   const needUnits=units.length<3;
   // A rival first checks the market for a unit if it is short on battle-ready cards.
@@ -890,12 +1277,23 @@ function prefAiTryEconomy(region) {
     if(units.some(x=>String(x.templateId)===String(inst.templateId)))return false;
     if(prefOwnedInstancesAny().some(x=>String(x.templateId)===String(inst.templateId)&&x.ownerId!==region.id&&!x.copyException&&!inst.copyException))return false;
     return true;
-  }).sort((a,b)=>prefCardValue(prefCardForInstance(a.id))-prefCardValue(prefCardForInstance(b.id)));
-  if(marketUnits.length && (needUnits || (units.length<5 && Math.random()<(region.personality==='collector'?0.45:0.17)))){
-    const inst=marketUnits[0],card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId),price=prefCardValue(card);const seller=inst.sellerRegionId;
-    prefBook(region.id,-price,'market-buy');if(seller)prefBook(seller,price,'market-sale');prefSetInstanceOwner(inst,region.id,true);
-    if(units.length>=5){const old=prefAiReplacementChoice(region,units,inst);if(old===inst.id)prefListInstance(inst,region.id,'ai-rejected-card');else if(campaignState.instances[old])prefListInstance(campaignState.instances[old],region.id,'ai-replacement');}
-    prefLog(`${region.prefecture}が市場でキャラカード「${card.name}」を購入しました。`,'info');return;
+  }).map(inst=>({inst,utility:prefAiMarketUtility(region,inst)})).sort((a,b)=>b.utility-a.utility);
+  const profile=prefAIProfileForRegion(region);
+  const marketChance=region.personality==='collector'?0.45:region.personality==='careful'?0.14:0.22;
+  const bestMarketUtility=marketUnits[0]?.utility??-Infinity;
+  const strongMarketUpgrade=bestMarketUtility>=14;
+  const opportunisticMarketAttempt=units.length<5?Math.random()<(marketChance+profile.cardIQ/100*0.16):Math.random()<(marketChance*0.35+profile.cardIQ/100*0.08);
+  if(marketUnits.length && (needUnits || strongMarketUpgrade || opportunisticMarketAttempt)){
+    const best=marketUnits[0],inst=best.inst,card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId),price=prefCardValue(card),seller=inst.sellerRegionId;
+    const reasons=prefAiMarketReasons(region,inst);reasons.push(`候補市場カードを価格${prefFormatMoney(price)}・推定効用${best.utility.toFixed(1)}で評価`);
+    // AI can reject a marginal purchase when it would leave almost no reserve, unless it needs a third unit to battle.
+    if(needUnits||best.utility>=8){
+      prefBook(region.id,-price,'market-buy');if(seller)prefBook(seller,price,'market-sale');prefSetInstanceOwner(inst,region.id,true);
+      if(units.length>=5){const old=prefAiReplacementChoice(region,units,inst);if(old===inst.id)prefListInstance(inst,region.id,'ai-rejected-card');else if(campaignState.instances[old])prefListInstance(campaignState.instances[old],region.id,'ai-replacement');}
+      prefRecordAIThought(region,'カード購入',`市場で「${card?.name||'キャラカード'}」を購入`,reasons,{cardName:card?.name,price,utility:best.utility});
+      prefLog(`${region.prefecture}がシナジー評価で市場の「${card.name}」を購入しました。`,'info');prefRefreshAIPlan(region,'カードを購入・獲得',true);return;
+    }
+    prefRecordAIThought(region,'購入見送り',`「${card?.name||'キャラカード'}」の購入を見送り`,['価格に対する改善幅が小さい、または資金を残す価値が高いと判断',`推定効用${best.utility.toFixed(1)}`],{cardName:card?.name,price,utility:best.utility});
   }
   // A single no-cost-per-turn decision may draw a gacha; the gacha fee itself is still paid normally.
   const wantsShop=needUnits || Math.random()<(region.personality==='collector'?0.48:region.personality==='careful'?0.15:0.25);
@@ -904,16 +1302,24 @@ function prefAiTryEconomy(region) {
     if(prefAiGachaAllowed(region,key)){
       region.funds-=PREF_GACHA[key].price;
       const selected=prefResolveGachaTier(key);
-      if(selected.kind==='unit'&&selected.instance){const inst=selected.instance;const card=prefCardForInstance(inst.id);if(prefOwnedUnits(region.id).length<5)prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});else{const old=prefAiReplacementChoice(region,prefOwnedUnits(region.id),inst);if(old===inst.id)prefListInstance(inst,region.id,'ai-rejected-card');else{prefListInstance(campaignState.instances[old],region.id,'ai-replacement');prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});}}prefLog(`${region.prefecture}がガチャで「${card?.name||'キャラカード'}」を獲得しました。`,'info');}
+      if(selected.kind==='unit'&&selected.instance){const inst=selected.instance;const card=prefCardForInstance(inst.id);if(prefOwnedUnits(region.id).length<5)prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});else{const old=prefAiReplacementChoice(region,prefOwnedUnits(region.id),inst);if(old===inst.id)prefListInstance(inst,region.id,'ai-rejected-card');else{prefListInstance(campaignState.instances[old],region.id,'ai-replacement');prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});}}prefRecordAIThought(region,'ガチャ','ガチャでキャラカードを獲得',[`市場購入できるシナジー候補が限られるため、許可ランク内のガチャを利用`,`カード選びの賢さ${profile.cardIQ}/100。獲得後に既存カードとの相性を再評価`],{cardName:card?.name,rank:prefRankStars(card)});prefLog(`${region.prefecture}がガチャで「${card?.name||'キャラカード'}」を獲得しました。`,'info');}
       else {
         const templates=prefCardTemplates().filter(c=>c.cardType==='magic');if(templates.length){const t=prefRandom(templates),inst=prefCreateInstance(t.id,'pending',null,{source:'ai-gacha'});if(prefOwnedMagics(region.id).some(x=>String(x.templateId)===String(t.id)))prefListInstance(inst,region.id,'duplicate-gacha');else prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});}
       }
     }
   }
-  // Collectors can buy one affordable magic card from market if it complements their current hand.
-  if(region.personality==='collector'&&magics.length<3&&Math.random()<0.3){
-    const candidate=prefMarketListings('magic',false).find(inst=>inst.sellerRegionId!==region.id&&region.funds>=prefValueFromInstance(inst)&&!prefOwnedMagics(region.id).some(x=>String(x.templateId)===String(inst.templateId)));
-    if(candidate){const price=prefValueFromInstance(candidate),seller=candidate.sellerRegionId;prefBook(region.id,-price,'market-buy');if(seller)prefBook(seller,price,'market-sale');prefSetInstanceOwner(candidate,region.id,false);candidate.expiresAtAbs=null;}
+  // Gacha acquisition can change the intended combo; refresh only when the roster or market signature changed.
+  prefRefreshAIPlan(region,'カード獲得・市場の変化');
+  // Magic purchases are scored against the current character roster instead of being collector-only.
+  if(magics.length<5){
+    const candidates=prefMarketListings('magic',false).filter(inst=>inst.sellerRegionId!==region.id&&region.funds>=prefValueFromInstance(inst)&&!magics.some(x=>String(x.templateId)===String(inst.templateId)))
+      .map(inst=>({inst,utility:prefAiMarketUtility(region,inst)})).sort((a,b)=>b.utility-a.utility);
+    const best=candidates[0];
+    if(best&&(best.utility>=7||region.personality==='collector'&&best.utility>2)&&Math.random()<(0.08+profile.cardIQ/100*0.22)){
+      const candidate=best.inst,card=prefCardForInstance(candidate.id)||prefTemplate(candidate.templateId),price=prefValueFromInstance(candidate),seller=candidate.sellerRegionId;
+      prefBook(region.id,-price,'market-buy');if(seller)prefBook(seller,price,'market-sale');prefSetInstanceOwner(candidate,region.id,false);candidate.expiresAtAbs=null;
+      prefRecordAIThought(region,'マジック購入',`「${card?.name||'マジック'}」を購入`,[...prefAiMarketReasons(region,candidate),`キャラ構成との組み合わせを評価し、価格${prefFormatMoney(price)}で購入`],{cardName:card?.name,price,utility:best.utility});prefRefreshAIPlan(region,'マジックカードを購入',true);
+    }
   }
 }
 
@@ -995,25 +1401,153 @@ async function prefBeginTurn(playerAction) {
   }
   await prefContinueTurn();
 }
-function prefDefaultLoadout(regionId) {
-  const units=prefOwnedUnits(regionId);const r=prefRegion(regionId);
-  const saved=r?.lastLoadout||{};
+function prefEstimateBuildScenarios(region,activeCards,reserveCards,magicCards) {
+  // Lightweight expected-value proxy across three representative tactical situations.
+  // This intentionally does not execute the complete battle engine; it gives candidate
+  // lineups a small scenario-average adjustment while keeping browser-time bounded.
+  const profile=prefAIProfileForRegion(region);
+  const active=activeCards||[],reserve=reserveCards||[],magics=magicCards||[];
+  const field=[...active,...magics];
+  const allTags=new Set();const counts={};
+  for(const card of field){for(const tag of prefCardProfile(card).tags){allTags.add(tag);counts[tag]=(counts[tag]||0)+1;}}
+  const activeProfiles=active.map(prefCardProfile);
+  const highCost=activeProfiles.filter(x=>x.maxCost>=25||x.tags.has('heavy_cost')).length;
+  const apSupply=counts.ap_supply||0;
+  const attackers=activeProfiles.filter(x=>x.tags.has('damage')||x.tags.has('attack_role')).length;
+  const sustain=(counts.healing||0)+(counts.shield_defense||0);
+  const hasStatusDebuff=allTags.has('status_debuff'),hasStatusCondition=allTags.has('status_condition');
+  const mainAttrCount=active.filter(x=>String(x.mainAttr||'')===String(active[0]?.mainAttr||'')).length;
+  const attrFocus=profile.primaryStrategy==='attribute'||profile.secondaryStrategies.includes('attribute');
+
+  // Situation A: a short burst window where a large attack has a chance to decide the battle.
+  let burst=(counts.damage||0)*1.25+(counts.attack_speed_buff||0)*0.9+highCost*0.8;
+  burst+=Math.min(highCost,apSupply)*1.7-Math.max(0,highCost-apSupply)*1.15;
+  if(attackers===0)burst-=2.5;
+
+  // Situation B: a longer battle where the main attacker must survive and keep acting.
+  let sustainScore=sustain*1.65+activeProfiles.reduce((sum,x)=>sum+Math.min(1.4,Math.max(0,x.hp)/9000),0);
+  if(attackers>=2&&sustain===0)sustainScore-=2.2;
+  if(highCost>0&&apSupply===0)sustainScore-=0.6;
+  if(active.length<3)sustainScore-=Math.max(0,3-active.length)*2;
+
+  // Situation C: the planned chain actually has setup/payoff cards and enough active slots.
+  let chain=0;
+  if(hasStatusDebuff&&hasStatusCondition)chain+=3.0;
+  else if(hasStatusCondition||hasStatusDebuff)chain-=1.0;
+  if((counts.extra_effect||0)>0&&(counts.passive_chain||0)>0)chain+=2.0;
+  if(attrFocus&&mainAttrCount>=2)chain+=Math.min(2.4,(mainAttrCount-1)*1.2);
+  if(attrFocus&&mainAttrCount<2&&profile.mainAttrPriority.length)chain-=1.3;
+  // Distinct role coverage reduces the risk that an otherwise powerful combo has no support.
+  const hasDamage=attackers>0,hasSupport=sustain>0||apSupply>0;
+  if(hasDamage&&hasSupport)chain+=0.8;
+  if(hasDamage&&!hasSupport)chain-=0.7;
+
+  // Secondary strategy shapes the relative importance of the three expected situations.
+  let weights=[1,1,1];
+  if(['rush','heavy'].includes(profile.primaryStrategy))weights=[1.2,0.75,0.9];
+  else if(['sustain','protect','counter'].includes(profile.primaryStrategy))weights=[0.75,1.25,0.9];
+  else if(['combo','passive','extra','status','attribute'].includes(profile.primaryStrategy))weights=[0.9,0.9,1.25];
+  const vals=[burst,sustainScore,chain];
+  const totalWeight=weights.reduce((a,b)=>a+b,0);
+  const mean=vals.reduce((sum,v,i)=>sum+v*weights[i],0)/totalWeight;
+  const iq=Number(profile.cardIQ)||0;
+  // Low card IQ has a noisier estimate and is less likely to recognise sophisticated lines.
+  const accuracy=0.55+0.45*iq/100;
+  return {mean:mean*accuracy,scenarios:{burst:Number(burst.toFixed(2)),sustain:Number(sustainScore.toFixed(2)),chain:Number(chain.toFixed(2))}};
+}
+
+function prefChooseRivalLoadout(regionId,opponentId=null) {
+  const region=prefRegion(regionId);const units=prefOwnedUnits(regionId);if(!region||region.isPlayer)return prefDefaultLoadoutFallback(regionId);
+  const profile=prefAIProfileForRegion(region);const cardById=id=>prefCardForInstance(id)||prefTemplate(campaignState.instances[id]?.templateId);
+  const cards=units.map(x=>({inst:x,card:cardById(x.id)})).filter(x=>x.card);
+  const mags=prefOwnedMagics(regionId).map(x=>cardById(x.id)).filter(Boolean);
+  const opponentIntel=opponentId?prefGetOpponentIntel(region,opponentId):null;
+  if(cards.length<=3){
+    const active=cards.map(x=>x.inst.id);const reserve=[];
+    prefRecordAIThought(region,'編成構築','出撃メンバーを選出',['所持キャラが3体以下のため、全員を出撃候補に設定',`カード選びの賢さ${profile.cardIQ}/100`,...(opponentIntel?.confidence>0.2?[`調査・対戦記憶を参照（信頼度${Math.round(opponentIntel.confidence*100)}%）`]:[])],{activeNames:active.map(id=>cardById(id)?.name||'キャラ'),opponentId:opponentId||null});
+    return {active,reserve};
+  }
+  const candidateSets=[];
+  const pick=(arr,start,need,chosen)=>{if(need===0){candidateSets.push([...chosen]);return;}for(let i=start;i<=arr.length-need;i++)pick(arr,i+1,need-1,[...chosen,arr[i]]);};
+  pick(cards,0,Math.min(3,cards.length),[]);
+  const scoredBuilds=[];
+  const pair=(a,b)=>prefPairSynergyRaw(a,b,profile)*(0.25+0.75*profile.cardIQ/100);
+  function opponentCounterBonus(activeCards){
+    if(!opponentIntel||opponentIntel.confidence<0.15)return 0;
+    const adaptive=profile.primaryStrategy==='adaptive'||profile.primaryStrategy==='counter'||profile.secondaryStrategies.some(x=>x==='adaptive'||x==='counter');
+    if(!adaptive)return 0;
+    let bonus=0;const conf=opponentIntel.confidence;
+    const observed=opponentIntel.actions||[];
+    const skillActions=observed.filter(a=>a.type==='skill'||a.type==='magic').length;
+    const normalActions=observed.filter(a=>a.type==='attack').length;
+    const tags=new Set(activeCards.flatMap(c=>[...prefCardProfile(c).tags]));
+    if(skillActions>=3&&(tags.has('status_debuff')||tags.has('ap_supply')))bonus+=2.5*conf;
+    if(normalActions>=3&&(tags.has('shield_defense')||tags.has('healing')))bonus+=2.0*conf;
+    const knownCards=opponentIntel.cards||[];const counts={};knownCards.forEach(c=>{if(c.mainAttr)counts[c.mainAttr]=(counts[c.mainAttr]||0)+1;});
+    const dominant=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
+    if(dominant&&dominant[1]>=2){const same=activeCards.filter(c=>prefCardProfile(c).mainAttr===dominant[0]).length;if(same>=3)bonus-=1.5*conf;else if(same<=2)bonus+=0.6*conf;}
+    return bonus;
+  }
+  for(const selected of candidateSets){
+    const activeCards=selected.map(x=>x.card);const activeIds=selected.map(x=>x.inst.id);const reserve=cards.filter(x=>!activeIds.includes(x.inst.id));
+    let score=0;const allActiveTags=new Set();
+    activeCards.forEach(card=>{score+=prefCardIntrinsicScore(region,card)+prefCardStrategyScore(region,card)+prefCardPreferenceScore(region,card)+prefAIPlanFitScore(region,card);prefCardProfile(card).tags.forEach(t=>allActiveTags.add(t));});
+    // Score only pairs actually co-deployed. Unselected cards no longer falsely create synergy for every candidate.
+    for(let i=0;i<activeCards.length;i++)for(let j=i+1;j<activeCards.length;j++)score+=pair(activeCards[i],activeCards[j]);
+    mags.forEach(m=>activeCards.forEach(c=>score+=pair(m,c)*0.75));
+    // Reserves matter when a front-line unit falls, but less than the starting lineup.
+    reserve.forEach(r=>{score+=prefCardIntrinsicScore(region,r.card)*0.18+prefCardStrategyScore(region,r.card)*0.12+prefCardPreferenceScore(region,r.card)*0.12+prefAIPlanFitScore(region,r.card)*0.12;activeCards.forEach(c=>score+=pair(r.card,c)*0.16);});
+    if(allActiveTags.has('ap_supply')&&allActiveTags.has('heavy_cost'))score+=3.5;
+    if(allActiveTags.has('healing'))score+=1.8;if(allActiveTags.has('shield_defense'))score+=1.8;
+    if(allActiveTags.has('status_debuff')&&allActiveTags.has('status_condition'))score+=3.0;
+    const attrs=new Set(activeCards.map(c=>String(c.mainAttr||'')).filter(Boolean));
+    if(activeCards.length===3&&attrs.size===1&&profile.primaryStrategy==='attribute')score+=2.5;
+    // Card-selection IQ changes whether deep synergies are found reliably; imperfect rivals misvalue complex builds.
+    const buildQuality=0.50+profile.cardIQ/200;
+    const scenarioEstimate=prefEstimateBuildScenarios(region,activeCards,reserve.map(x=>x.card),mags);
+    score=score*buildQuality+scenarioEstimate.mean*0.45+opponentCounterBonus(activeCards)+prefCardEstimateError(profile.cardIQ);
+    scoredBuilds.push({active:activeIds,score,scenarioMean:scenarioEstimate.mean,scenarios:scenarioEstimate.scenarios,activeNames:activeCards.map(c=>c.name||'キャラ'),attrs:[...attrs]});
+  }
+  scoredBuilds.sort((a,b)=>b.score-a.score);
+  // Keep the three highest-scoring builds; expensive full searches are deliberately avoided in the browser.
+  const shortlist=scoredBuilds.slice(0,3);let best=shortlist[0];
+  if(shortlist.length>1){const top=shortlist[0].score;const near=shortlist.filter(x=>top-x.score<=3);if(near.length>1)best=near[Math.floor(Math.random()*near.length)];}
+  const active=best?.active||units.slice(0,3).map(x=>x.id);const reserve=units.map(x=>x.id).filter(id=>!active.includes(id)).slice(0,2);
+  const reasons=[`カード選びの賢さ${profile.cardIQ}/100で構築候補を評価`,`主戦術「${(PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)||{}).label||'対応型'}」と副戦術を反映`,`AP効率・役割補完・パッシブ・条件・属性・マジックとの組み合わせを評価`,`候補${candidateSets.length}案を効果解析で評価し、上位${shortlist.length}案を3つの想定戦況（速攻・長期戦・連携成立）で平均比較`];
+  if(opponentIntel?.confidence>0.15)reasons.push(`調査・対戦記憶の情報を対策に使用（信頼度${Math.round(opponentIntel.confidence*100)}%）`);
+  prefRecordAIThought(region,'編成構築','出撃メンバーを選出',reasons,{activeNames:best?.activeNames||active.map(id=>cardById(id)?.name||'キャラ'),score:best?.score,alternatives:shortlist.map(x=>({names:x.activeNames,score:Math.round(x.score*10)/10,scenarioMean:Math.round((x.scenarioMean||0)*10)/10,scenarios:x.scenarios,attributes:x.attrs})),opponentId:opponentId||null,opponentIntelConfidence:opponentIntel?.confidence||0});
+  return {active:active.slice(0,3),reserve:reserve.slice(0,2)};
+}
+function prefDefaultLoadoutFallback(regionId) {
+  const units=prefOwnedUnits(regionId);const r=prefRegion(regionId);const saved=r?.lastLoadout||{};
   let active=(saved.active||[]).filter(id=>units.some(x=>x.id===id));let reserve=(saved.reserve||[]).filter(id=>units.some(x=>x.id===id)&&!active.includes(id));
   if(active.length<Math.min(3,units.length)){active=units.slice(0,3).map(x=>x.id);reserve=units.slice(3,5).map(x=>x.id);}
   return {active:active.slice(0,3),reserve:reserve.slice(0,2)};
 }
+function prefDefaultLoadout(regionId,opponentId=null) {
+  const region=prefRegion(regionId);
+  if(region&&!region.isPlayer) return prefChooseRivalLoadout(regionId,opponentId);
+  return prefDefaultLoadoutFallback(regionId);
+}
+
 function prefBattleOverrideForRegions(aId,bId,playerLoadout=null) {
   const a=prefRegion(aId),b=prefRegion(bId);
   const unitsA=prefOwnedUnits(aId),unitsB=prefOwnedUnits(bId);
   const magsA=prefOwnedMagics(aId),magsB=prefOwnedMagics(bId);
-  const loadA=playerLoadout||prefDefaultLoadout(aId);const loadB=prefDefaultLoadout(bId);
+  const loadA=playerLoadout||prefDefaultLoadout(aId,bId);const loadB=prefDefaultLoadout(bId,aId);
   const selectedA=[...loadA.active,...loadA.reserve].filter(id=>unitsA.some(x=>x.id===id)).slice(0,5);
-  const selectedB=[...unitsB.map(x=>x.id)].slice(0,5);
+  const selectedB=[...loadB.active,...loadB.reserve].filter(id=>unitsB.some(x=>x.id===id)).slice(0,5);
+  unitsB.forEach(x=>{if(selectedB.length<5&&!selectedB.includes(x.id))selectedB.push(x.id);});
   const activeA=loadA.active.filter(id=>selectedA.includes(id)).slice(0,3);
   while(activeA.length<Math.min(3,selectedA.length)){const id=selectedA.find(x=>!activeA.includes(x));if(!id)break;activeA.push(id);}
   const reserveA=selectedA.filter(id=>!activeA.includes(id)).slice(0,2);
   const activeB=selectedB.slice(0,3);const reserveB=selectedB.slice(3,5);
-  return {playerDeck:{id:`pref-${aId}`,name:`${a.prefecture}デッキ`,unitIds:selectedA,magicIds:magsA.map(x=>x.id)},enemyDeck:{id:`pref-${bId}`,name:`${b.prefecture}デッキ`,unitIds:selectedB,magicIds:magsB.map(x=>x.id)},playerActive:activeA,playerReserve:reserveA,enemyIntelligence:b.aiIntelligence||'normal',playerIntelligence:a.aiIntelligence||'expert',playerName:a.repName,enemyName:b.repName,enemyRivalId:null,enemyIconUrl:null,playerIconUrl:null,regionA:aId,regionB:bId,selectedA,selectedB};
+  const profileA=a.isPlayer?null:prefAIProfileForRegion(a),profileB=b.isPlayer?null:prefAIProfileForRegion(b);
+  return {playerDeck:{id:`pref-${aId}`,name:`${a.prefecture}デッキ`,unitIds:selectedA,magicIds:magsA.map(x=>x.id)},enemyDeck:{id:`pref-${bId}`,name:`${b.prefecture}デッキ`,unitIds:selectedB,magicIds:magsB.map(x=>x.id)},playerActive:activeA,playerReserve:reserveA,
+    enemyIntelligence:b.aiIntelligence||'normal',playerIntelligence:a.aiIntelligence||'expert',enemyTacticalIQ:profileB?.tacticalIQ,playerTacticalIQ:profileA?.tacticalIQ,
+    enemyAIProfile:profileB,playerAIProfile:profileA,enemyPersonality:b.personality,playerPersonality:a.personality,
+    enemyOpponentMemory:prefGetOpponentIntel(b,aId),playerOpponentMemory:prefGetOpponentIntel(a,bId),
+    playerName:a.repName,enemyName:b.repName,enemyRivalId:null,enemyIconUrl:null,playerIconUrl:null,regionA:aId,regionB:bId,selectedA,selectedB};
 }
 function prefBattleResultFromEngine() { return {winner:battleState.resultWinner||'draw',usedAMagic:[...(battleState.usedMagicCardIds||[])],usedBMagic:[...(battleState.enemyUsedMagicCardIds||[])],selectedA:(campaignBattleOverride?.selectedA||[]).slice(),selectedB:(campaignBattleOverride?.selectedB||[]).slice()}; }
 function prefConsumeMagic(regionId, ids) {
@@ -1028,7 +1562,9 @@ function prefRandomDestroyUnits(regionId, candidateIds) {
 function prefResignRival(region) {
   const old=region.repName;let name=prefRandom(PREF_NAMES);let tries=0;while(name===old&&tries++<10)name=prefRandom(PREF_NAMES);
   const personality=prefRandom(PREF_PERSONALITIES);
-  region.repName=name;region.personality=personality.id;region.personalityLabel=personality.name;region.personalityFocus=personality.focus;region.aiIntelligence=personality.intelligence||'normal';region.funds=100000000;region.resignations=(region.resignations||0)+1;
+  region.repName=name;region.personality=personality.id;region.personalityLabel=personality.name;region.personalityFocus=personality.focus;region.aiIntelligence=personality.intelligence||'normal';
+  region.aiProfile=prefDefaultAIProfileForTier(region.tier,personality.id);region.aiTacticalIQ=region.aiProfile.tacticalIQ;region.aiCardIQ=region.aiProfile.cardIQ;region.aiMemory={opponents:{},decisions:[]};
+  region.profileRivalId=null;region.funds=100000000;region.resignations=(region.resignations||0)+1;
   prefLog(`${region.prefecture}の代表${old}が資金マイナスで辞職。${name}が初期資金1億円で就任しました。カードと都道府県の年間成績は引き継がれます。`,'warning');
 }
 async function prefApplyBattleOutcome(aId,bId,engineResult,selectedA,selectedB) {
@@ -1053,9 +1589,29 @@ async function prefApplyBattleOutcome(aId,bId,engineResult,selectedA,selectedB) 
     const loserDeck=loserId===aId?selectedA:selectedB;
     const destroyed=prefRandomDestroyUnits(loserId,loserDeck);if(loserId===PREF_PLAYER_ID)campaignState.lastPlayerBattleDestroyed=destroyed.map(id=>prefTemplate(campaignState.instances[id]?.templateId)?.name||'キャラカード');else campaignState.lastPlayerBattleDestroyed=[];
     prefLog(`${w.prefecture}が${l.prefecture}に勝利。${prefFormatMoney(amount)}を獲得しました。${l.prefecture}は${prefFormatMoney(amount)}を支払い、キャラカード${destroyed.length}枚を失いました。`,'success');
-    if(!l.isPlayer && l.funds<0)prefResignRival(l);
   }
+  prefPersistBattleMemory(aId,bId,engineResult,selectedA,selectedB,winnerId,loserId,result);
+  if(loserId){const loser=prefRegion(loserId);if(loser&&!loser.isPlayer&&loser.funds<0)prefResignRival(loser);}
+  prefRefreshAIPlan(a,'対戦結果・主要カード損失の確認',true);prefRefreshAIPlan(b,'対戦結果・主要カード損失の確認',true);
   return {winnerId,loserId,result};
+}
+function prefPersistBattleMemory(aId,bId,engineResult,selectedA,selectedB,winnerId,loserId,result) {
+  if(!campaignState)return;
+  const sides={ [aId]:'player', [bId]:'enemy' };
+  const summarize=(ids)=> (ids||[]).map(id=>{const inst=campaignState.instances[id];const c=prefCardForInstance(id)||prefTemplate(inst?.templateId);return c?{id:String(c.id),name:c.name,mainAttr:c.mainAttr||'',subAttrs:Array.isArray(c.subAttrs)?c.subAttrs.slice(0,5):[],rank:prefRankStars(c)}:null;}).filter(Boolean);
+  const hist=Array.isArray(battleState?.aiActionHistory)?battleState.aiActionHistory:[];
+  for(const [id,opponentId,ownSelected,enemySelected] of [[aId,bId,selectedA,selectedB],[bId,aId,selectedB,selectedA]]){
+    const region=prefRegion(id),opponent=prefRegion(opponentId);if(!region||region.isPlayer)continue;
+    const outcome=result==='draw'?'draw':winnerId===id?'win':'loss';
+    const observed=hist.filter(x=>x.side===sides[opponentId]).slice(-20).map(x=>({turn:x.turn,type:x.type,name:x.name,target:x.target||'',result:x.result||''}));
+    const oppCards=summarize(ownSelected===selectedA?selectedB:selectedA);
+    prefRecordBattleAIObservation(region,opponentId,{result:outcome,opponentName:opponent?.repName||opponentId,opponentCards:oppCards,actions:observed});
+    const myActs=hist.filter(x=>x.side===sides[id]).slice(-10).map(x=>`${x.actor||'キャラ'}：${x.name||x.type}${x.target?` → ${x.target}`:''}`);
+    const sideName=sides[id];const plans=(battleState?.aiDecisionHistory||[]).filter(x=>x.side===sideName).slice(-5).map(x=>({turn:x.turn,iq:x.iq,primary:x.primary,actions:(x.actions||[]).map(a=>`${a.actor}：${a.name}${a.target?` → ${a.target}`:''}`)}));
+    prefRecordAIThought(region,'対戦振り返り',`${opponent?.prefecture||opponentId}戦：${outcome==='win'?'勝利':outcome==='loss'?'敗北':'引き分け'}`,
+      [`戦術の賢さ${prefAIProfileForRegion(region).tacticalIQ}/100`,`カード選びの賢さ${prefAIProfileForRegion(region).cardIQ}/100`,`対戦相手の行動${observed.length}件を記録`,...(plans.length?[`行動計画${plans.length}ターン分を保存`]:[]),...(myActs.length?['自分の実行行動：'+myActs.join('、')]:[])],
+      {opponentId,opponentCards:oppCards,observedActions:observed,myActions:myActs,plans,result:outcome});
+  }
 }
 async function prefSimulateAiBattle(pair) {
   const override=prefBattleOverrideForRegions(pair.a,pair.b);
@@ -1181,7 +1737,10 @@ async function prefResolveInvestigations(tx) {
       if(topic==='both')result.summary=`行動方針とキャラカードの一部を確認しました。`;
     }
     if(id===PREF_PLAYER_ID){campaignState.investigations.push(result);investigator.yearStats.investigations=(investigator.yearStats.investigations||0)+1;prefLog(success?`調査成功：${target.prefecture}の情報を入手しました。`:`調査失敗：${target.prefecture}の情報を得られませんでした。`,success?'success':'warning');}
-    else if(Math.random()<0.25){investigator.yearStats.investigations=(investigator.yearStats.investigations||0)+1;}
+    else {
+      if(success)prefRecordAIScouting(investigator,target,result);
+      if(success||Math.random()<0.25)investigator.yearStats.investigations=(investigator.yearStats.investigations||0)+1;
+    }
   }
 }
 async function prefCompleteTurn(tx) {
@@ -1241,6 +1800,7 @@ async function prefPullAndAcquireMagic(regionId, templateId) {
 function prefShowPurchasePanel() {}
 
 async function prefHandleClick(action,id,button) {
+  if(action==='ai-thoughts'){prefShowAIThoughts(id);return;}
   if(action==='close-modal'){prefCloseModal();if(campaignState?.turnProcessing?.stage==='player-preview'){document.getElementById('pref-turn-progress')?.classList.add('hidden');if(document.querySelector('.view-section:not(.hidden)')?.id==='view-prefecture')prefRenderDashboard();prefEnsurePreviewResumeButton();}return;}
   if(action==='battle-preview-back'){prefCloseModal();document.getElementById('pref-turn-progress')?.classList.add('hidden');if(document.querySelector('.view-section:not(.hidden)')?.id==='view-prefecture')prefRenderDashboard();prefEnsurePreviewResumeButton();return;}
   if(action==='battle-preview-continue'){prefCloseModal();if(campaignState?.turnProcessing?.stage==='player-preview'){prefEnsurePreviewResumeButton();if(document.querySelector('.view-section:not(.hidden)')?.id!=='view-prefecture')switchView('prefecture');prefShowBattleSelection(true);}return;}

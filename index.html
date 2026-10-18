@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.13</title>
+  <title>都道府県カード戦争 v1.0.14</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -278,7 +278,7 @@
             <div id="story-intro-opponent-icon-ph" class="w-full h-full flex items-center justify-center text-4xl">🤖</div>
           </div>
           <div id="story-intro-opponent-name" class="mt-3 text-xl sm:text-2xl font-black text-rose-200 break-words">ライバル</div>
-          <div id="story-intro-opponent-ai" class="mt-1 text-xs font-bold text-rose-300">AI：凡人</div>
+          <div id="story-intro-opponent-ai" class="mt-1 text-xs font-bold text-rose-300">AI：45/100</div>
         </div>
       </div>
       <div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -301,7 +301,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.13</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.14</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -396,7 +396,7 @@
     <!-- ランキング -->
     <section id="view-pref-ranking" class="view-section hidden space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-xl sm:text-2xl font-black text-amber-200">🏆 都道府県ランキング</h2><p class="text-xs text-slate-400 mt-1">年間獲得資産額を優先し、上位2桁が同じ場合は年間勝率で比較します。</p></div><button onclick="switchView('prefecture')" class="px-4 py-2 bg-slate-800 rounded-lg text-xs font-bold">ゲームへ戻る</button></div>
-      <div id="pref-ranking-header" class="rounded-xl border border-slate-800 bg-slate-900 p-3 text-xs"></div><div class="overflow-x-auto rounded-xl border border-slate-800"><table class="w-full text-xs sm:text-sm"><thead class="bg-slate-900 text-slate-300"><tr><th class="p-3 text-left">順位</th><th class="p-3 text-left">都道府県</th><th class="p-3 text-left">代表</th><th class="p-3 text-right">年間獲得資産額</th><th class="p-3 text-right">年間勝率</th><th class="p-3 text-center">ランク</th></tr></thead><tbody id="pref-ranking-body" class="divide-y divide-slate-800 bg-slate-950"></tbody></table></div>
+      <div id="pref-ranking-header" class="rounded-xl border border-slate-800 bg-slate-900 p-3 text-xs"></div><div class="overflow-x-auto rounded-xl border border-slate-800"><table class="w-full text-xs sm:text-sm"><thead class="bg-slate-900 text-slate-300"><tr><th class="p-3 text-left">順位</th><th class="p-3 text-left">都道府県</th><th class="p-3 text-left">代表</th><th class="p-3 text-right">年間獲得資産額</th><th class="p-3 text-right">年間勝率</th><th class="p-3 text-center">ランク</th><th class="p-3 text-center">AI</th></tr></thead><tbody id="pref-ranking-body" class="divide-y divide-slate-800 bg-slate-950"></tbody></table></div>
     </section>
 
     <!-- 調査結果 -->
@@ -933,7 +933,7 @@
 
     <!-- 設定モーダル -->
     <div id="rival-modal" class="fixed inset-0 bg-black/80 z-50 flex items-center justify-center hidden p-4">
-      <div class="bg-slate-900 border border-rose-500/50 rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col p-6 space-y-4">
+      <div class="bg-slate-900 border border-rose-500/50 rounded-xl w-full max-w-4xl max-h-[92vh] flex flex-col p-6 space-y-4">
         <div class="flex justify-between items-center border-b border-slate-800 pb-3">
           <h3 class="text-base font-bold text-rose-400">設定 ＆ プロフィール・ライバル登録</h3>
           <button onclick="closeRivalModal()" class="text-slate-400 hover:text-white font-bold text-xl">&times;</button>
@@ -969,15 +969,15 @@
                 <div class="grid grid-cols-2 gap-2">
                   <input type="text" id="input-rival-name" placeholder="ライバル名" class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1 text-xs">
                   <select id="select-rival-personality" class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1 text-xs" title="行動方針"><option value="aggressive">行動方針：積極対戦派</option><option value="careful">行動方針：慎重派</option><option value="scout">行動方針：情報収集派</option><option value="collector">行動方針：カード収集派</option><option value="trickster">行動方針：技巧派</option></select>
-                  <select id="select-rival-card-focus" class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1 text-xs" title="カード選別方針"><option value="rank-value">カード選別：星・価値重視</option><option value="highest-rank">カード選別：最高ランク重視</option><option value="strongest-stats">カード選別：ステータス重視</option><option value="attribute-diversity">カード選別：属性バランス重視</option><option value="skill-effects">カード選別：スキル・効果重視</option></select>
-                  <select id="select-rival-intelligence" class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1 text-xs" title="AIの賢さ">
+                  <select id="select-rival-card-focus" class="hidden" title="旧カード選別方針（互換用）"><option value="rank-value">カード選別：星・価値重視</option><option value="highest-rank">カード選別：最高ランク重視</option><option value="strongest-stats">カード選別：ステータス重視</option><option value="attribute-diversity">カード選別：属性バランス重視</option><option value="skill-effects">カード選別：スキル・効果重視</option></select>
+                  <select id="select-rival-intelligence" class="hidden" title="旧AI段階（互換用）">
                     <option value="novice">AIの賢さ：素人</option>
                     <option value="normal" selected>AIの賢さ：凡人</option>
                     <option value="expert">AIの賢さ：玄人</option>
                     <option value="master">AIの賢さ：達人</option>
                   </select>
                 </div>
-                <p class="text-[10px] leading-relaxed text-slate-500">行動方針は対戦・調査・カード収集の傾向を、カード選別方針は所持上限時に残すカードを決める基準を表します。使用デッキの指定は不要です。</p>
+                <p class="text-[10px] leading-relaxed text-slate-500">運営方針は対戦・調査の傾向を表します。下のAI詳細設定で戦闘の賢さ・カード選びの賢さ・好みを独立して調整できます。</p>
                 <div class="flex gap-2">
                   <input type="file" id="input-rival-icon-file" accept="image/*" onchange="handleIconUpload(event, 'rival')" class="hidden">
                   <button onclick="document.getElementById('input-rival-icon-file').click()" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs font-bold rounded text-slate-200">画像設定</button>
@@ -985,6 +985,52 @@
                 </div>
               </div>
             </div>
+            <details id="rival-ai-details" open class="rounded-xl border border-indigo-500/30 bg-slate-900/80 p-3 space-y-3">
+              <summary class="cursor-pointer select-none text-sm font-black text-indigo-200">🧠 ライバルAI詳細設定（基本＋詳細）</summary>
+              <p class="text-[10px] text-slate-400 leading-relaxed">賢さは0〜100で個別に設定し、ランクとは独立させます。プリセットを選んだ後も、各項目を自由に編集できます。</p>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label class="text-xs font-bold text-slate-300">推奨プリセット
+                  <select id="rival-ai-preset" onchange="applyRivalAIPreset()" class="w-full mt-1 bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs">
+                    <option value="balanced">バランス型</option><option value="combo">コンボ構築型</option><option value="rush">速攻・火力型</option><option value="defense">耐久・保護型</option><option value="status">状態異常型</option><option value="attribute">属性統一型</option><option value="basic">単体性能重視型</option><option value="custom">現在の設定（プリセットなし）</option>
+                  </select>
+                </label>
+                <label class="text-xs font-bold text-slate-300">主戦術
+                  <select id="rival-ai-primary" onchange="rivalPrimaryChanged()" class="w-full mt-1 bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs">
+                    <option value="combo">コンボ・連携重視</option><option value="rush">速攻・高火力</option><option value="heavy">高AP消費の大技主体</option><option value="basic">通常攻撃主体</option><option value="ap_efficiency">AP供給・AP効率重視</option><option value="sustain">回復・シールド主体</option><option value="status">状態異常・弱体化主体</option><option value="buff">バフ・強化主体</option><option value="protect">挑発・味方保護</option><option value="extra">追加効果コンボ</option><option value="passive">パッシブ連携</option><option value="attribute">属性統一コンボ</option><option value="adaptive">相手に応じた対応型</option><option value="counter">カウンター・耐久戦</option>
+                  </select>
+                </label>
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <label class="block text-xs font-bold text-emerald-200">戦術の賢さ <span id="rival-ai-tactical-value" class="float-right text-base font-black">55 / 100</span>
+                  <input id="rival-ai-tactical" type="range" min="0" max="100" step="1" value="55" oninput="updateRivalAIReadouts()" class="w-full mt-2 accent-emerald-400">
+                  <div class="flex justify-between text-[9px] text-slate-500"><span>判断が粗い</span><span>精密な戦術判断</span></div>
+                </label>
+                <label class="block text-xs font-bold text-cyan-200">カード選びの賢さ <span id="rival-ai-card-value" class="float-right text-base font-black">55 / 100</span>
+                  <input id="rival-ai-card" type="range" min="0" max="100" step="1" value="55" oninput="updateRivalAIReadouts()" class="w-full mt-2 accent-cyan-400">
+                  <div class="flex justify-between text-[9px] text-slate-500"><span>単純な評価</span><span>高度なシナジー評価</span></div>
+                </label>
+              </div>
+              <div class="rounded-lg bg-slate-950 border border-slate-800 p-3">
+                <div class="font-black text-slate-200 text-xs mb-2">副戦術（最大3つ）</div>
+                <div id="rival-ai-secondary" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+                <p id="rival-ai-secondary-note" class="text-[10px] text-slate-500 mt-2">主戦術と相性のよい副戦術を組み合わせられます。</p>
+              </div>
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <section class="rounded-lg bg-slate-950 border border-slate-800 p-3">
+                  <h5 class="text-xs font-black text-amber-200">メイン属性の好み順位</h5><p class="text-[10px] text-slate-500 mt-1 mb-2">優先順位1が最も好き。0は好みを指定しません。</p>
+                  <div id="rival-ai-main-attrs" class="space-y-1.5"></div>
+                </section>
+                <section class="rounded-lg bg-slate-950 border border-slate-800 p-3">
+                  <h5 class="text-xs font-black text-violet-200">サブ属性の好み順位</h5><p class="text-[10px] text-slate-500 mt-1 mb-2">カードに存在するサブ属性を一覧化します。メイン属性とは別に好みを設定できます。</p>
+                  <div id="rival-ai-sub-attrs" class="space-y-1.5 max-h-64 overflow-y-auto"></div>
+                </section>
+              </div>
+              <section class="rounded-lg bg-slate-950 border border-slate-800 p-3">
+                <h5 class="text-xs font-black text-cyan-200">効果カテゴリの好み順位</h5><p class="text-[10px] text-slate-500 mt-1 mb-2">属性の好みとは独立して順位付けします。シナジーを考慮するため、好みだけで採用を強制するものではありません。</p>
+                <div id="rival-ai-effect-prefs" class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5"></div>
+              </section>
+              <p class="text-[10px] text-slate-500 leading-relaxed">AIは主戦術を中心にデッキを作り、副戦術で弱点を補います。好みを重視しますが、シナジー・AP収支・発動条件・耐久力などを含めて明らかに弱いと判断した場合は別の構成を選びます。判断理由と対戦記憶はキャンペーンのセーブデータに保存されます。</p>
+            </details>
             <button id="rival-save-btn" onclick="saveRival()" class="w-full py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded text-xs">登録</button>
           </div>
 
@@ -3005,6 +3051,84 @@
         img.removeAttribute('src'); img.classList.add('hidden'); placeholder.classList.remove('hidden');
       }
     }
+    const RIVAL_AI_MAIN_ATTRS = ['人間','亜人','機械','モンスター','幻獣'];
+    function rivalLegacyAIFromIQ(iq) { return Number(iq)>=80?'master':Number(iq)>=60?'expert':Number(iq)>=30?'normal':'novice'; }
+    function rivalReadPriorityList(kind) {
+      const selectors=[...document.querySelectorAll(`[data-rival-pref-kind="${kind}"]`)];
+      return selectors.map(el=>({value:el.dataset.value,rank:Number(el.value)||0,order:Number(el.dataset.order)||0})).filter(x=>x.rank>0).sort((a,b)=>a.rank-b.rank||a.order-b.order).map(x=>x.value);
+    }
+    function rivalPriorityRow(kind,value,label,priorityList,order,maxRank=8) {
+      const current=(priorityList||[]).indexOf(String(value));const rank=current<0?0:current+1;
+      const opts=['<option value="0">優先しない</option>',...Array.from({length:Math.max(1,maxRank)},(_,i)=>`<option value="${i+1}" ${rank===i+1?'selected':''}>${i+1}位</option>`)].join('');
+      return `<label class="grid grid-cols-[minmax(0,1fr)_5rem] gap-2 items-center text-[11px] text-slate-300"><span>${storyEscapeHtml(label)}</span><select data-rival-pref-kind="${kind}" data-value="${storyEscapeHtml(value)}" data-order="${order}" data-previous-rank="${rank}" onchange="rivalPriorityChanged(this)" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[10px]">${opts}</select></label>`;
+    }
+    function renderRivalAIForm(rawProfile={}) {
+      const profile=typeof prefNormalizeAIProfile==='function'?prefNormalizeAIProfile(rawProfile):{tacticalIQ:55,cardIQ:55,primaryStrategy:'adaptive',secondaryStrategies:['combo','sustain'],mainAttrPriority:[],subAttrPriority:[],effectPriority:[],preset:'balanced'};
+      const tactical=document.getElementById('rival-ai-tactical'),card=document.getElementById('rival-ai-card');if(tactical)tactical.value=profile.tacticalIQ;if(card)card.value=profile.cardIQ;
+      const primary=document.getElementById('rival-ai-primary');if(primary)primary.value=profile.primaryStrategy;
+      const preset=document.getElementById('rival-ai-preset');if(preset)preset.value=['balanced','combo','rush','defense','status','attribute','basic'].includes(profile.preset)?profile.preset:'custom';
+      const second=document.getElementById('rival-ai-secondary');
+      if(second&&typeof PREF_AI_STRATEGIES!=='undefined')second.innerHTML=PREF_AI_STRATEGIES.filter(x=>x.id!==profile.primaryStrategy).map(x=>`<label class="flex items-start gap-2 rounded bg-slate-900 px-2 py-1.5 text-[10px] text-slate-300"><input type="checkbox" data-rival-ai-secondary value="${x.id}" ${profile.secondaryStrategies.includes(x.id)?'checked':''} onchange="enforceRivalAISubStrategyLimit(this)" class="mt-0.5 accent-indigo-400"><span>${storyEscapeHtml(x.label)}</span></label>`).join('');
+      const renderRanks=(id,kind,values,priorityList)=>{const el=document.getElementById(id);if(!el)return;const maxRank=kind==='sub'?Math.min(8,values.length):values.length;el.innerHTML=values.map((x,i)=>rivalPriorityRow(kind,x.value,x.label,priorityList,i,maxRank)).join('')||'<p class="text-[10px] text-slate-500">カード作成データから候補を取得できません。</p>';};
+      const mainVals=RIVAL_AI_MAIN_ATTRS.map(x=>({value:x,label:x}));
+      const subSet=new Set();(Array.isArray(allCards)?allCards:[]).forEach(c=>{(Array.isArray(c.subAttrs)?c.subAttrs:[]).forEach(x=>{const v=typeof x==='string'?x:(x?.name||x?.id||'');if(v&&!RIVAL_AI_MAIN_ATTRS.includes(v))subSet.add(String(v));});});
+      profile.subAttrPriority.forEach(x=>subSet.add(String(x)));
+      const subVals=[...subSet].sort((a,b)=>a.localeCompare(b,'ja')).map(x=>({value:x,label:x}));
+      const effVals=(typeof PREF_AI_EFFECT_PREFERENCES!=='undefined'?PREF_AI_EFFECT_PREFERENCES:[]).map(x=>({value:x.id,label:x.label}));
+      renderRanks('rival-ai-main-attrs','main',mainVals,profile.mainAttrPriority);
+      renderRanks('rival-ai-sub-attrs','sub',subVals,profile.subAttrPriority);
+      renderRanks('rival-ai-effect-prefs','effect',effVals,profile.effectPriority);
+      updateRivalAIReadouts();
+    }
+    function rivalPrimaryChanged() {
+      const primary=document.getElementById('rival-ai-primary')?.value;
+      document.querySelectorAll('[data-rival-ai-secondary]').forEach(el=>{if(el.value===primary)el.checked=false;});
+      const note=document.getElementById('rival-ai-secondary-note');
+      const checked=[...document.querySelectorAll('[data-rival-ai-secondary]:checked')];
+      if(note)note.textContent=`副戦術：${checked.length}/3。主戦術と相性のよい傾向を組み合わせられます。`;
+    }
+    function rivalPriorityChanged(changed) {
+      const kind=changed?.dataset?.rivalPrefKind;if(!kind)return;
+      const rank=Number(changed.value)||0;
+      if(rank>0){
+        const duplicate=[...document.querySelectorAll(`[data-rival-pref-kind="${kind}"]`)].find(el=>el!==changed&&(Number(el.value)||0)===rank);
+        if(duplicate){duplicate.value=Number(changed.dataset.previousRank)||0;duplicate.dataset.previousRank=duplicate.value;}
+      }
+      changed.dataset.previousRank=changed.value;
+    }
+    function updateRivalAIReadouts() {
+      const t=document.getElementById('rival-ai-tactical'),c=document.getElementById('rival-ai-card');
+      const tv=document.getElementById('rival-ai-tactical-value'),cv=document.getElementById('rival-ai-card-value');
+      if(tv&&t)tv.textContent=`${t.value} / 100`;if(cv&&c)cv.textContent=`${c.value} / 100`;
+    }
+    function enforceRivalAISubStrategyLimit(changed) {
+      const checked=[...document.querySelectorAll('[data-rival-ai-secondary]:checked')];
+      if(checked.length>3){changed.checked=false;const note=document.getElementById('rival-ai-secondary-note');if(note)note.textContent='副戦術は最大3つです。別の副戦術を外してから選択してください。';}
+      else {const note=document.getElementById('rival-ai-secondary-note');if(note)note.textContent=`副戦術：${checked.length}/3。主戦術と相性のよい傾向を組み合わせられます。`;}
+    }
+    function applyRivalAIPreset() {
+      const id=document.getElementById('rival-ai-preset')?.value||'balanced';if(id==='custom')return;
+      const p=(typeof PREF_AI_PRESETS!=='undefined'?PREF_AI_PRESETS[id]:null);if(!p)return;
+      const current=readRivalAIFormProfile();
+      const defaults={...current,...p,preset:id};
+      if(id==='rush')defaults.effectPriority=['attack_speed_buff','ap_supply','high_rank','low_cost'];
+      else if(id==='defense')defaults.effectPriority=['shield_defense','healing','ap_supply','passive_chain'];
+      else if(id==='status')defaults.effectPriority=['status_debuff','status_condition','extra_effect','passive_chain'];
+      else if(id==='attribute')defaults.effectPriority=['attribute_support','attack_speed_buff','passive_chain','shield_defense'];
+      else if(id==='combo')defaults.effectPriority=['ap_supply','passive_chain','extra_effect','status_condition','shield_defense'];
+      else if(id==='basic')defaults.effectPriority=['high_rank','low_cost','attack_speed_buff','healing'];
+      renderRivalAIForm(defaults);
+    }
+    function readRivalAIFormProfile() {
+      const tacticalIQ=Math.max(0,Math.min(100,Number(document.getElementById('rival-ai-tactical')?.value)||0));
+      const cardIQ=Math.max(0,Math.min(100,Number(document.getElementById('rival-ai-card')?.value)||0));
+      const primaryStrategy=document.getElementById('rival-ai-primary')?.value||'adaptive';
+      const secondaryStrategies=[...document.querySelectorAll('[data-rival-ai-secondary]:checked')].map(x=>x.value).filter(x=>x!==primaryStrategy).slice(0,3);
+      return {version:1,tacticalIQ,cardIQ,primaryStrategy,secondaryStrategies,
+        mainAttrPriority:rivalReadPriorityList('main'),subAttrPriority:rivalReadPriorityList('sub'),effectPriority:rivalReadPriorityList('effect'),
+        preset:document.getElementById('rival-ai-preset')?.value||'custom'};
+    }
+
     function resetRivalForm() {
       editingRivalId = null;
       tempRivalIcon = null;
@@ -3012,6 +3136,7 @@
       const policy=document.getElementById('select-rival-personality'); if(policy)policy.value='careful';
       const focus=document.getElementById('select-rival-card-focus'); if(focus)focus.value='rank-value';
       const intelligence=document.getElementById('select-rival-intelligence'); if(intelligence)intelligence.value='normal';
+      renderRivalAIForm({version:1,tacticalIQ:55,cardIQ:55,primaryStrategy:'adaptive',secondaryStrategies:['combo','ap_efficiency','sustain'],mainAttrPriority:[],subAttrPriority:[],effectPriority:['ap_supply','shield_defense','passive_chain','extra_effect','healing'],preset:'balanced'});
       document.getElementById('input-rival-icon-file').value = '';
       const title = document.getElementById('rival-form-title'); if (title) title.textContent = '新規ライバル作成';
       const saveButton = document.getElementById('rival-save-btn'); if (saveButton) saveButton.textContent = '登録';
@@ -3077,6 +3202,7 @@
       const policy=document.getElementById('select-rival-personality'); if(policy)policy.value=rival.personality||'careful';
       const focus=document.getElementById('select-rival-card-focus'); if(focus)focus.value=rival.cardPreference||'rank-value';
       document.getElementById('select-rival-intelligence').value = rival.intelligence || 'normal';
+      renderRivalAIForm(rival.aiProfile || {tacticalIQ:({novice:20,normal:45,expert:75,master:95}[rival.intelligence||'normal']||45),cardIQ:({novice:20,normal:45,expert:75,master:95}[rival.intelligence||'normal']||45),primaryStrategy:({aggressive:'rush',careful:'sustain',scout:'adaptive',collector:'combo',trickster:'combo'}[rival.personality||'careful']||'adaptive'),secondaryStrategies:['combo','ap_efficiency','sustain'],preset:'custom'});
       tempRivalIcon = rival.iconImage || null;
       setRivalIconPreview(tempRivalIcon);
       document.getElementById('rival-form-title').textContent = 'ライバル編集';
@@ -3096,10 +3222,11 @@
       const name = document.getElementById("input-rival-name").value.trim() || "ライバル";
       const personality = document.getElementById("select-rival-personality")?.value || "careful";
       const cardPreference = document.getElementById("select-rival-card-focus")?.value || "rank-value";
-      const intelligence = document.getElementById("select-rival-intelligence")?.value || "normal";
+      const aiProfile = typeof prefNormalizeAIProfile==='function' ? prefNormalizeAIProfile(readRivalAIFormProfile()) : readRivalAIFormProfile();
+      const intelligence = rivalLegacyAIFromIQ(aiProfile.tacticalIQ);
       const existing = editingRivalId ? allRivals.find(r => String(r.id) === String(editingRivalId)) : null;
       const iconToSave = tempRivalIcon !== undefined ? (tempRivalIcon || null) : (existing?.iconImage || null);
-      const newRival = { ...(existing || {}), id: existing?.id || generateUniqueId("rival"), name, deckId: existing?.deckId || "", iconImage: iconToSave, intelligence, personality, cardPreference };
+      const newRival = { ...(existing || {}), id: existing?.id || generateUniqueId("rival"), name, deckId: existing?.deckId || "", iconImage: iconToSave, intelligence, personality, cardPreference, aiProfile, tacticalIQ:aiProfile.tacticalIQ, cardIQ:aiProfile.cardIQ };
       await saveToStore("rivals", newRival);
       // 保存完了後に保存値を再取得し、IndexedDBへ入ったアイコンを画面へ反映する。
       allRivals = await getAllFromStore("rivals");
@@ -3120,6 +3247,10 @@
           activeRegion.personalityFocus = policyFocus[newRival.personality] || '資金維持と安定した戦力を重視';
           activeRegion.cardPreference = newRival.cardPreference || 'rank-value';
           activeRegion.aiIntelligence = newRival.intelligence || 'normal';
+          activeRegion.aiProfile = newRival.aiProfile;
+          activeRegion.aiTacticalIQ = newRival.aiProfile.tacticalIQ;activeRegion.aiCardIQ = newRival.aiProfile.cardIQ;
+          if (typeof prefEnsureCampaignAIConfig === 'function') prefEnsureCampaignAIConfig();
+          if (typeof prefRecordAIThought === 'function') prefRecordAIThought(activeRegion,'AI設定変更','ライバルのAI設定を更新',[`戦術の賢さ${newRival.aiProfile.tacticalIQ}/100`,`カード選びの賢さ${newRival.aiProfile.cardIQ}/100`,`主戦術を「${(PREF_AI_STRATEGIES.find(x=>x.id===newRival.aiProfile.primaryStrategy)||{}).label||'対応型'}」に設定`]);
           if (typeof prefSave === 'function') await prefSave();
           if (typeof prefRenderAll === 'function') prefRenderAll();
         }
@@ -3161,7 +3292,8 @@
             <div>
               <div class="font-bold text-rose-300">${r.name}</div>
               <div class="text-[10px] text-slate-400">方針：${{aggressive:'積極対戦派',careful:'慎重派',scout:'情報収集派',collector:'カード収集派',trickster:'技巧派'}[r.personality||'careful']||'慎重派'}</div>
-              <div class="text-[10px] text-slate-500">カード選別：${{'rank-value':'星・価値重視','highest-rank':'最高ランク重視','strongest-stats':'ステータス重視','attribute-diversity':'属性バランス重視','skill-effects':'スキル・効果重視'}[r.cardPreference||'rank-value']||'星・価値重視'} ／ AI: ${{novice:'素人',normal:'凡人',expert:'玄人',master:'達人'}[r.intelligence||'normal']||'凡人'}</div>
+              <div class="text-[10px] text-slate-500">戦術の賢さ：${r.aiProfile?.tacticalIQ ?? ({novice:20,normal:45,expert:75,master:95}[r.intelligence||'normal']||45)}/100 ／ カード選び：${r.aiProfile?.cardIQ ?? ({novice:20,normal:45,expert:75,master:95}[r.intelligence||'normal']||45)}/100</div>
+              <div class="text-[10px] text-indigo-300">主戦術：${(typeof PREF_AI_STRATEGIES!=='undefined'?PREF_AI_STRATEGIES.find(x=>x.id===r.aiProfile?.primaryStrategy)?.label:null)||'プリセット移行後に設定'}</div>
             </div>
           </div>
           <div class="flex gap-1"><button onclick="editRival('${r.id}')" class="px-2 py-1 bg-cyan-900 hover:bg-cyan-800 text-cyan-100 rounded text-[10px] font-bold">編集</button><button onclick="deleteRival('${r.id}')" class="px-2 py-1 bg-rose-900/80 hover:bg-rose-800 text-rose-200 rounded text-[10px] font-bold">削除</button></div>
@@ -3293,7 +3425,7 @@
       const rival=rivalId ? (Array.isArray(allRivals)?allRivals.find(r=>String(r.id)===String(rivalId)):null) : null;
       return rival ? (rival.iconImage || null) : (participant.iconImage || null);
     }
-    function storyAiName(level){return ({novice:'素人',normal:'凡人',expert:'玄人',master:'達人'}[level]||'凡人');}
+    function storyAiName(level){return ({novice:'20/100',normal:'45/100',expert:'75/100',master:'95/100'}[level]||'45/100');}
     function storyAiRank(level){return ({novice:0,normal:1,expert:2,master:3}[level]??1);}
     function storyGeneratedAi(index){return index<2?'novice':'normal';}
     function storyCloneParticipant(p){return p?JSON.parse(JSON.stringify(p)):null;}
@@ -4069,6 +4201,14 @@
         selectedPlayerInstanceId:null,
         enemyIntelligence:override?.enemyIntelligence || selectedRival?.intelligence || 'normal',
         playerIntelligence:override?.playerIntelligence || 'expert',
+        enemyTacticalIQ:override?.enemyTacticalIQ ?? selectedRival?.aiProfile?.tacticalIQ ?? null,
+        playerTacticalIQ:override?.playerTacticalIQ ?? null,
+        enemyAIProfile:override?.enemyAIProfile || selectedRival?.aiProfile || null,
+        playerAIProfile:override?.playerAIProfile || null,
+        enemyPersonality:override?.enemyPersonality || selectedRival?.personality || 'careful',
+        playerPersonality:override?.playerPersonality || null,
+        enemyOpponentMemory:override?.enemyOpponentMemory || null,playerOpponentMemory:override?.playerOpponentMemory || null,
+        aiActionHistory:[],aiDecisionHistory:[],
         playerName:override?.playerName || playerName,enemyName:override?.enemyName || selectedRival?.name || 'ライバル',playerIconUrl:playerIcon,
         enemyIconUrl:resolvedEnemyIcon,
         playerReserveQueue:[...deploymentSelection.player.reserve],enemyReserveQueue:[...enemyReserve],resultWinner:null, storyMode:!!storyBattleOverride, campaignMode:!!campaignBattleOverride};
@@ -4645,13 +4785,88 @@
     }
 
     function triggerOmakase() {
-      chooseAiActions('player');
+      chooseAiTurnPlan('player');
       renderBattleState();
     }
 
-    function getAiIntelligence() {
-      const value = battleState.enemyIntelligence;
-      return ['novice', 'normal', 'expert', 'master'].includes(value) ? value : 'normal';
+    function getAiTacticalIQ(side='enemy') {
+      const direct=side==='enemy'?battleState?.enemyTacticalIQ:battleState?.playerTacticalIQ;
+      if(Number.isFinite(Number(direct))&&direct!==null&&direct!==undefined&&direct!=='')return Math.max(0,Math.min(100,Number(direct)));
+      const legacy=side==='enemy'?battleState?.enemyIntelligence:battleState?.playerIntelligence;
+      return ({novice:20,normal:45,expert:75,master:95})[legacy] ?? 45;
+    }
+    function getAiIntelligenceForSide(side='enemy') {
+      const iq=getAiTacticalIQ(side);
+      return iq<30?'novice':iq<58?'normal':iq<82?'expert':'master';
+    }
+    function getAiIntelligence() { return getAiIntelligenceForSide('enemy'); }
+    function getAiProfileForSide(side='enemy') { return side==='enemy'?(battleState?.enemyAIProfile||null):(battleState?.playerAIProfile||null); }
+    function getAiOpponentMemory(side='enemy') { return side==='enemy'?(battleState?.enemyOpponentMemory||null):(battleState?.playerOpponentMemory||null); }
+    function aiEffectTags(effect) {
+      const type=String(effect?.type||'');const tags=new Set();const val=Number(effect?.val??0);
+      if(type==='mod_ap'&&val>0)tags.add('ap_supply');if(type.startsWith('dmg_')||type==='atk_ratio'||type==='atk_val')tags.add('damage');
+      if(type==='shield'||type==='damage_cut_ratio'||type==='damage_taken_ratio'&&val<0)tags.add('shield_defense');
+      if(type.startsWith('heal_')||type==='max_hp'&&val>0)tags.add('healing');if(['mod_atk_ratio','mod_atk_val','atk_ratio','atk_val','mod_speed','speed'].includes(type))tags.add('attack_speed_buff');
+      if(['status_apply','skill_block','heal_block','damage_taken_ratio'].includes(type))tags.add('status_debuff');if(type==='sub_chance_mod'||effect?.hasSubEffect||effect?.subEffect)tags.add('extra_effect');
+      if(effect?.targetAttr||effect?.targetMainAttr||effect?.attribute)tags.add('attribute_support');if(effect?.targetCond&&effect.targetCond.type!=='none'||effect?.selfCond&&effect.selfCond.type!=='none')tags.add('target_control');
+      return tags;
+    }
+    function aiStrategyScoreAdjustment(side,effect,cost=0,actionType='skill',unit=null) {
+      const p=getAiProfileForSide(side);const tags=aiEffectTags(effect);let score=0;
+      const primary=p?.primaryStrategy||'adaptive';const secondary=Array.isArray(p?.secondaryStrategies)?p.secondaryStrategies:[];
+      const weight=id=>primary===id?5.5:secondary.includes(id)?2.0:0;
+      score+=tags.has('damage')?(weight('rush')+weight('heavy')):0;
+      score+=actionType==='attack'?weight('basic'):0;
+      score+=cost>=25?weight('heavy'):0;score+=cost<=10?weight('ap_efficiency')*0.45:0;
+      score+=tags.has('ap_supply')?weight('ap_efficiency'):0;
+      score+=tags.has('healing')||tags.has('shield_defense')?weight('sustain'):0;
+      score+=tags.has('status_debuff')?weight('status'):0;
+      score+=tags.has('attack_speed_buff')?weight('buff'):0;
+      score+=tags.has('extra_effect')?weight('extra')+weight('combo')*0.35:0;
+      score+=tags.has('target_control')?weight('protect')*0.35:0;
+      if(unit?.skills?.some(sk=>sk.type==='passive')&&tags.size)score+=weight('passive')*0.4;
+      if(primary==='adaptive'||secondary.includes('adaptive'))score+=0.7;
+      // Primary strategy also creates an automatic tactical aptitude, separately from what the rival merely likes.
+      const aptitude={
+        rush:{damage:1.8,attack:1.2,healing:-0.45},heavy:{damage:1.1,heavy:2.2,ap_supply:0.8},basic:{attack:2.0,damage:0.7},
+        ap_efficiency:{ap_supply:2.0,lowCost:0.8,heavy:-0.4},sustain:{healing:2.2,shield_defense:2.3},
+        status:{status_debuff:2.1,status_condition:1.5},buff:{attack_speed_buff:1.8,damage:0.8},protect:{shield_defense:1.4,target_control:1.8,healing:1.0},
+        extra:{extra_effect:2.0,status_condition:0.8},passive:{passive_chain:2.0,extra_effect:0.7},combo:{extra_effect:1.3,ap_supply:0.8,passive_chain:1.2},
+        attribute:{attribute_support:2.0},adaptive:{damage:0.35,healing:0.35,shield_defense:0.35,status_debuff:0.35},counter:{shield_defense:1.5,status_debuff:1.0,healing:0.6}
+      }[primary]||{};
+      for(const [tag,value] of Object.entries(aptitude)){if(tags.has(tag))score+=value;}
+      // Operational personality stays independent, but gives a small automatic strength/weakness profile.
+      const operational=side==='enemy'?battleState?.enemyPersonality:battleState?.playerPersonality;
+      if(operational==='aggressive'){if(tags.has('damage'))score+=0.8;if(actionType==='attack')score+=0.5;}
+      else if(operational==='careful'){if(tags.has('healing')||tags.has('shield_defense'))score+=0.8;if(cost>=30)score-=0.3;}
+      else if(operational==='scout'){if(tags.has('status_debuff')||tags.has('target_control'))score+=0.8;}
+      else if(operational==='trickster'){if(tags.has('extra_effect')||tags.has('passive_chain')||tags.has('target_control'))score+=0.9;}
+      else if(operational==='collector'){if(cost<=10)score+=0.35;}
+      // Opponent counterplay only uses information actually scouted or observed in earlier battles.
+      const intel=getAiOpponentMemory(side);const confidence=Number(intel?.confidence)||0;
+      if(intel&&confidence>0.15&&(primary==='adaptive'||primary==='counter'||secondary.includes('adaptive')||secondary.includes('counter'))){
+        const types=intel.actionTypes||{};
+        if((Number(types.skill)||0)+(Number(types.magic)||0)>=3&&(tags.has('status_debuff')||tags.has('ap_supply')))score+=2.4*confidence;
+        if((Number(types.attack)||0)>=3&&(tags.has('healing')||tags.has('shield_defense')))score+=1.8*confidence;
+      }
+      return score;
+    }
+    function aiEvaluationError(side) {
+      const iq=getAiTacticalIQ(side);const maxError=(100-iq)*0.12;
+      return (Math.random()-0.5)*maxError;
+    }
+    function aiPickWithinThree(scored,scoreKey='score') {
+      if(!scored?.length)return null;const best=Math.max(...scored.map(x=>Number(x[scoreKey])||0));
+      const near=scored.filter(x=>best-(Number(x[scoreKey])||0)<=3);
+      return near[Math.floor(Math.random()*near.length)]||scored[0];
+    }
+    function recordCampaignAiTurnPlan(side) {
+      if(!battleState?.campaignMode||!Array.isArray(battleState.aiDecisionHistory))return;
+      const units=side==='player'?battleState.playerUnits:battleState.enemyUnits;const profile=getAiProfileForSide(side);const iq=getAiTacticalIQ(side);
+      const actions=(units||[]).filter(u=>u?.isActive&&u.currentHp>0).map(u=>{const a=u.reservedAction||{type:'attack'};const sk=a.type==='skill'?u.skills?.[a.skillIndex]:null;return {actor:u.name,type:a.type,name:sk?.name||(a.type==='attack'?'通常攻撃':'行動'),target:a.targetInstanceId?((side==='player'?battleState.enemyUnits:battleState.playerUnits).find(x=>x.instanceId===a.targetInstanceId)?.name||'対象'): '',cost:Math.max(0,Number(sk?.cost)||0)};});
+      if(side==='enemy'&&battleState.reservedEnemyMagic)actions.push({actor:'マジック',type:'magic',name:battleState.reservedEnemyMagic.name,target:'',cost:Number(battleState.reservedEnemyMagic.effect?.cost)||0});
+      if(side==='player'&&battleState.reservedMagic)actions.push({actor:'マジック',type:'magic',name:battleState.reservedMagic.name,target:'',cost:Number(battleState.reservedMagic.effect?.cost)||0});
+      battleState.aiDecisionHistory.push({side,turn:battleState.turn,iq,primary:profile?.primaryStrategy||'adaptive',actions:actions.slice(0,8)});battleState.aiDecisionHistory=battleState.aiDecisionHistory.slice(-120);
     }
 
     // ===== AI 戦術評価エンジン =====
@@ -5164,9 +5379,10 @@
         const copy = aiPlannerCloneState(state);
         const r = c.type === 'attack' ? aiPlannerApplyAttack(copy, c.actorId, c.targetInstanceId) : c.type === 'skill' ? aiPlannerApplySkill(copy, c.actorId, c.skill, c.targetInstanceId, false, c.subTargetInstanceId) : {value:0};
         const delta = aiPlannerEvaluateState(copy, side) - aiPlannerEvaluateState(state, side);
-        return { c, score: delta + (r.kills || 0) * 250 + Math.random() * (intelligence === 'master' ? 1 : 3) };
+        const strat=aiStrategyScoreAdjustment(side,c.skill?.mainEffect||null,Number(c.cost)||0,c.type,actor);
+        return { c, score: delta + (r.kills || 0) * 250 + strat + aiEvaluationError(side) };
       }).sort((a,b) => b.score - a.score);
-      const keep = intelligence === 'master' ? 8 : intelligence === 'expert' ? 6 : 4;
+      const keep = Math.max(3,Math.min(8,3+Math.round(getAiTacticalIQ(side)*0.05)));
       return scored.slice(0, Math.min(keep, scored.length)).map(x => x.c);
     }
 
@@ -5203,9 +5419,10 @@
           delta = (r.value || 0) + (r.kills || 0) * 300;
         }
         delta += aiPlannerEvaluateState(copy, side) - aiPlannerEvaluateState(state, side);
-        return {c,score:delta + Math.random() * (intelligence === 'master' ? 0.8 : 2)};
+        const strat=c.card?aiStrategyScoreAdjustment(side,c.card.effect?.mainEffect||c.card.effect,Number(c.cost)||0,'magic'):0;
+        return {c,score:delta+strat+aiEvaluationError(side)};
       }).sort((a,b)=>b.score-a.score);
-      return scored.slice(0, intelligence === 'master' ? 7 : 5).map(x=>x.c);
+      return scored.slice(0, Math.max(3,Math.min(7,3+Math.round(getAiTacticalIQ(side)*0.04)))).map(x=>x.c);
     }
 
     function aiPlannerApplyCandidate(state, candidate) {
@@ -5224,7 +5441,8 @@
     function aiPlannerSearch(side, intelligence) {
       const base = aiPlannerCreateState(side);
       const activeIds = aiPlannerActive(base, side).sort((a,b) => aiPlannerEffectiveSpeed(b) - aiPlannerEffectiveSpeed(a)).map(u => u.instanceId);
-      const beamWidth = intelligence === 'master' ? 48 : 20;
+      const iq=getAiTacticalIQ(side);
+      const beamWidth = Math.max(8,Math.min(48,8+Math.round(iq*0.40)));
       let beams = [{ state: base, plan: [], score: aiPlannerEvaluateState(base, side) }];
 
       // マジックは共有APを消費するので、キャラより先に候補として組み込む。
@@ -5254,7 +5472,7 @@
         if (!beams.length) break;
       }
 
-      let best = null;
+      const finalCandidates=[];
       for (const b of beams) {
         const now = aiPlannerEvaluateState(b.state, side);
         const future = aiPlannerCloneState(b.state);
@@ -5262,13 +5480,12 @@
         future[apKey] = Math.min(100, future[apKey] + 20);
         const futureValue = aiPlannerEvaluateState(future, side);
         const threat = aiPlannerEstimateThreat(future, side);
-        const strategicScore = intelligence === 'master'
-          ? now + futureValue * 0.38 - threat * 0.82
-          : now + futureValue * 0.10 - threat * 0.18;
-        const score = strategicScore + Math.random() * (intelligence === 'master' ? 0.4 : 2.0);
-        if (!best || score > best.score) best = { ...b, score };
+        const futureWeight=0.08+(iq/100)*0.32;const threatWeight=0.16+(iq/100)*0.62;
+        const score=now+futureValue*futureWeight-threat*threatWeight+aiEvaluationError(side);
+        finalCandidates.push({...b,score});
       }
-      return best || {state:base,plan:[],score:aiPlannerEvaluateState(base,side)};
+      finalCandidates.sort((a,b)=>b.score-a.score);
+      return aiPickWithinThree(finalCandidates)||{state:base,plan:[],score:aiPlannerEvaluateState(base,side)};
     }
 
     function applyAiPlanToBattle(side, plan) {
@@ -5308,7 +5525,7 @@
     function scoreAiTarget(target, skill, unit) {
       if (!target) return -9999;
       const effect = skill.mainEffect || {};
-      let score = Math.random() * 2;
+      let score = 0;
       if (effect.type === 'dmg_fixed' || effect.type === 'dmg_fixed_pierce' || effect.type === 'dmg_atk_ratio') {
         const raw = (effect.type === 'dmg_fixed' || effect.type === 'dmg_fixed_pierce') ? Number(effect.val || 0) : Math.round(aiPlannerEffectiveAtk(unit) * Number(effect.val || 0) / 100);
         const actual = effect.type === 'dmg_fixed_pierce' ? Math.max(0, Math.round(raw)) : aiPlannerDamageAfterCut(target, raw);
@@ -5321,14 +5538,28 @@
       if (effect.type === 'damage_taken_ratio' || effect.type === 'damage_cut_ratio') { const v = effect.type === 'damage_cut_ratio' ? -(Number(effect.val)||0) : (Number(effect.val)||0); score += (v < 0 ? (target.side === unit.side ? 75 : 5) : (target.side !== unit.side ? 75 : -10)); }
       if (effect.type === 'heal_block' || effect.type === 'skill_block') score += target.side !== unit.side ? 85 : -20;
       if (effect.type === 'mod_ap') score += Number(effect.val || 0) > 0 ? 55 : 35;
-      return score;
+      const side=unit?.side||'enemy';
+      score+=aiStrategyScoreAdjustment(side,effect,Number(skill.cost)||0,'skill',unit);
+      const intel=getAiOpponentMemory(side);const confidence=Number(intel?.confidence)||0;const profile=getAiProfileForSide(side);
+      const adaptive=profile&&(profile.primaryStrategy==='adaptive'||profile.primaryStrategy==='counter'||profile.secondaryStrategies?.some(x=>x==='adaptive'||x==='counter'));
+      if(adaptive&&intel&&confidence>0.15){
+        if(target.side===unit.side&&(effect.type==='heal_fixed'||effect.type==='heal_max_hp_ratio'||effect.type==='shield'||effect.type==='damage_taken_ratio'||effect.type==='damage_cut_ratio')){
+          const predicted=(intel.actions||[]).filter(a=>String(a.target||'')===String(target.name||'')).length;
+          score+=Math.min(14,predicted*4)*confidence;
+        }
+        if(target.side!==unit.side){
+          const known=(intel.cards||[]).find(c=>String(c.name||'')===String(target.name||'')||String(c.id||'')===String(target.cardId||''));
+          if(known)score+=Math.min(12,Math.max(0,Number(known.rank)||1)*2)*confidence;
+        }
+      }
+      return score+aiEvaluationError(side);
     }
 
     function chooseAiActions(side) {
       const units = getActiveUnits(side);
       const aliveEnemies = side === 'player' ? getActiveUnits('enemy') : getActiveUnits('player');
       if (aliveEnemies.length === 0) return;
-      const intelligence = side === 'enemy' ? getAiIntelligence() : (battleState.playerIntelligence || 'expert');
+      const intelligence = getAiIntelligenceForSide(side);
       if (intelligence === 'master' || intelligence === 'expert') {
         const result = aiPlannerSearch(side, intelligence);
         applyAiPlanToBattle(side, result.plan);
@@ -5347,13 +5578,14 @@
           if (cost > remainingAp) return;
           const candidates = getAiTargetsForSkill(sk, u);
           if (skillNeedsManualTarget(sk) && !candidates.length) return;
-          usable.push({sIdx,sk,candidates,score:Number(sk.mainEffect?.val||0) - cost * 0.25 + Math.random()*10});
+          usable.push({sIdx,sk,candidates,score:Number(sk.mainEffect?.val||0) - cost * 0.25 + aiStrategyScoreAdjustment(side,sk.mainEffect,cost,'skill',u) + aiEvaluationError(side)});
         });
         let pick = null;
-        if (intelligence === 'novice') {
-          if (Math.random() < 0.35 && usable.length) pick = usable[Math.floor(Math.random()*usable.length)];
-        } else if (usable.length) {
-          pick = usable.sort((a,b)=>b.score-a.score)[0];
+        if(usable.length){
+          usable.sort((a,b)=>b.score-a.score);
+          const best=usable[0];
+          // The low-IQ evaluator is deliberately simpler, so it can miss useful options; randomness itself is limited to near-ties.
+          const minimumAcceptable=(getAiTacticalIQ(side)<20?4:getAiTacticalIQ(side)<40?1.5:0);if(best.score>=minimumAcceptable)pick=aiPickWithinThree(usable,'score');
         }
         if (pick) {
           const candidates = pick.candidates.length ? pick.candidates : getAiTargetsForSkill(pick.sk,u);
@@ -5378,20 +5610,23 @@
           // AP is a shared budget; subtract the picked skill exactly once.
           if (u.reservedAction.type === 'skill') remainingAp -= Math.max(0,Number(pick.sk.cost||0)) + (unitHasStatus(u,'pressure') ? 5 : 0);
         } else {
-          const target = aliveEnemies.slice().sort((a,b)=>((a.currentHp/a.maxHp)-(b.currentHp/b.maxHp)) || (a.currentHp-b.currentHp))[0] || aliveEnemies[Math.floor(Math.random()*aliveEnemies.length)];
+          // If no useful skill can be afforded, a normal attack is the baseline fallback.
+          // Personality changes the target evaluation, not the legality of the action.
+          const targetScores=aliveEnemies.map(target=>({target,score:scoreAiTarget(target,{mainEffect:{type:'dmg_atk_ratio',val:100}},u)}));
+          const target=aiPickWithinThree(targetScores,'score')?.target || aliveEnemies[0];
           u.reservedAction = {type:'attack',targetInstanceId:target?.instanceId||null};
         }
       });
     }
 
-    function scoreAiMagic(card) {
+    function scoreAiMagic(card, side = 'enemy') {
       if (!card?.effect) return -9999;
-      const state = aiPlannerCreateState('enemy');
+      const state = aiPlannerCreateState(side);
       const actorId = 'magic_score_actor';
-      const actor = {instanceId:actorId,side:'enemy',currentHp:1,maxHp:1,atk:0,priority:999,buffs:[],debuffs:[],statuses:[],skills:[],isActive:false,name:'マジック'};
+      const actor = {instanceId:actorId,side,currentHp:1,maxHp:1,atk:0,priority:999,buffs:[],debuffs:[],statuses:[],skills:[],isActive:false,name:'マジック'};
       state.units.push(actor);
       const pseudoSkill = { ...card.effect, cost:Number(card.effect.cost||0), mainEffect:card.effect.mainEffect, hasSubEffect:card.effect.hasSubEffect, subEffect:card.effect.subEffect };
-      const before = aiPlannerEvaluateState(state,'enemy');
+      const before = aiPlannerEvaluateState(state,side);
       const candidates = aiPlannerCandidateTargets(state,actor,pseudoSkill);
       if (!candidates.length) return -9999;
       let best=-9999;
@@ -5399,10 +5634,10 @@
         const sim=aiPlannerCloneState(state);
         const r=aiPlannerApplySkill(sim,actorId,pseudoSkill,c.targetInstanceId,true,c.subTargetInstanceId);
         if (r.value < -9000) return;
-        const score=aiPlannerEvaluateState(sim,'enemy')-before+(r.kills||0)*300;
+        const score=aiPlannerEvaluateState(sim,side)-before+(r.kills||0)*300+aiStrategyScoreAdjustment(side,card.effect?.mainEffect||card.effect,Number(card.effect?.cost)||0,'magic')+aiEvaluationError(side);
         if(score>best) best=score;
       });
-      return best + Math.random()*3;
+      return best;
     }
 
     function magicActivationConditionMet(effect, side, apOverride = null) {
@@ -5438,60 +5673,68 @@
       return true;
     }
 
-    function chooseAiMagic() {
-      battleState.reservedEnemyMagic = null;
-      battleState.reservedEnemyMagicTargetInstanceId = null;
-      battleState.reservedEnemyMagicSubTargetInstanceId = null;
-      const cards = (battleState.enemyMagicHand || []).filter(c => !battleState.enemyUsedMagicCardIds.has(c.id));
+    function chooseAiMagic(side = 'enemy') {
+      if(side==='enemy') battleState.reservedEnemyMagic = null; else battleState.reservedMagic=null;
+      if(side==='enemy') battleState.reservedEnemyMagicTargetInstanceId = null; else battleState.reservedMagicTargetInstanceId=null;
+      if(side==='enemy') battleState.reservedEnemyMagicSubTargetInstanceId = null; else battleState.reservedMagicSubTargetInstanceId=null;
+      const hand=side==='enemy'?(battleState.enemyMagicHand||[]):(battleState.magicHand||[]);const used=side==='enemy'?battleState.enemyUsedMagicCardIds:battleState.usedMagicCardIds;const cards=hand.filter(c=>!used?.has?.(c.id));
       if (!cards.length) return;
-      const reservedUnitCost = getActiveUnits('enemy').reduce((sum, u) => {
+      const reservedUnitCost = getActiveUnits(side).reduce((sum, u) => {
         const a = u.reservedAction;
         if (a?.type !== 'skill') return sum;
         const sk = u.skills?.[a.skillIndex];
         return sum + Math.max(0,Number(sk?.cost || 0)) + (unitHasStatus(u,'pressure') ? 5 : 0);
       }, 0);
-      const ap = Math.max(0, Number(battleState.enemyAp) || 0) - reservedUnitCost;
-      const actor = {side:'enemy',currentHp:1,maxHp:1,buffs:[],debuffs:[],statuses:[]};
-      const usable = cards.filter(c => ap >= Number(c.effect?.cost || 0) && magicActivationConditionMet(c.effect, 'enemy', ap) && aiMagicHasRequiredTargets(c, actor));
+      const ap = Math.max(0, Number(side==='enemy'?battleState.enemyAp:battleState.playerAp) || 0) - reservedUnitCost;
+      const actor = {side,currentHp:1,maxHp:1,buffs:[],debuffs:[],statuses:[]};
+      const usable = cards.filter(c => ap >= Number(c.effect?.cost || 0) && magicActivationConditionMet(c.effect, side, ap) && aiMagicHasRequiredTargets(c, actor));
       if (!usable.length) return;
-      const intelligence = getAiIntelligence();
+      const intelligence = getAiIntelligenceForSide(side);const iq=getAiTacticalIQ(side);
+      const ranked = usable.map(card => {
+        let score=scoreAiMagic(card,side);
+        if(iq<35){
+          const main=card.effect?.mainEffect||{};const type=String(main.type||'');const val=Number(main.val)||0;const cost=Number(card.effect?.cost)||0;
+          // Deliberately coarse estimate for very low tactical IQ: raw effect magnitude and cost dominate; complex conditions are discounted.
+          score=(type.startsWith('dmg_')?Math.max(0,val)*0.45:type.startsWith('heal_')?Math.max(0,val)*0.30:type==='mod_ap'?val*0.7:['shield','damage_cut_ratio','damage_taken_ratio'].includes(type)?Math.max(0,Math.abs(val))*0.25:Math.max(0,val)*0.20)-cost*0.55;
+          if(card.effect?.selfCond&&card.effect.selfCond.type&&card.effect.selfCond.type!=='none')score-=4;
+          if(card.effect?.hasSubEffect)score*=0.8;
+          score+=aiStrategyScoreAdjustment(side,main,cost,'magic')+aiEvaluationError(side);
+        }
+        return {card,score};
+      }).sort((a,b)=>b.score-a.score);
       let chosen = null;
-      if (intelligence === 'novice') {
-        if (Math.random() < 0.35) chosen = usable[Math.floor(Math.random()*usable.length)];
-      } else {
-        const ranked = usable.map(card => ({card, score:scoreAiMagic(card)})).sort((a,b)=>b.score-a.score);
-        if (ranked.length && (intelligence === 'master' || ranked[0].score > 5) && (intelligence === 'expert' || Math.random() < 0.75)) chosen = ranked[0].card;
-      }
+      if(ranked.length&&(ranked[0].score>(iq<35?-2:0)))chosen=aiPickWithinThree(ranked,'score')?.card||ranked[0].card;
       if (!chosen) return;
-      battleState.reservedEnemyMagic = chosen;
+      if(side==='enemy')battleState.reservedEnemyMagic=chosen;else battleState.reservedMagic=chosen;
       if (isManualTargetType(chosen.effect?.targetType)) {
         const pool = getAiMagicTargetCandidates(chosen.effect.targetType, chosen.effect.targetCond, actor);
         if (pool.length) {
           pool.sort((a,b)=>scoreAiTarget(b,{mainEffect:chosen.effect.mainEffect},actor)-scoreAiTarget(a,{mainEffect:chosen.effect.mainEffect},actor));
-          battleState.reservedEnemyMagicTargetInstanceId = pool[0].instanceId;
+          if(side==='enemy')battleState.reservedEnemyMagicTargetInstanceId=pool[0].instanceId;else battleState.reservedMagicTargetInstanceId=pool[0].instanceId;
         }
       }
       const sub = chosen.effect?.hasSubEffect ? chosen.effect.subEffect : null;
       if (sub && sub.targetType === 'same_main_target') {
-        battleState.reservedEnemyMagicSubTargetInstanceId = battleState.reservedEnemyMagicTargetInstanceId;
+        if(side==='enemy')battleState.reservedEnemyMagicSubTargetInstanceId=battleState.reservedEnemyMagicTargetInstanceId;else battleState.reservedMagicSubTargetInstanceId=battleState.reservedMagicTargetInstanceId;
       } else if (sub && isManualTargetType(sub.targetType)) {
         const subPool = getAiMagicTargetCandidates(sub.targetType, sub.targetCond || {type:'none'}, actor);
         if (subPool.length) {
           subPool.sort((a,b)=>scoreAiTarget(b,{mainEffect:sub},actor)-scoreAiTarget(a,{mainEffect:sub},actor));
-          battleState.reservedEnemyMagicSubTargetInstanceId = subPool[0].instanceId;
+          if(side==='enemy')battleState.reservedEnemyMagicSubTargetInstanceId=subPool[0].instanceId;else battleState.reservedMagicSubTargetInstanceId=subPool[0].instanceId;
         }
       }
     }
 
     function chooseAiTurnPlan(side) {
-      const intelligence = side === 'enemy' ? getAiIntelligence() : (battleState.playerIntelligence || 'expert');
-      if (intelligence === 'master' || intelligence === 'expert') {
+      const intelligence = getAiIntelligenceForSide(side);const iq=getAiTacticalIQ(side);
+      if (iq >= 56) {
         const result = aiPlannerSearch(side, intelligence);
         applyAiPlanToBattle(side, result.plan);
       } else {
         chooseAiActions(side);
-        if (side === 'enemy') chooseAiMagic();
+        chooseAiMagic(side);
       }
+      recordCampaignAiTurnPlan(side);
     }
 
     async function confirmPlayerActions() {
@@ -5683,6 +5926,7 @@
           }); }
         }
       }
+      if(battleState?.campaignMode){battleState.aiActionHistory=Array.isArray(battleState.aiActionHistory)?battleState.aiActionHistory:[];battleState.aiActionHistory.push({side,turn:Number(battleState.turn)||1,actor:isPlayerActor?battleState.playerName:battleState.enemyName,type:'magic',name:card.name,target:[...new Set(targetNames)].join(' / '),result:'マジック発動'});battleState.aiActionHistory=battleState.aiActionHistory.slice(-240);}
       const actorName = isPlayerActor ? battleState.playerName : battleState.enemyName;
       const actorImage = isPlayerActor ? battleState.playerIconUrl : battleState.enemyIconUrl;
       logBattle(`📜 ${actorName} がマジックカード【${card.name}】を発動！`);
@@ -5700,6 +5944,13 @@
       }
     }
 
+    function recordCampaignBattleAction(unit,action,targetName='',result='executed') {
+      if(!battleState?.campaignMode)return;
+      battleState.aiActionHistory=Array.isArray(battleState.aiActionHistory)?battleState.aiActionHistory:[];
+      const act=action||unit?.reservedAction||{};const skill=act.type==='skill'?unit?.skills?.[act.skillIndex]:null;
+      battleState.aiActionHistory.push({side:unit?.side||'unknown',turn:Number(battleState.turn)||1,actor:unit?.name||'キャラ',type:act.type||'action',name:skill?.name||(act.type==='attack'?'通常攻撃':'行動'),target:String(targetName||''),result});
+      battleState.aiActionHistory=battleState.aiActionHistory.slice(-240);
+    }
     async function executeUnitAction(unit) {
       const isPlayer = unit.side === 'player';
       const act = unit.reservedAction;
@@ -5716,6 +5967,7 @@
         if (enemies.length === 0) return;
         const target = resolveSingleTargetRuntime(enemies, 'random_enemy_1', unit, null)[0];
         if (!target) { logBattle(`⚠️ ${unit.name} の通常攻撃は隠密に阻まれた！`); return; }
+        recordCampaignBattleAction(unit,act,target.name,'通常攻撃実行');
         const raw = getEffectiveAtk(unit);
         const actorHpBefore = { current: unit.currentHp, max: unit.maxHp };
         const before = target.currentHp;
@@ -5749,11 +6001,13 @@
       const sk = unit.skills[act.skillIndex];
       if (!sk) return;
       if (!evalCond(sk.selfCond, unit, isPlayer)) {
+        recordCampaignBattleAction(unit,act,'条件未達','不発');
         logBattle(`⚠️ ${unit.name} のスキル【${sk.name}】は発動条件を満たしていないため不発（AP消費なし）。`);
         await showActionPopup(unit, sk.name, sk, {target:'条件未達',effect:'発動条件を満たしていません',result:'不発（AP消費なし）',description:sk.desc || sk.description || buildAutoSkillDescriptionFromData(sk)});
         return;
       }
       if ((unit.debuffs || []).some(d => d.type === 'skill_block' && durationActive(d.duration))) {
+        recordCampaignBattleAction(unit,act,'自分','スキル使用禁止');
         logBattle(`🚫 ${unit.name} はスキル使用禁止中！`);
         await showActionPopup(unit, sk.name, sk, {target:'自分',effect:'スキル使用禁止',result:'不発',description: sk.desc || sk.description || buildAutoSkillDescriptionFromData(sk)});
         return;
@@ -5788,6 +6042,7 @@
           targetNames.push(t.name||'プレイヤー'); if(t && !t.__playerTarget) targetEntities.push(t); const r=applyEffect(sk.subEffect,t,isPlayer,false,unit);if(r){effectLines.push(r.effect);resultLines.push(r.result);}
         });
       }
+      recordCampaignBattleAction(unit,act,[...new Set(targetNames)].join(' / '),'スキル発動');
       logBattle(`✨ ${unit.name} のスキル【${sk.name}】発動！`);
       await showActionPopup(unit, sk.name, {cardType:'unit',name:unit.name,image:getCardImage(unit)||unit.image,hp:unit.maxHp,atk:getEffectiveAtk(unit),prio:getEffectiveSpeed(unit)}, {
         target: targetNames.length ? [...new Set(targetNames)].join(' / ') : '対象なし',
