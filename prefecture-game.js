@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.15 — configurable rival AI and synergy-aware campaign layer */
+/* 都道府県カード戦争 v1.0.16 — gacha reveal, magic capacity and ★3+ campaign pool */
 'use strict';
 
 let campaignState = null;
@@ -17,6 +17,7 @@ let prefTurnStartAbs = 1;
 const PREF_STATE_KEY = 'prefecture_campaign_state_v1';
 const PREF_PLAYER_ID = '京都府';
 const PREF_UNIT_LIMIT = 10;
+const PREF_MAGIC_LIMIT = 50;
 const PREF_RIVAL_UNIT_LIMIT = 5;
 const PREF_MAX_BATTLE_UNITS = 5;
 const PREF_BATTLE_ACTIVE = 3;
@@ -463,11 +464,13 @@ function prefCardHasOwnerTemplate(templateId, exceptRegionId=null) {
 function prefOwnedInstancesAny() { return prefInstances(x=>x.zone==='owner' && x.kind==='unit'); }
 function prefIsInitialDuplicateTemplate(instanceId) { return !!campaignState?.instances?.[instanceId]?.copyException; }
 function prefEligibleGachaUnitInstances() {
-  // Startup pools below 240 templates may retain unassigned template records internally so that
-  // every authored character remains accounted for; they are deliberately not drawable at start.
-  // A character template already represented by an owner or market listing cannot be acquired again.
+  // Only ★3–★5 characters are eligible in campaign mode. Low-rank templates remain in the card library
+  // but must never be drawn, including records left in older campaign saves.
   const unavailable = new Set(prefInstances(x=>x.kind==='unit' && ['owner','market'].includes(x.zone)).map(x=>String(x.templateId)));
-  return prefGachaUnits().filter(inst=>!inst.initialUnavailable && !unavailable.has(String(inst.templateId)));
+  return prefGachaUnits().filter(inst=>{
+    const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
+    return !inst.initialUnavailable && prefRankStars(card)>=3 && !unavailable.has(String(inst.templateId));
+  });
 }
 function prefNewStats() { return {assetMetric:0,wins:0,losses:0,draws:0,battles:0,investigations:0,marketIncome:0,marketExpense:0,aidIncome:0}; }
 function prefDefaultRegion(prefecture, isPlayer, repName, personality, initialPosition) {
@@ -485,7 +488,7 @@ function prefAssignInitialRanks() {
   return order;
 }
 function prefBuildInitialCardPool(templateCards, state) {
-  const units=templateCards.filter(c=>c.cardType==='unit');
+  const units=templateCards.filter(c=>c.cardType==='unit' && prefRankStars(c)>=3);
   const magic=templateCards.filter(c=>c.cardType==='magic');
   const unitCount=units.length;
   const allowInitialDuplicates=unitCount<240;
@@ -527,14 +530,15 @@ function prefBuildInitialCardPool(templateCards, state) {
 }
 function prefCreateNewCampaign() {
   const templates=prefCardTemplates();
-  const units=templates.filter(c=>c.cardType==='unit');
+  const allUnitTemplates=templates.filter(c=>c.cardType==='unit');
+  const units=allUnitTemplates.filter(c=>prefRankStars(c)>=3);
   const magics=templates.filter(c=>c.cardType==='magic');
-  if(!units.length) { alert('先にキャラカードを1枚以上作成してください。'); return null; }
+  if(units.length<3) { alert('ゲームモードでは★3以上のキャラカードのみ使用できます。★3以上のキャラカードを3枚以上作成してください。'); return null; }
   if(!magics.length) { alert('先にマジックカードを1枚以上作成してください。'); return null; }
   // discard the old campaign copies first; never touch the created card library in IndexedDB.
   allCards=allCards.filter(c=>!c.campaignInstance);
   const state={version:1,year:1,week:1,absoluteTurn:1,phase:'ready',gameOver:false,gameOverReason:'',yearReview:null,
-    instances:{},regions:{},rankingOrder:[],rankingInitialized:false,logs:[],investigations:[],supportApplied:[],lastLoadout:{active:[],reserve:[]},turnProcessing:null,pendingAcquisition:null,yearHistory:[],templateUnitCount:units.length,initialDuplicatesAllowed:units.length<240};
+    instances:{},regions:{},rankingOrder:[],rankingInitialized:false,logs:[],investigations:[],supportApplied:[],lastLoadout:{active:[],reserve:[]},turnProcessing:null,pendingAcquisition:null,pendingAcquisitionQueue:[],pendingGachaContinueKey:null,yearHistory:[],templateUnitCount:units.length,initialDuplicatesAllowed:units.length<240};
   campaignState=state;
   const pool=prefBuildInitialCardPool(templates,state);
   // Map allocated card instances into prefecture ownership. Player has 3; rivals have up to 5.
@@ -566,8 +570,15 @@ function prefCreateNewCampaign() {
     state.regions[row.prefecture]=region;
     (pool.assigned[row.prefecture]||[]).forEach(inst=>{inst.ownerId=row.prefecture;inst.zone='owner';inst.acquiredAtAbs=1;inst.expiresAtAbs=1+PREF_CARD_LIFETIME;});
   }
-  // Player starts with all default/created magic card templates; rivals start with a small no-duplicate selection each.
-  magics.forEach(c=>{const inst=prefCreateInstance(c.id,'owner',PREF_PLAYER_ID,{source:'initial-magic'}); if(inst)inst.expiresAtAbs=null;});
+  // Player receives up to 50 magic cards at campaign start. If the library contains more, each extra
+  // card is queued as a pending acquisition so the player can choose which owned magic to list, just
+  // like normal capacity overflow. Rivals continue to start with a small no-duplicate selection.
+  state.pendingAcquisitionQueue=[];
+  magics.forEach(c=>{
+    const currentCount=prefOwnedMagics(PREF_PLAYER_ID).length;
+    if(currentCount<PREF_MAGIC_LIMIT){const inst=prefCreateInstance(c.id,'owner',PREF_PLAYER_ID,{source:'initial-magic'});if(inst)inst.expiresAtAbs=null;}
+    else {const inst=prefCreateInstance(c.id,'pending',null,{source:'initial-magic-cap'});if(inst)state.pendingAcquisitionQueue.push(inst.id);}
+  });
   Object.values(state.regions).filter(r=>!r.isPlayer).forEach(region=>{
     const pickCount=Math.min(3,magics.length);
     prefShuffle(magics).slice(0,pickCount).forEach(c=>{const inst=prefCreateInstance(c.id,'owner',region.id,{source:'initial-magic'}); if(inst)inst.expiresAtAbs=null;});
@@ -580,7 +591,7 @@ function prefCreateNewCampaign() {
   prefLog(`初期配布完了：キャラカード原本${units.length}枚。${units.length<240?'必要枠に満たないため、初期配布に限り複製を許可。初期ガチャのキャラカードは0枚です。':'初期配布後のキャラカードはガチャに残ります。'}`,'info');
   prefEnsureCampaignAIConfig();
   prefOpenWeek();
-  prefSave().then(()=>{prefSyncCampaignClones();prefRenderAll();}).catch(console.error);
+  prefSave().then(()=>{prefSyncCampaignClones();prefRenderAll();if(campaignState?.pendingAcquisitionQueue?.length)prefStartNextQueuedAcquisition();}).catch(console.error);
   return state;
 }
 
@@ -589,11 +600,23 @@ async function prefLoadState() {
   campaignState=rec?.value||null;
   if(campaignState && (!campaignState.regions || !campaignState.instances)) campaignState=null;
   if(campaignState){
+    campaignState.pendingAcquisitionQueue=Array.isArray(campaignState.pendingAcquisitionQueue)?campaignState.pendingAcquisitionQueue:[];
+    campaignState.pendingGachaContinueKey=campaignState.pendingGachaContinueKey||null;
+    // Migrate older saves that granted every authored magic card to the player before the 50-card cap.
+    // Keep the oldest 50 in the holder and queue each excess card for the same player-chosen listing flow.
+    const legacyMagicOverflow=prefOwnedMagics(PREF_PLAYER_ID).slice(PREF_MAGIC_LIMIT);
+    for(const inst of legacyMagicOverflow){
+      inst.zone='pending';inst.ownerId=null;inst.sellerRegionId=null;inst.listedAtAbs=null;inst.marketExpiresAbs=null;inst.expiresAtAbs=null;inst.acquiredAtAbs=null;inst.capacityQueueReason='capacity-migration';
+      if(!campaignState.pendingAcquisitionQueue.includes(inst.id))campaignState.pendingAcquisitionQueue.push(inst.id);
+    }
+    if(legacyMagicOverflow.length)prefLog(`旧セーブのマジックカード所持数を上限${PREF_MAGIC_LIMIT}枚に移行しました。超過分はカードを選んで市場へ出品できます。`,'info');
+    // Existing campaign saves may still contain low-rank entries in the gacha pool; the draw filter
+    // below excludes them without deleting cards already owned in an older save.
     prefSyncCampaignClones();
     prefEnsureCampaignAIConfig();
     // Cards authored after the campaign started are immediately placed in the shared character gacha.
     const known=new Set(Object.values(campaignState.instances).map(i=>String(i.templateId)));
-    for(const t of prefCardTemplates().filter(c=>c.cardType==='unit')){
+    for(const t of prefCardTemplates().filter(c=>c.cardType==='unit'&&prefRankStars(c)>=3)){
       if(!known.has(String(t.id))){const inst=prefCreateInstance(t.id,'gacha',null,{source:'created-after-start'}); if(inst)prefLog(`新規キャラカード「${t.name}」がガチャに追加されました。`,'success');}
     }
     if(campaignState.turnProcessing && campaignState.turnProcessing.stage==='battles') {
@@ -618,8 +641,10 @@ async function prefAfterTemplateSave(beforeIds, kind) {
   if(campaignState){
     const known=new Set(Object.values(campaignState.instances).map(i=>String(i.templateId)));
     if(kind==='unit'){
-      for(const t of prefCardTemplates().filter(c=>c.cardType==='unit')){
-        if(!beforeIds.has(String(t.id)) && !known.has(String(t.id))){prefCreateInstance(t.id,'gacha',null,{source:'created-after-start'});prefLog(`新規キャラカード「${t.name}」がガチャに追加されました。`,'success');}
+      for(const t of prefCardTemplates().filter(c=>c.cardType==='unit'&&prefRankStars(c)>=3)){
+        // A template that existed as ★1–★2 when the campaign began may become eligible after editing.
+        // If no instance was created for it earlier, add it once it reaches ★3 or higher.
+        if(!known.has(String(t.id))){prefCreateInstance(t.id,'gacha',null,{source:'created-after-start'});prefLog(`キャラカード「${t.name}」が★3以上になったため、ガチャに追加されました。`,'success');}
       }
     }
     prefSyncCampaignClones();
@@ -795,12 +820,32 @@ function prefAiReplacementChoice(region, unitInstances, incomingInst) {
   if(incomingInst && personality==='collector' && prefValueFromInstance(incomingInst)<=prefCardValue(prefCardForInstance(weakest.inst.id)))return incomingInst.id;
   return weakest.inst.id;
 }
+function prefAiMagicReplacementChoice(region, magicInstances, incomingInst) {
+  if(!magicInstances.length)return incomingInst?.id||null;
+  const scored=magicInstances.map(inst=>({inst,score:prefCardScoreForRegion(region,inst)})).sort((a,b)=>a.score-b.score);
+  const weakest=scored[0];
+  if(!weakest)return incomingInst?.id||null;
+  return prefCardScoreForRegion(region,incomingInst)>weakest.score?weakest.inst.id:incomingInst.id;
+}
+
 function prefAcquireInstance(regionId, instId, options={}) {
   const region=prefRegion(regionId);const inst=campaignState?.instances?.[instId];if(!region||!inst)return false;
   const card=prefCardForInstance(instId)||prefTemplate(inst.templateId); if(!card)return false;
   if(inst.kind==='magic'){
-    const already=prefOwnedMagics(regionId).some(x=>String(x.templateId)===String(inst.templateId));
+    const ownedMagics=prefOwnedMagics(regionId);
+    const already=ownedMagics.some(x=>String(x.templateId)===String(inst.templateId));
     if(already){prefListInstance(inst,regionId,'duplicate-gacha');prefLog(`${region.prefecture}は重複したマジックカード「${card.name}」を市場へ出品しました。`,'info');return true;}
+    if(ownedMagics.length>=PREF_MAGIC_LIMIT){
+      if(region.isPlayer){
+        inst.zone='pending';inst.ownerId=null;inst.sellerRegionId=null;inst.listedAtAbs=null;inst.marketExpiresAbs=null;inst.expiresAtAbs=null;
+        campaignState.pendingAcquisition={kind:'magic',instanceId:instId,regionId,reason:options.reason||'acquire'};
+        if(!options.deferCapacityModal)prefShowReplaceModal();
+        return 'pending';
+      }
+      const replacement=prefAiMagicReplacementChoice(region,ownedMagics,inst);
+      if(replacement===instId){prefListInstance(inst,regionId,'ai-rejected-magic');prefRecordAIThought(region,'マジック構築','新しいマジックの採用を見送り',['マジック所持上限50枚のため既存カードと比較','新カードの推定価値が最も弱い所持カードを下回った']);return true;}
+      const old=campaignState.instances[replacement];if(old)prefListInstance(old,regionId,'ai-magic-replacement');
+    }
     prefSetInstanceOwner(inst,regionId,false);inst.expiresAtAbs=null;
     return true;
   }
@@ -808,8 +853,8 @@ function prefAcquireInstance(regionId, instId, options={}) {
   if(units.length>= (region.isPlayer?PREF_UNIT_LIMIT:PREF_RIVAL_UNIT_LIMIT)){
     if(region.isPlayer){
       inst.zone='pending';inst.ownerId=null;inst.sellerRegionId=null;inst.expiresAtAbs=null;
-      campaignState.pendingAcquisition={instanceId:instId,regionId,reason:options.reason||'acquire'};
-      prefShowReplaceModal(); return 'pending';
+      campaignState.pendingAcquisition={kind:'unit',instanceId:instId,regionId,reason:options.reason||'acquire'};
+      if(!options.deferCapacityModal)prefShowReplaceModal(); return 'pending';
     }
     const chosen=prefAiReplacementChoice(region,units,inst);
     if(chosen===instId){prefListInstance(inst,regionId,'ai-rejected-card');return true;}
@@ -820,31 +865,72 @@ function prefAcquireInstance(regionId, instId, options={}) {
 }
 function prefShowReplaceModal() {
   const pending=campaignState?.pendingAcquisition;if(!pending)return;
-  const inst=campaignState.instances[pending.instanceId],card=prefCardForInstance(pending.instanceId)||prefTemplate(inst?.templateId);const owned=prefOwnedUnits(PREF_PLAYER_ID);
+  const inst=campaignState.instances[pending.instanceId],card=prefCardForInstance(pending.instanceId)||prefTemplate(inst?.templateId);
+  const kind=pending.kind||inst?.kind||'unit';
+  const owned=kind==='magic'?prefOwnedMagics(pending.regionId||PREF_PLAYER_ID):prefOwnedUnits(pending.regionId||PREF_PLAYER_ID);
+  const isMagic=kind==='magic';
   if(!inst||!card){campaignState.pendingAcquisition=null;return;}
   const entries=[...owned.map(x=>({id:x.id,card:prefCardForInstance(x.id)||prefTemplate(x.templateId),incoming:false})),{id:inst.id,card,incoming:true}];
-  prefShowModal('カードホルダーがいっぱいです',`<p class="text-sm text-slate-300 mb-3">新しいキャラカード「<b class="text-amber-200">${prefEsc(card.name||'新カード')}</b>」を獲得しました。市場へ出すカードを選んでください。新しいカードを選ぶと、今回は受け取らずに市場へ出品します。</p><div class="max-h-[58vh] overflow-y-auto pr-1"><div class="grid grid-cols-3 sm:grid-cols-5 gap-2">${entries.map(x=>`<button data-pref-action="replace-held" data-id="${prefEsc(x.id)}" class="min-w-0 rounded-lg border ${x.incoming?'border-amber-500 bg-amber-950/30':'border-slate-700 bg-slate-900'} p-1 hover:border-amber-400"><div class="pointer-events-none">${prefCardDisplay(x.id,{small:true})}</div><div class="text-[10px] ${x.incoming?'text-amber-200':'text-rose-300'} font-black mt-1">${x.incoming?'新カードを市場へ':'これを市場へ'}</div></button>`).join('')}</div></div>`,[]);
+  const title=isMagic?'マジックカードが上限50枚です':'カードホルダーがいっぱいです';
+  const intro=isMagic
+    ?`新しいマジックカード「<b class="text-amber-200">${prefEsc(card.name||'新カード')}</b>」を受け取りました。マジックカードは最大${PREF_MAGIC_LIMIT}枚です。市場へ出品するカードを選んでください。新カードを選ぶと、新カード自体を出品します。`
+    :`新しいキャラカード「<b class="text-amber-200">${prefEsc(card.name||'新カード')}</b>」を獲得しました。市場へ出すカードを選んでください。新しいカードを選ぶと、今回は受け取らずに市場へ出品します。`;
+  const warning=!isMagic&&owned.length<=3?'<div class="mt-3 rounded-lg bg-rose-950/60 border border-rose-500/40 p-3 text-xs text-rose-200">キャラカードが3枚未満になると対戦できません。先に補充してください。</div>':'';
+  prefShowModal(title,`<p class="text-sm text-slate-300 mb-3">${intro}</p><div class="max-h-[58vh] overflow-y-auto pr-1"><div class="grid grid-cols-3 sm:grid-cols-5 gap-2">${entries.map(x=>`<button data-pref-action="replace-held" data-id="${prefEsc(x.id)}" class="min-w-0 rounded-lg border ${x.incoming?'border-amber-500 bg-amber-950/30':'border-slate-700 bg-slate-900'} p-1 hover:border-amber-400"><div class="pointer-events-none">${prefCardDisplay(x.id,{small:true})}</div><div class="text-[10px] ${x.incoming?'text-amber-200':'text-rose-300'} font-black mt-1">${x.incoming?'新カードを市場へ':'これを市場へ'}</div></button>`).join('')}</div></div>${warning}`,[]);
   document.getElementById('pref-modal-close-btn')?.classList.add('hidden');
 }
-function prefCommitReplace(oldId) {
+function prefStartNextQueuedAcquisition() {
+  if(!campaignState||campaignState.pendingAcquisition)return;
+  const queue=Array.isArray(campaignState.pendingAcquisitionQueue)?campaignState.pendingAcquisitionQueue:[];
+  while(queue.length){
+    const id=queue.shift(),inst=campaignState.instances?.[id];
+    if(!inst||inst.zone!=='pending')continue;
+    campaignState.pendingAcquisition={kind:inst.kind,instanceId:id,regionId:PREF_PLAYER_ID,reason:inst.capacityQueueReason||'initial-capacity'};
+    prefSave().catch(console.error);prefShowReplaceModal();return;
+  }
+  campaignState.pendingAcquisitionQueue=[];
+  prefSave().catch(console.error);
+}
+async function prefCommitReplace(oldId) {
   const pending=campaignState?.pendingAcquisition;if(!pending)return;
   const old=campaignState.instances[oldId],newInst=campaignState.instances[pending.instanceId];
   if(!newInst)return;
+  const regionId=pending.regionId||PREF_PLAYER_ID;
+  const kind=pending.kind||newInst.kind||'unit';
+  const label=kind==='magic'?'マジックカード':'キャラカード';
   if(String(oldId)===String(newInst.id)) {
     const card=prefCardForInstance(newInst.id)||prefTemplate(newInst.templateId);
-    prefListInstance(newInst,PREF_PLAYER_ID,'capacity-rejected');
+    prefListInstance(newInst,regionId,'capacity-rejected');
     campaignState.pendingAcquisition=null;
-    prefLog(`カードホルダーの上限により、新しい「${card?.name||'キャラカード'}」は市場へ出品されました。`,'info');
-    prefSave().then(()=>{prefSyncCampaignClones();prefRenderAll();prefCloseModal();}).catch(console.error);
-    return;
+    prefLog(`所持上限により、新しい「${card?.name||label}」は市場へ出品されました。`,'info');
+  } else {
+    const correctKind=kind==='magic'?'magic':'unit';
+    if(!old||old.zone!=='owner'||old.ownerId!==regionId||old.kind!==correctKind)return;
+    const oldCard=prefCardForInstance(oldId)||prefTemplate(old.templateId);
+    prefListInstance(old,regionId,'capacity-replacement');
+    prefSetInstanceOwner(newInst,regionId,true);
+    campaignState.pendingAcquisition=null;
+    prefLog(`「${oldCard?.name||label}」を市場へ出品し、新しい${label}をホルダーに加えました。`,'success');
   }
-  if(!old||old.zone!=='owner'||old.ownerId!==PREF_PLAYER_ID)return;
-  const oldCard=prefCardForInstance(oldId)||prefTemplate(old.templateId);
-  prefListInstance(old,PREF_PLAYER_ID,'capacity-replacement');
-  prefSetInstanceOwner(newInst,PREF_PLAYER_ID,true);
-  campaignState.pendingAcquisition=null;
-  prefLog(`「${oldCard?.name||'キャラカード'}」を市場へ出品し、新しいキャラカードをホルダーに加えました。`,'success');
-  prefSave().then(()=>{prefSyncCampaignClones();prefRenderAll();prefCloseModal();}).catch(console.error);
+  delete newInst.capacityQueueReason;
+  await prefSave();prefSyncCampaignClones();prefRenderAll();prefCloseModal();
+  if(campaignState.pendingAcquisitionQueue?.length){prefStartNextQueuedAcquisition();return;}
+  const continueKey=campaignState.pendingGachaContinueKey;
+  if(continueKey){campaignState.pendingGachaContinueKey=null;await prefSave();await prefPullGacha(continueKey);return;}
+  if(pending.reason==='auto-buy-magic'&&campaignState.turnProcessing&&(campaignState.turnProcessing.stage==='awaiting-capacity'||campaignState.turnProcessing.stage==='matching')){
+    const tx=campaignState.turnProcessing;const action=tx.resumePlayerAction||tx.actions?.[PREF_PLAYER_ID];
+    tx.stage='matching';delete tx.resumePlayerAction;
+    await prefSave();await prefStartTurnAfterAutoBuy(action,tx);return;
+  }
+  if(pending.reason==='capacity-migration'&&campaignState.turnProcessing){
+    const tx=campaignState.turnProcessing;
+    if(tx.stage==='awaiting-capacity'){
+      const action=tx.resumePlayerAction||tx.actions?.[PREF_PLAYER_ID];tx.stage='matching';delete tx.resumePlayerAction;
+      await prefSave();await prefStartTurnAfterAutoBuy(action,tx);return;
+    }
+    if(tx.stage==='player-preview'){prefRenderDashboard();prefEnsurePreviewResumeButton();return;}
+    await prefContinueTurn();
+  }
 }
 
 function prefRehydrateInitialRankingIfNeeded() {
@@ -903,7 +989,7 @@ function prefRenderDashboard() {
 function prefRenderHolder() {
   if(!campaignState){prefShowNoGame('pref-holder-list');return;}
   const units=prefOwnedUnits(PREF_PLAYER_ID),magics=prefOwnedMagics(PREF_PLAYER_ID);
-  const uc=document.getElementById('pref-holder-unit-count'),mc=document.getElementById('pref-holder-magic-count');if(uc)uc.textContent=`${units.length}/10`;if(mc)mc.textContent=`${magics.length}`;
+  const uc=document.getElementById('pref-holder-unit-count'),mc=document.getElementById('pref-holder-magic-count');if(uc)uc.textContent=`${units.length}/10`;if(mc)mc.textContent=`${magics.length}/${PREF_MAGIC_LIMIT}`;
   const list=document.getElementById('pref-holder-list');if(!list)return;
   if(prefCurrentHolderTab==='autobuy'){
     const player=prefPlayerRegion();player.autoBuyMagicTemplateIds=Array.isArray(player.autoBuyMagicTemplateIds)?player.autoBuyMagicTemplateIds:[];
@@ -967,13 +1053,13 @@ function setPrefHolderSearch(value){const input=document.getElementById('pref-ho
 function prefRenderGacha() {
   if(!campaignState){prefShowNoGame('pref-gacha-cards');return;}
   const p=prefPlayerRegion();const list=document.getElementById('pref-gacha-cards');if(!list)return;
-  const eligible=prefEligibleGachaUnitInstances();const counts=[1,2,3,4,5].map(rank=>eligible.filter(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))===rank).length);
-  document.getElementById('pref-gacha-pool-counts').innerHTML=counts.map((n,i)=>`<div class="rounded-xl border border-amber-500/20 bg-slate-900 p-2 text-center"><div class="text-[9px] text-slate-400">★${i+1}</div><div class="text-amber-200 font-black text-lg">${n}</div><div class="text-[9px] text-slate-500">残存</div></div>`).join('');
+  const eligible=prefEligibleGachaUnitInstances();const counts=[3,4,5].map(rank=>eligible.filter(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))===rank).length);
+  const pool=document.getElementById('pref-gacha-pool-counts');if(pool){pool.className='grid grid-cols-3 gap-2';pool.innerHTML=counts.map((n,i)=>`<div class="rounded-xl border border-amber-500/20 bg-slate-900 p-2 text-center"><div class="text-[9px] text-slate-400">★${i+3}</div><div class="text-amber-200 font-black text-lg">${n}</div><div class="text-[9px] text-slate-500">残存</div></div>`).join('');}
   const allowed=[];const tier=p.tier||'E';if(['S','A','B'].includes(tier))allowed.push('A');if(['S','A','B','C','D'].includes(tier))allowed.push('B');allowed.push('C','magic');
   list.innerHTML=allowed.map(key=>{const g=PREF_GACHA[key];const unlocked=(key==='A'?['S','A','B'].includes(tier):key==='B'?['S','A','B','C','D'].includes(tier):true);const probs=g.odds.map(o=>`${o.kind==='magic'?'マジックカード':`★${o.rank}`} ${o.weight}%`).join(' / ');
     return `<div class="relative overflow-hidden rounded-2xl border ${key==='A'?'border-amber-400/50':key==='B'?'border-cyan-400/40':key==='C'?'border-violet-400/40':'border-purple-500/40'} bg-gradient-to-br from-slate-900 to-slate-950 p-4"><div class="absolute -right-4 -top-4 text-7xl opacity-10">${key==='magic'?'📜':'✨'}</div><div class="relative"><div class="text-[10px] text-slate-400 font-bold">${key==='magic'?'MAGIC ONLY':`CLASS ${key}`}</div><h3 class="text-lg font-black ${key==='A'?'text-amber-200':key==='B'?'text-cyan-200':key==='C'?'text-violet-200':'text-purple-200'} mt-1">${prefEsc(g.label)}</h3><div class="text-2xl font-black text-white mt-2">${prefFormatMoney(g.price)}</div><div class="text-[10px] text-slate-400 mt-2 leading-relaxed">排出率：${prefEsc(probs)}</div><button data-pref-action="pull-gacha" data-id="${prefEsc(key)}" class="mt-4 w-full py-3 rounded-xl font-black text-sm ${unlocked?'bg-violet-600 hover:bg-violet-500 text-white':'bg-slate-800 text-slate-500 cursor-not-allowed'}" ${unlocked?'':'disabled'}>1回引く</button></div></div>`;
   }).join('');
-  document.getElementById('pref-gacha-note').textContent=`現在の京都府ランク：${tier}。AランクガチャはBランク以上、BランクガチャはDランク以上で解放されます。キャラカードの排出候補が無いときは、設定確率にかかわらずマジックカードが排出されます。重複マジックは自動で市場に出品されます。`;
+  document.getElementById('pref-gacha-note').textContent=`現在の京都府ランク：${tier}。AランクガチャはBランク以上、BランクガチャはDランク以上で解放されます。ゲームモードのキャラガチャでは★3〜★5のみが排出対象です。キャラカードの排出候補が無いときはマジックカードが排出されます。マジックカードの所持上限は${PREF_MAGIC_LIMIT}枚で、超過時は市場へ出品するカードを選択します。重複マジックは自動で市場に出品されます。`;
 }
 function prefRenderRanking() {
   if(!campaignState){const b=document.getElementById('pref-ranking-body');if(b)b.innerHTML='<tr><td colspan="7" class="p-8 text-center text-slate-500">ゲームを開始してください。</td></tr>';return;}
@@ -1108,6 +1194,14 @@ function prefListPlayerCard(id) {
 }
 function prefWithdrawListing(id) {
   const inst=campaignState?.instances?.[id];if(!inst||inst.zone!=='market'||inst.sellerRegionId!==PREF_PLAYER_ID)return;
+  if(inst.kind==='magic'){
+    if(prefOwnedMagics(PREF_PLAYER_ID).some(x=>String(x.templateId)===String(inst.templateId))){prefShowModal('出品を取り消せません','同じマジックカードをすでに所持しているため、重複所持にならないよう出品を取り消せません。',[{label:'戻る',action:'close-modal'}]);return;}
+    if(prefOwnedMagics(PREF_PLAYER_ID).length>=PREF_MAGIC_LIMIT){
+      inst.zone='pending';inst.ownerId=null;inst.sellerRegionId=null;inst.listedAtAbs=null;inst.marketExpiresAbs=null;inst.expiresAtAbs=null;inst.acquiredAtAbs=null;
+      campaignState.pendingAcquisition={kind:'magic',instanceId:inst.id,regionId:PREF_PLAYER_ID,reason:'withdraw-market-magic'};
+      prefSave().then(()=>{prefSyncCampaignClones();prefShowReplaceModal();}).catch(console.error);return;
+    }
+  }
   if(inst.kind==='unit')prefSetInstanceOwner(inst,PREF_PLAYER_ID,true);else prefSetInstanceOwner(inst,PREF_PLAYER_ID,false);
   prefLog(`市場出品を取り消し、カードをホルダーへ戻しました。`,'info');prefSave().then(()=>{prefRenderAll();renderPrefMarket();}).catch(console.error);
 }
@@ -1140,21 +1234,21 @@ function prefResolveGachaTier(key) {
   if(!result)return {kind:'magic'};
   if(result.kind==='magic')return result;
   const eligible=prefEligibleGachaUnitInstances();
-  for(let r=Number(result.rank);r>=1;r--){const list=eligible.filter(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))===r);if(list.length)return {kind:'unit',rank:r,instance:prefRandom(list),fallback:r!==Number(result.rank)};}
+  for(let r=Number(result.rank);r>=3;r--){const list=eligible.filter(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))===r);if(list.length)return {kind:'unit',rank:r,instance:prefRandom(list),fallback:r!==Number(result.rank)};}
   return {kind:'magic',fallback:true,noUnits:true};
 }
 async function prefPullGacha(key) {
   const p=prefPlayerRegion(),g=PREF_GACHA[key];if(!p||!g)return;
+  if(campaignState?.pendingAcquisition){prefShowReplaceModal();return;}
   const allowed=key==='A'?['S','A','B'].includes(p.tier):key==='B'?['S','A','B','C','D'].includes(p.tier):true;
   if(!allowed){prefShowModal('ガチャ未解放',`このガチャは都道府県ランク${key==='A'?'B':key==='B'?'D':'—'}以上で解放されます。`,[{label:'戻る',action:'close-modal'}]);return;}
   if(p.funds<g.price){prefShowModal('資金不足',`${g.label}を引くには${prefFormatMoney(g.price)}必要です。`,[{label:'戻る',action:'close-modal'}]);return;}
-  // Gacha expenditure reduces current cash, but does not directly reduce the annual ranking asset metric.
   p.funds-=g.price;
   const selected=prefResolveGachaTier(key);
   let resultCard=null;
   if(selected.kind==='unit'&&selected.instance){
     resultCard=selected.instance;
-    prefAcquireInstance(PREF_PLAYER_ID,resultCard.id,{reason:'gacha'});
+    prefAcquireInstance(PREF_PLAYER_ID,resultCard.id,{reason:'gacha',deferCapacityModal:true});
     const card=prefCardForInstance(resultCard.id)||prefTemplate(resultCard.templateId);
     prefLog(`ガチャからキャラカード「${card?.name||'カード'}」（★${prefRankStars(card)}）が排出されました。`,'success');
   } else {
@@ -1164,15 +1258,24 @@ async function prefPullGacha(key) {
     resultCard=prefCreateInstance(template.id,'pending',null,{source:'gacha'});
     const already=prefOwnedMagics(PREF_PLAYER_ID).some(x=>String(x.templateId)===String(template.id));
     if(already){prefListInstance(resultCard,PREF_PLAYER_ID,'duplicate-gacha');prefLog(`重複したマジックカード「${template.name}」を自動的に市場へ出品しました。`,'info');}
-    else {prefAcquireInstance(PREF_PLAYER_ID,resultCard.id,{reason:'gacha'});}
+    else {prefAcquireInstance(PREF_PLAYER_ID,resultCard.id,{reason:'gacha',deferCapacityModal:true});}
     prefLog(`ガチャからマジックカード「${template.name}」が排出されました。`,'success');
   }
   await prefSave();prefSyncCampaignClones();prefRenderAll();
+  // Add a short staged reveal before showing the actual card. Save first so a refresh during the reveal
+  // cannot charge the player again or lose the result.
+  const modalClose=document.getElementById('pref-modal-close-btn');
+  prefShowModal('✨ カードを召喚中…',`<div class="text-center py-5"><div class="relative mx-auto w-32 h-32 flex items-center justify-center"><div class="absolute inset-0 rounded-full border-4 border-violet-400/70 animate-spin"></div><div class="absolute inset-3 rounded-full border-2 border-amber-300/70 animate-ping"></div><div class="pref-gacha-orb text-6xl">✧</div></div><div class="text-lg font-black text-violet-200 mt-5">カードの気配が強まっている…</div><p class="text-xs text-slate-400 mt-2">光が収束するのを待っています</p><div class="h-1.5 rounded-full bg-slate-800 overflow-hidden mt-5 max-w-xs mx-auto"><div class="pref-gacha-progress h-full rounded-full"></div></div></div>`,[]);
+  modalClose?.classList.add('hidden');
+  await new Promise(resolve=>setTimeout(resolve,850));
+  const body=document.getElementById('pref-modal-body');if(body&&document.getElementById('pref-modal')?.classList.contains('flex'))body.innerHTML=`<div class="text-center py-4"><div class="text-4xl animate-bounce">✨</div><div class="text-xl font-black text-amber-200 mt-3">まもなくカードが現れます…</div><p class="text-xs text-slate-400 mt-2">運命の一枚を確認中</p></div>`;
+  await new Promise(resolve=>setTimeout(resolve,700));
   const c=resultCard?(prefCardForInstance(resultCard.id)||prefTemplate(resultCard.templateId)):null;
   const fallback=selected.fallback?`<p class="text-xs text-amber-200 mt-2">希望ランクのカードが残っていないため、${selected.noUnits?'マジックカードに切り替えました':`★${selected.rank}で代用しました`}。</p>`:'';
-  const location=resultCard&&campaignState.instances[resultCard.id]?.zone==='market'?'<p class="text-xs text-cyan-200 mt-2">重複または所持上限のため市場へ出品されました。</p>':'';
-  const cardBlock=c?`<div class="mx-auto w-44 mt-3">${prefCardDisplay(resultCard.id,{small:true})}</div><div class="text-center mt-2"><div class="font-black text-white text-lg">${prefEsc(c.name)}</div><div class="text-emerald-200 font-black mt-1">価値 ${prefFormatMoney(prefCardValue(c))}</div></div>`:'<p class="text-slate-400 text-sm">カードの登録データが見つかりませんでした。</p>';
-  prefShowModal('✨ ガチャ結果',`<div class="text-center"><div class="inline-flex px-3 py-1 rounded-full bg-violet-950 border border-violet-500/50 text-violet-200 text-xs font-black">${prefEsc(g.label)} · ${prefFormatMoney(g.price)}</div><div class="text-4xl mt-3 animate-pulse">${c?.cardType==='magic'?'📜':'🌟'}</div>${cardBlock}${fallback}${location}</div>`,[{label:'結果を確認',action:'gacha-result-close',style:'primary'}]);
+  const zone=campaignState.instances[resultCard?.id]?.zone;
+  const location=zone==='market'?'<p class="text-xs text-cyan-200 mt-2">重複のため市場へ自動出品されました。</p>':zone==='pending'?`<p class="text-xs text-amber-200 mt-2">所持上限${resultCard?.kind==='magic'?`（マジック${PREF_MAGIC_LIMIT}枚）`:''}のため、既存カードまたは新カードを選んで市場へ出品してください。</p>`:'';
+  const cardBlock=c?`<div class="mx-auto w-44 mt-3">${prefCardDisplay(resultCard.id,{small:true})}</div><div class="text-center mt-2"><div class="font-black text-white text-lg">${prefEsc(c.name)}</div><div class="text-emerald-200 font-black mt-1">価値 ${prefFormatMoney(prefCardValue(c))}</div><div class="text-[10px] text-slate-500 mt-1">カード画像をタップすると詳細を確認できます</div></div>`:'<p class="text-slate-400 text-sm">カードの登録データが見つかりませんでした。</p>';
+  prefShowModal('✨ ガチャ結果',`<div class="text-center"><div class="inline-flex px-3 py-1 rounded-full bg-violet-950 border border-violet-500/50 text-violet-200 text-xs font-black">${prefEsc(g.label)} · ${prefFormatMoney(g.price)}</div><div class="text-4xl mt-3 animate-pulse">${c?.cardType==='magic'?'📜':'🌟'}</div>${cardBlock}${fallback}${location}</div>`,[{label:'結果を閉じる',action:'gacha-result-close'},{label:'続けて引く',action:'gacha-pull-again',id:key,style:'primary'}]);
 }
 
 function prefShowBattleSelection(finalizing=false) {
@@ -1366,13 +1469,37 @@ function prefApplyCommandStreaks(actions) {
   }
 }
 function prefAutoBuyListedMagics(region){
-  if(!campaignState||!region)return;region.autoBuyMagicTemplateIds=Array.isArray(region.autoBuyMagicTemplateIds)?region.autoBuyMagicTemplateIds:[];
+  if(!campaignState||!region)return false;region.autoBuyMagicTemplateIds=Array.isArray(region.autoBuyMagicTemplateIds)?region.autoBuyMagicTemplateIds:[];
   for(const templateId of region.autoBuyMagicTemplateIds){
     if(prefOwnedMagics(region.id).some(i=>String(i.templateId)===String(templateId)))continue;
     const listing=prefMarketListings('magic').find(i=>String(i.templateId)===String(templateId)&&i.sellerRegionId!==region.id);
-    if(!listing)continue;const cost=prefValueFromInstance(listing);if(Number(region.funds)<cost||Number(region.funds)-cost<0)continue;
-    prefBook(region.id,-cost,'auto-buy-magic');prefSetInstanceOwner(listing,region.id);prefLog(`${region.prefecture}が自動購入設定によりマジックカード「${prefTemplate(templateId)?.name||'カード'}」を${prefFormatMoney(cost)}で購入しました。`,'info');
+    if(!listing)continue;
+    const cost=prefValueFromInstance(listing);if(Number(region.funds)<cost||Number(region.funds)-cost<0)continue;
+    const owned=prefOwnedMagics(region.id);
+    if(owned.length>=PREF_MAGIC_LIMIT){
+      if(region.isPlayer){
+        const seller=listing.sellerRegionId;
+        prefBook(region.id,-cost,'auto-buy-magic');if(seller&&seller!==region.id)prefBook(seller,cost,'market-sale');
+        listing.zone='pending';listing.ownerId=null;listing.sellerRegionId=null;listing.listedAtAbs=null;listing.marketExpiresAbs=null;listing.expiresAtAbs=null;listing.acquiredAtAbs=null;
+        campaignState.pendingAcquisition={kind:'magic',instanceId:listing.id,regionId:region.id,reason:'auto-buy-magic'};
+        prefLog(`自動購入でマジックカード「${prefTemplate(templateId)?.name||'カード'}」を購入しました。所持上限${PREF_MAGIC_LIMIT}枚のため、出品する既存カードを選んでください。`,'info');
+        return 'pending';
+      }
+      // AI-controlled regions resolve capacity without player interaction: only replace a card when
+      // the incoming magic has greater estimated utility than the weakest one currently held.
+      const replacement=prefAiMagicReplacementChoice(region,owned,listing);
+      if(replacement===listing.id)continue;
+      prefBook(region.id,-cost,'auto-buy-magic');if(listing.sellerRegionId&&listing.sellerRegionId!==region.id)prefBook(listing.sellerRegionId,cost,'market-sale');
+      const old=campaignState.instances[replacement];if(old)prefListInstance(old,region.id,'ai-magic-replacement');
+      prefSetInstanceOwner(listing,region.id,false);listing.expiresAtAbs=null;
+      prefLog(`${region.prefecture}が自動購入設定により「${prefTemplate(templateId)?.name||'マジックカード'}」を購入し、所持上限に合わせて既存カードを入れ替えました。`,'info');
+      continue;
+    }
+    prefBook(region.id,-cost,'auto-buy-magic');if(listing.sellerRegionId&&listing.sellerRegionId!==region.id)prefBook(listing.sellerRegionId,cost,'market-sale');
+    prefSetInstanceOwner(listing,region.id,false);listing.expiresAtAbs=null;
+    prefLog(`${region.prefecture}が自動購入設定によりマジックカード「${prefTemplate(templateId)?.name||'カード'}」を${prefFormatMoney(cost)}で購入しました。`,'info');
   }
+  return false;
 }
 function prefMakeTurnActions(playerAction) {
   const actions={[PREF_PLAYER_ID]:playerAction};
@@ -1393,8 +1520,25 @@ async function prefBeginTurn(playerAction) {
   campaignState.turnProcessing=tx;campaignState.draftLoadout=null;
   if(playerAction.type==='battle') p.lastLoadout=JSON.parse(JSON.stringify(playerAction.loadout||{active:[],reserve:[]}));
   await prefSave();
-  // AI shopping and command decisions are now a saved part of the turn transaction.
-  for(const region of Object.values(campaignState.regions))prefAutoBuyListedMagics(region);
+  await prefStartTurnAfterAutoBuy(playerAction,tx);
+}
+
+async function prefStartTurnAfterAutoBuy(playerAction,tx) {
+  if(!campaignState||!tx||campaignState.turnProcessing!==tx)return;
+  // If a player's auto-buy reaches the 50-card limit, pause the turn transaction until the user chooses
+  // which owned magic to list. Resolving the choice returns here and continues the same saved turn.
+  for(const region of Object.values(campaignState.regions)){
+    const result=prefAutoBuyListedMagics(region);
+    if(result==='pending'){
+      tx.stage='awaiting-capacity';tx.resumePlayerAction=playerAction;
+      await prefSave();prefSyncCampaignClones();prefRenderAll();prefShowReplaceModal();return;
+    }
+  }
+  tx.stage='matching';delete tx.resumePlayerAction;
+  await prefFinishTurnInitialization(playerAction,tx);
+}
+
+async function prefFinishTurnInitialization(playerAction,tx) {
   const actions=prefMakeTurnActions(playerAction);
   prefApplyCommandStreaks(actions);
   let matched=prefPairBattlers(actions);
@@ -1413,12 +1557,13 @@ async function prefBeginTurn(playerAction) {
     campaignState.draftLoadout=JSON.parse(JSON.stringify(playerAction.loadout||prefDefaultLoadout(PREF_PLAYER_ID)));
     tx.stage='player-preview';await prefSave();prefRenderDashboard();prefEnsurePreviewResumeButton();
     const opponentIconUrl=prefRegionIconUrl(opponent);
-    const opponentAvatar=opponentIconUrl?`<img src=\"${prefEsc(opponentIconUrl)}\" alt=\"\" class=\"w-16 h-16 rounded-full object-cover mx-auto mb-2 border-2 border-rose-500\" onerror=\"this.remove()\">`:`<div class=\"text-4xl mb-2\">${prefEsc(opponent?.icon||'🏯')}</div>`;
-    prefShowModal('⚔️ 対戦相手が決定',`<div class=\"text-center\">${opponentAvatar}<div class=\"text-2xl font-black text-rose-200\">${prefEsc(opponent?.prefecture||opponentId)}</div><div class=\"text-lg font-bold mt-1\">${prefEsc(opponent?.repName||'代表')}</div><div class=\"mt-2 text-amber-200 font-black\">現在順位：${prefRankOf(opponentId)}位（${prefEsc(opponent?.tier||'E')}ランク）</div><div class=\"text-xs text-slate-400 mt-1\">所持資金：${prefFormatMoney(opponent?.funds||0)}</div><div class=\"mt-4 rounded-lg border border-rose-900/60 bg-slate-900 p-3 text-sm text-slate-200\">対戦相手のカード内容は、この時点では公開されません。カード情報は調査で判明した範囲だけ確認できます。</div><p class=\"text-xs text-slate-400 mt-3\">相手は確定しました。編成はこの後で変更して最終確定できます。カードホルダーや調査結果を確認した後も、ゲーム画面の「編成を確定して対戦開始」から再開できます。</p></div>`,[{label:'閉じる',action:'close-modal'},{label:'編成・調査を確認',action:'battle-preview-back'},{label:'編成を選んで対戦開始',action:'battle-preview-continue',style:'primary'}]);
+    const opponentAvatar=opponentIconUrl?`<img src="${prefEsc(opponentIconUrl)}" alt="" class="w-16 h-16 rounded-full object-cover mx-auto mb-2 border-2 border-rose-500" onerror="this.remove()">`:`<div class="text-4xl mb-2">${prefEsc(opponent?.icon||'🏯')}</div>`;
+    prefShowModal('⚔️ 対戦相手が決定',`<div class="text-center">${opponentAvatar}<div class="text-2xl font-black text-rose-200">${prefEsc(opponent?.prefecture||opponentId)}</div><div class="text-lg font-bold mt-1">${prefEsc(opponent?.repName||'代表')}</div><div class="mt-2 text-amber-200 font-black">現在順位：${prefRankOf(opponentId)}位（${prefEsc(opponent?.tier||'E')}ランク）</div><div class="text-xs text-slate-400 mt-1">所持資金：${prefFormatMoney(opponent?.funds||0)}</div><div class="mt-4 rounded-lg border border-rose-900/60 bg-slate-900 p-3 text-sm text-slate-200">対戦相手のカード内容は、この時点では公開されません。カード情報は調査で判明した範囲だけ確認できます。</div><p class="text-xs text-slate-400 mt-3">相手は確定しました。編成はこの後で変更して最終確定できます。カードホルダーや調査結果を確認した後も、ゲーム画面の「編成を確定して対戦開始」から再開できます。</p></div>`,[{label:'閉じる',action:'close-modal'},{label:'編成・調査を確認',action:'battle-preview-back'},{label:'編成を選んで対戦開始',action:'battle-preview-continue',style:'primary'}]);
     return;
   }
   await prefContinueTurn();
 }
+
 function prefEstimateBuildScenarios(region,activeCards,reserveCards,magicCards) {
   // Lightweight expected-value proxy across three representative tactical situations.
   // This intentionally does not execute the complete battle engine; it gives candidate
@@ -1839,9 +1984,15 @@ async function prefHandleClick(action,id,button) {
     await prefContinueTurn();prefEnsurePreviewResumeButton();return;
   }
   if(action==='toggle-autobuy'){const p=prefPlayerRegion();p.autoBuyMagicTemplateIds=Array.isArray(p.autoBuyMagicTemplateIds)?p.autoBuyMagicTemplateIds:[];const key=String(id||button?.dataset?.id||'');const enabled=button?.checked??!p.autoBuyMagicTemplateIds.includes(key);p.autoBuyMagicTemplateIds=enabled?[...new Set([...p.autoBuyMagicTemplateIds,key])]:p.autoBuyMagicTemplateIds.filter(x=>x!==key);await prefSave();prefRenderHolder();return;}
-  if(action==='gacha-result-close'){prefCloseModal();if(campaignState?.pendingAcquisition)prefShowReplaceModal();return;}
-  if(campaignState?.turnProcessing && ['list-card','confirm-list-card','withdraw-listing','buy-card','confirm-buy-card','pull-gacha','replace-held','confirm-battle','confirm-investigation'].includes(action)){
-    prefShowModal('ターン処理中','47都道府県のAI対戦と決算処理を行っています。二重処理を防ぐため、完了するまでカードの購入・出品・ガチャ利用・コマンド変更はできません。',[{label:'閉じる',action:'close-modal',style:'primary'}]);return;
+  if(action==='gacha-result-close'){prefCloseModal();if(campaignState?.pendingAcquisition)prefShowReplaceModal();else if(campaignState?.pendingAcquisitionQueue?.length)prefStartNextQueuedAcquisition();return;}
+  if(action==='gacha-pull-again'){
+    const key=String(id||button?.dataset?.id||'C');
+    if(campaignState?.pendingAcquisition){campaignState.pendingGachaContinueKey=key;await prefSave();prefCloseModal();prefShowReplaceModal();return;}
+    prefCloseModal();await prefPullGacha(key);return;
+  }
+  const resolvingAutoBuyCapacity=action==='replace-held'&&campaignState?.pendingAcquisition?.reason==='auto-buy-magic'&&['awaiting-capacity','matching'].includes(campaignState?.turnProcessing?.stage);
+  if(campaignState?.turnProcessing && ['list-card','confirm-list-card','withdraw-listing','buy-card','confirm-buy-card','pull-gacha','replace-held','confirm-battle','confirm-investigation'].includes(action)&&!resolvingAutoBuyCapacity){
+    prefShowModal('ターン処理中','47都道府県のAI対戦と決算処理を行っています。二重処理を防ぐため、完了するまでカードの購入・出品・ガチャ利用・コマンド変更はできません。マジックの自動購入上限に関する選択だけは続行できます。',[{label:'閉じる',action:'close-modal',style:'primary'}]);return;
   }
   if(action==='new-game'){
     if(campaignState&&!campaignState.gameOver){prefShowModal('最初からやり直す', '現在のゲーム進行データを消去して、新しいゲームを開始しますか？<p class="text-xs text-slate-400 mt-2">所持資金・所有カード・市場・ランキング・戦績・調査結果はリセットされます。作成済みカード、プレイヤー名、ライバルプロフィール設定は削除されません。</p>',[{label:'キャンセル',action:'close-modal'},{label:'初期化して開始',action:'confirm-new-game',style:'danger'}]);}
@@ -1900,7 +2051,7 @@ async function prefHandleClick(action,id,button) {
   if(action==='buy-card'){prefConfirmPurchaseDialog(id);return;}
   if(action==='confirm-buy-card'){await prefBuyCard(id);return;}
   if(action==='pull-gacha'){await prefPullGacha(id);return;}
-  if(action==='replace-held'){prefCommitReplace(id);return;}
+  if(action==='replace-held'){await prefCommitReplace(id);return;}
   if(action==='next-year'){await prefNextYear();return;}
 }
 document.addEventListener('click',event=>{
@@ -1943,7 +2094,13 @@ async function prefResumePendingTurn() {
   if(!campaignState)return;
   if(campaignState.gameOver){prefShowGameOverModal();return;}
   if(campaignState.yearReview){prefShowYearReview();return;}
-  if(campaignState.pendingAcquisition){prefSyncCampaignClones();prefShowReplaceModal();}
+  if(campaignState.pendingAcquisition){prefSyncCampaignClones();prefShowReplaceModal();return;}
+  if(campaignState.pendingAcquisitionQueue?.length){prefRenderAll();prefStartNextQueuedAcquisition();return;}
+  if(campaignState.turnProcessing?.stage==='awaiting-capacity'){
+    const tx=campaignState.turnProcessing;const action=tx.resumePlayerAction||tx.actions?.[PREF_PLAYER_ID];
+    if(action){tx.stage='matching';delete tx.resumePlayerAction;await prefSave();await prefStartTurnAfterAutoBuy(action,tx);}else prefRenderDashboard();
+    return;
+  }
   if(campaignState.turnProcessing){prefRenderDashboard();await prefContinueTurn();return;}
   prefRenderAll();
 }

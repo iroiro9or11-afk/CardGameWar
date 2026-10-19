@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.15</title>
+  <title>都道府県カード戦争 v1.0.16</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -176,6 +176,12 @@
     }
   </style>
 
+<style>
+@keyframes prefGachaGlow { 0%,100% { transform:scale(.92) rotate(-8deg); filter:drop-shadow(0 0 5px rgba(167,139,250,.5)); opacity:.75; } 50% { transform:scale(1.12) rotate(8deg); filter:drop-shadow(0 0 24px rgba(251,191,36,.95)); opacity:1; } }
+@keyframes prefGachaLoad { from { width:0%; } to { width:100%; } }
+.pref-gacha-orb { color:#fef3c7; animation:prefGachaGlow 1s ease-in-out infinite; }
+.pref-gacha-progress { background:linear-gradient(90deg,#8b5cf6,#f59e0b,#fef3c7); animation:prefGachaLoad 1.45s linear forwards; }
+</style>
 </head>
 <body class="bg-slate-950 text-slate-100 font-sans min-h-screen flex flex-col justify-between select-none">
 
@@ -301,7 +307,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.15</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.16</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -370,8 +376,8 @@
 
     <!-- カードホルダー -->
     <section id="view-pref-holder" class="view-section hidden space-y-4">
-      <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-xl sm:text-2xl font-black text-cyan-200">🎴 カードホルダー</h2><p class="text-xs text-slate-400 mt-1">キャラカードは最大10枚、マジックカードは種類ごとに1枚まで。</p></div><button onclick="switchView('prefecture')" class="px-4 py-2 bg-slate-800 rounded-lg text-xs font-bold">ゲームへ戻る</button></div>
-      <div class="flex flex-wrap gap-2"><button data-pref-action="holder-tab-unit" class="px-4 py-2 rounded-lg bg-amber-600 text-xs font-black">キャラカード <span id="pref-holder-unit-count">0/10</span></button><button data-pref-action="holder-tab-magic" class="px-4 py-2 rounded-lg bg-slate-700 text-xs font-black">マジックカード <span id="pref-holder-magic-count">0</span></button><button data-pref-action="holder-tab-autobuy" class="px-4 py-2 rounded-lg bg-slate-700 text-xs font-black">🤖 自動購入設定</button></div>
+      <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-xl sm:text-2xl font-black text-cyan-200">🎴 カードホルダー</h2><p class="text-xs text-slate-400 mt-1">キャラカードは最大10枚、マジックカードは同じ種類を重複所持できず、最大50枚。</p></div><button onclick="switchView('prefecture')" class="px-4 py-2 bg-slate-800 rounded-lg text-xs font-bold">ゲームへ戻る</button></div>
+      <div class="flex flex-wrap gap-2"><button data-pref-action="holder-tab-unit" class="px-4 py-2 rounded-lg bg-amber-600 text-xs font-black">キャラカード <span id="pref-holder-unit-count">0/10</span></button><button data-pref-action="holder-tab-magic" class="px-4 py-2 rounded-lg bg-slate-700 text-xs font-black">マジックカード <span id="pref-holder-magic-count">0/50</span></button><button data-pref-action="holder-tab-autobuy" class="px-4 py-2 rounded-lg bg-slate-700 text-xs font-black">🤖 自動購入設定</button></div>
       <div id="pref-holder-actions" class="flex flex-wrap gap-2"></div><div id="pref-holder-list" class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-2 sm:gap-3"></div>
     </section>
 
@@ -389,7 +395,7 @@
     <!-- ガチャ -->
     <section id="view-pref-gacha" class="view-section hidden space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-xl sm:text-2xl font-black text-violet-200">✨ カードガチャ</h2><p class="text-xs text-slate-400 mt-1">カード作成時に設定した価値で市場に出品されます。購入費用はターンを消費しません。</p></div><button onclick="switchView('prefecture')" class="px-4 py-2 bg-slate-800 rounded-lg text-xs font-bold">ゲームへ戻る</button></div>
-      <div id="pref-gacha-pool-counts" class="grid grid-cols-5 gap-2"></div>
+      <div id="pref-gacha-pool-counts" class="grid grid-cols-3 gap-2"></div>
       <div id="pref-gacha-cards" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div><p id="pref-gacha-note" class="text-xs text-slate-400 leading-relaxed"></p>
     </section>
 
@@ -901,7 +907,7 @@
     <div id="pref-modal" class="fixed inset-0 z-[120] hidden items-center justify-center bg-black/85 backdrop-blur-sm p-3"><div class="w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-2xl border-2 border-amber-500/60 bg-slate-950 shadow-2xl"><div class="flex items-center justify-between gap-3 border-b border-slate-800 p-4"><h3 id="pref-modal-title" class="text-lg font-black text-amber-200">確認</h3><button id="pref-modal-close-btn" data-pref-action="close-modal" class="px-3 py-1 bg-slate-800 rounded-lg text-xs font-bold">閉じる</button></div><div id="pref-modal-body" class="p-4"></div><div id="pref-modal-footer" class="flex flex-wrap justify-end gap-2 border-t border-slate-800 p-4"></div></div></div>
 
     <!-- 大型カード詳細表示モーダル -->
-    <div id="card-detail-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center hidden p-2 sm:p-4">
+    <div id="card-detail-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center hidden p-2 sm:p-4" style="z-index: 140;">
       <div class="bg-slate-900 border-2 border-amber-500/80 rounded-2xl w-full max-w-4xl max-h-[95vh] flex flex-col p-5 sm:p-7 space-y-5 shadow-2xl relative overflow-hidden">
         <div class="flex justify-between items-center border-b border-slate-800 pb-2">
           <h3 class="font-extrabold text-amber-400 text-lg sm:text-xl" id="detail-card-title">カード詳細</h3>
