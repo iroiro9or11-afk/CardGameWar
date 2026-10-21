@@ -1,5 +1,5 @@
 /*
- * 都道府県カード戦争 v1.0.25 - カード性能検証ラボ
+ * 都道府県カード戦争 v1.0.26 - カード性能検証ラボ
  * Uses the existing battle engine in isolated, temporary headless battles.
  * Results are intentionally memory-only and never saved to IndexedDB/campaign state.
  */
@@ -49,6 +49,51 @@
     4: { min: 30_000_000, max: 150_000_000 },
     5: { min: 150_000_000, max: 500_000_000 }
   };
+
+  // The user's rank-specific valuation curve. Values are yen; win rates are fractions.
+  // The intervals between the five anchor points are filled by linear interpolation.
+  const LAB_VALUE_CURVES = {
+    3: [
+      { rate: 0.30, value: 1_000_000 },
+      { rate: 0.40, value: 3_000_000 },
+      { rate: 0.50, value: 5_000_000 },
+      { rate: 0.60, value: 10_000_000 },
+      { rate: 0.70, value: 30_000_000 }
+    ],
+    4: [
+      { rate: 0.30, value: 30_000_000 },
+      { rate: 0.40, value: 45_000_000 },
+      { rate: 0.50, value: 80_000_000 },
+      { rate: 0.60, value: 135_000_000 },
+      { rate: 0.70, value: 150_000_000 }
+    ],
+    5: [
+      { rate: 0.30, value: 150_000_000 },
+      { rate: 0.40, value: 250_000_000 },
+      { rate: 0.50, value: 300_000_000 },
+      { rate: 0.60, value: 400_000_000 },
+      { rate: 0.70, value: 500_000_000 }
+    ]
+  };
+
+  function labEstimateValue(stars, winRate) {
+    const curve = LAB_VALUE_CURVES[Number(stars)];
+    if (!curve || !curve.length) return null;
+    const rate = Number.isFinite(Number(winRate)) ? Number(winRate) : 0;
+    if (rate <= curve[0].rate) return curve[0].value;
+    const last = curve[curve.length - 1];
+    if (rate >= last.rate) return last.value;
+    for (let i = 1; i < curve.length; i++) {
+      const upper = curve[i];
+      if (rate <= upper.rate) {
+        const lower = curve[i - 1];
+        const progress = (rate - lower.rate) / (upper.rate - lower.rate);
+        const interpolated = lower.value + (upper.value - lower.value) * progress;
+        return Math.round(interpolated / 10_000) * 10_000;
+      }
+    }
+    return last.value;
+  }
 
   const labOriginalRenderBattleState = renderBattleState;
   renderBattleState = function (...args) {
@@ -590,8 +635,7 @@
     const combinedScore = labClamp(absoluteScore * 0.70 + relativeScore * 0.30, 0, 100);
     const stars = labStars(targetCard);
     const range = LAB_VALUE_RANGES[stars] || null;
-    const valueProgress = labClamp((winRate - 0.30) / 0.40, 0, 1);
-    const value = range ? Math.round((range.min + (range.max - range.min) * valueProgress) / 10_000) * 10_000 : null;
+    const value = labEstimateValue(stars, winRate);
     const confidence = uniqueEnemyRosters >= 30 && sameRankCount >= 8 ? '比較的高い' : uniqueEnemyRosters >= 10 && sameRankCount >= 4 ? '標準' : '限定的';
     const confidenceFactor = confidence === '比較的高い' ? 0.06 : confidence === '標準' ? 0.12 : 0.22;
     const margin = range ? Math.round((range.max - range.min) * confidenceFactor / 10_000) * 10_000 : null;
@@ -683,7 +727,7 @@
     const imgHtml = img ? `<img src="${labEsc(img)}" alt="${labEsc(card.name)}" class="w-20 h-28 sm:w-24 sm:h-32 rounded-lg border border-violet-500/50 object-cover bg-slate-950" onerror="this.style.display='none'">` : `<div class="w-20 h-28 sm:w-24 sm:h-32 flex items-center justify-center rounded-lg border border-violet-500/50 bg-slate-950 text-3xl">⚔️</div>`;
     const valueHtml = summary.value == null
       ? `<div class="text-2xl sm:text-3xl font-black text-amber-200">金額評価対象外</div><p class="text-xs text-slate-400 mt-1">推定金額帯は★3〜★5に設定されています。戦闘性能の結果は下記に表示します。</p>`
-      : `<div class="text-3xl sm:text-4xl font-black text-amber-200">${labFormatYen(summary.value)}</div><div class="text-xs sm:text-sm text-slate-300 mt-2">参考範囲：${labFormatYen(summary.interval.min)}〜${labFormatYen(summary.interval.max)}</div><p class="text-[10px] text-slate-400 mt-2">勝率50%でランク帯の価値中央値、30%以下で下限、70%以上で上限。</p>`;
+      : `<div class="text-3xl sm:text-4xl font-black text-amber-200">${labFormatYen(summary.value)}</div><div class="text-xs sm:text-sm text-slate-300 mt-2">参考範囲：${labFormatYen(summary.interval.min)}〜${labFormatYen(summary.interval.max)}</div><p class="text-[10px] text-slate-400 mt-2">勝率30%以下・40%・50%・60%・70%以上の指定基準点を、区間ごとに直線補間して算出。</p>`;
     const skillRows = (Array.isArray(card?.skills) ? card.skills : [])
       .map((skill, index) => ({ skill, index }))
       .filter(({ skill }) => skill?.type === 'active')
@@ -779,8 +823,7 @@
     let interval = null;
     let confidence = 'データなし';
     if (range && count > 0) {
-      const valueProgress = labClamp((winRate - 0.30) / 0.40, 0, 1);
-      value = Math.round((range.min + (range.max - range.min) * valueProgress) / 10_000) * 10_000;
+      value = labEstimateValue(stars, winRate);
       const uniqueEnemyRosters = stats.opponentRosters.size;
       confidence = uniqueEnemyRosters >= 30 && sameRankCount >= 8 ? '比較的高い' : uniqueEnemyRosters >= 10 && sameRankCount >= 4 ? '標準' : '限定的';
       const confidenceFactor = confidence === '比較的高い' ? 0.06 : confidence === '標準' ? 0.12 : 0.22;
@@ -865,7 +908,7 @@
       </section>
       ${status}
       ${bulkApplyButton ? `<section class="rounded-xl border border-amber-500/40 bg-amber-950/10 p-3 sm:p-4">${bulkApplyButton}</section>` : ''}
-      <section class="rounded-xl border border-slate-800 bg-slate-900 p-2 sm:p-4"><div class="flex flex-wrap justify-between items-end gap-2 px-1 pb-3"><h4 class="text-base font-black text-cyan-200">勝率ランキング</h4><p class="text-[10px] text-slate-400">勝率順。同率時は勝ち点率、参加回数、名前順で整列</p></div><div class="overflow-x-auto"><table class="w-full text-left text-xs"><thead class="bg-slate-950 text-[10px] text-slate-400"><tr><th class="px-3 py-3 text-center">順位</th><th class="px-3 py-3">キャラ</th><th class="px-3 py-3 text-right">参加試合数</th><th class="px-3 py-3 text-right">勝率</th><th class="px-3 py-3 text-right">戦績</th><th class="px-3 py-3 text-right">推定価値／操作</th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="px-3 py-8 text-center text-slate-400">まだ参加したキャラがありません。</td></tr>`}</tbody></table></div><p class="text-[10px] text-slate-500 mt-3">参加試合数は、そのキャラが所属した有効な対戦での出場回数です。両陣営のカードIDに重複がある編成は無効試合として再抽選し、試合数・勝敗には加算しません。勝率＝勝利数 ÷ 出場回数。引き分けは勝利数に含めません。推定価値は勝率50%をランク帯の中央値、30%以下を下限、70%以上を上限として算出します。</p></section>
+      <section class="rounded-xl border border-slate-800 bg-slate-900 p-2 sm:p-4"><div class="flex flex-wrap justify-between items-end gap-2 px-1 pb-3"><h4 class="text-base font-black text-cyan-200">勝率ランキング</h4><p class="text-[10px] text-slate-400">勝率順。同率時は勝ち点率、参加回数、名前順で整列</p></div><div class="overflow-x-auto"><table class="w-full text-left text-xs"><thead class="bg-slate-950 text-[10px] text-slate-400"><tr><th class="px-3 py-3 text-center">順位</th><th class="px-3 py-3">キャラ</th><th class="px-3 py-3 text-right">参加試合数</th><th class="px-3 py-3 text-right">勝率</th><th class="px-3 py-3 text-right">戦績</th><th class="px-3 py-3 text-right">推定価値／操作</th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="px-3 py-8 text-center text-slate-400">まだ参加したキャラがありません。</td></tr>`}</tbody></table></div><p class="text-[10px] text-slate-500 mt-3">参加試合数は、そのキャラが所属した有効な対戦での出場回数です。両陣営のカードIDに重複がある編成は無効試合として再抽選し、試合数・勝敗には加算しません。勝率＝勝利数 ÷ 出場回数。引き分けは勝利数に含めません。推定価値はランク別の指定基準（勝率30%以下・40%・50%・60%・70%以上）を区間ごとに直線補間して算出します。</p></section>
       <div class="flex flex-wrap gap-2"><button type="button" onclick="resetPerformanceLabReport()" class="px-4 py-3 bg-violet-700 hover:bg-violet-600 rounded-xl text-sm font-black">別のランク・カードを評価</button><button type="button" onclick="switchView('deck')" class="px-4 py-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-sm font-bold">作成カード一覧へ</button></div>`;
     report.dataset.batchRank = String(rank);
     report.classList.remove('hidden');
