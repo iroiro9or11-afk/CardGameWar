@@ -1,5 +1,5 @@
 /*
- * 都道府県カード戦争 v1.0.21 - カード性能検証ラボ
+ * 都道府県カード戦争 v1.0.22 - カード性能検証ラボ
  * Uses the existing battle engine in isolated, temporary headless battles.
  * Results are intentionally memory-only and never saved to IndexedDB/campaign state.
  */
@@ -453,7 +453,11 @@
         targetHpRatio: targetUnit && Number(targetUnit.maxHp) > 0 ? labClamp(Number(targetUnit.currentHp) / Number(targetUnit.maxHp), 0, 1) : 0,
         target: { ...match.target },
         sides: { player: { ...match.sides.player }, enemy: { ...match.sides.enemy } },
-        opponentRosterKey: match.opponentRosterKey
+        opponentRosterKey: match.opponentRosterKey,
+        playerRosterIds: playerIds.map(String),
+        enemyRosterIds: enemyIds.map(String),
+        playerRosterKey: playerIds.map(String).sort().join('|'),
+        enemyRosterKey: enemyIds.map(String).sort().join('|')
       };
     } finally {
       labCurrentMatch = null;
@@ -657,48 +661,112 @@
     }
   }
 
-  function labSetBatchProgress(overallDone, totalBattles, card, cardDone, cardIndex, cardCount) {
-    const pct = totalBattles > 0 ? Math.round(overallDone / totalBattles * 100) : 0;
+  function labNewBatchCardStats(card) {
+    return {
+      card,
+      games: 0,
+      wins: 0,
+      draws: 0,
+      losses: 0,
+      opponentRosters: new Set()
+    };
+  }
+
+  function labRecordBatchAppearance(stats, winner, side, opponentRosterKey) {
+    if (!stats) return;
+    stats.games++;
+    if (winner === 'draw') stats.draws++;
+    else if (winner === side) stats.wins++;
+    else stats.losses++;
+    if (opponentRosterKey) stats.opponentRosters.add(opponentRosterKey);
+  }
+
+  function labBatchSummary(card, stats, sameRankCount) {
+    const count = stats.games;
+    const winRate = count ? stats.wins / count : 0;
+    const winPointRate = count ? (stats.wins + stats.draws * 0.5) / count : 0;
+    const stars = labStars(card);
+    const range = LAB_VALUE_RANGES[stars] || null;
+    let value = null;
+    let interval = null;
+    let confidence = 'データなし';
+    if (range && count > 0) {
+      const valueProgress = labClamp((winRate - 0.30) / 0.40, 0, 1);
+      value = Math.round((range.min + (range.max - range.min) * valueProgress) / 10_000) * 10_000;
+      const uniqueEnemyRosters = stats.opponentRosters.size;
+      confidence = uniqueEnemyRosters >= 30 && sameRankCount >= 8 ? '比較的高い' : uniqueEnemyRosters >= 10 && sameRankCount >= 4 ? '標準' : '限定的';
+      const confidenceFactor = confidence === '比較的高い' ? 0.06 : confidence === '標準' ? 0.12 : 0.22;
+      const margin = Math.round((range.max - range.min) * confidenceFactor / 10_000) * 10_000;
+      interval = { min: Math.max(range.min, value - margin), max: Math.min(range.max, value + margin) };
+    }
+    return {
+      stars, wins: stats.wins, draws: stats.draws, losses: stats.losses,
+      winRate, winPointRate, count, value, interval, confidence,
+      uniqueEnemyRosters: stats.opponentRosters.size, sameRankCount
+    };
+  }
+
+  function labSetBatchProgress(totalBattles, rank, candidates, statsById) {
+    const goal = candidates.length * LAB_TOTAL_BATTLES;
+    const credited = candidates.reduce((sum, card) => sum + Math.min(LAB_TOTAL_BATTLES, statsById.get(String(card.id))?.games || 0), 0);
+    const completed = candidates.filter(card => (statsById.get(String(card.id))?.games || 0) >= LAB_TOTAL_BATTLES).length;
+    const minimum = candidates.length ? Math.min(...candidates.map(card => statsById.get(String(card.id))?.games || 0)) : 0;
+    const pct = goal > 0 ? Math.round(credited / goal * 100) : 0;
     const bar = document.getElementById('performance-lab-progress-bar');
     const count = document.getElementById('performance-lab-progress-count');
     const percent = document.getElementById('performance-lab-progress-percent');
     const title = document.getElementById('performance-lab-progress-title');
     const description = document.getElementById('performance-lab-progress-description');
     if (bar) bar.style.width = `${pct}%`;
-    if (count) count.textContent = `このカード ${cardDone} / ${LAB_TOTAL_BATTLES} 戦　・　全体 ${overallDone.toLocaleString('ja-JP')} / ${totalBattles.toLocaleString('ja-JP')} 戦`;
+    if (count) count.textContent = `実施 ${totalBattles.toLocaleString('ja-JP')} 戦　・　150戦到達 ${completed} / ${candidates.length} 枚`;
     if (percent) percent.textContent = `${pct}%`;
-    if (title) title.textContent = `一括評価中：${card?.name || 'キャラカード'}（${cardIndex + 1} / ${cardCount} 枚目）`;
-    if (description) description.textContent = `ランク帯の登録キャラを使って1枚あたり150戦。マジックなし・最高ランクAI同士で評価しています。`;
+    if (title) title.textContent = `★${rank} 一括評価中（${completed} / ${candidates.length} 枚が150戦到達）`;
+    if (description) description.textContent = `試合に参加した対象キャラの回数をまとめて加算しています。現在の最少参加数：${minimum} / 150戦。全員が150戦以上になると終了します。`;
     const details = document.getElementById('performance-lab-tier-progress');
-    if (details) details.innerHTML = `<div class="rounded-lg border border-violet-400 bg-violet-950/50 p-3 col-span-3"><div class="text-xs font-black text-violet-200">ランク内一括評価</div><div class="text-lg font-black text-white mt-1">カード ${cardIndex + 1} / ${cardCount} 枚目</div><div class="text-xs text-slate-300 mt-1">${labEsc(card?.name || '')}：${cardDone} / ${LAB_TOTAL_BATTLES} 戦完了</div></div>`;
+    if (details) details.innerHTML = `<div class="rounded-lg border border-violet-400 bg-violet-950/50 p-3 col-span-3"><div class="text-xs font-black text-violet-200">ランク内一括評価</div><div class="text-lg font-black text-white mt-1">${completed} / ${candidates.length} 枚が150戦到達</div><div class="text-xs text-slate-300 mt-1">実施対戦数 ${totalBattles.toLocaleString('ja-JP')} 戦　・　最少参加数 ${minimum} / 150戦</div></div>`;
   }
 
-  function labRenderBatchReport(rank, entries, complete, candidateCount, currentIndex = candidateCount, currentCardDone = LAB_TOTAL_BATTLES) {
+  function labRenderBatchReport(rank, candidates, statsById, complete, totalBattles) {
     const report = document.getElementById('performance-lab-report');
     const progress = document.getElementById('performance-lab-progress-panel');
     if (!report) return;
-    const ordered = [...entries].sort((a, b) => b.summary.winRate - a.summary.winRate
-      || b.summary.winPointRate - a.summary.winPointRate
-      || b.summary.survivalRate - a.summary.survivalRate
-      || String(a.card.name || '').localeCompare(String(b.card.name || ''), 'ja'));
+    const sameRankCount = candidates.length;
+    const entries = candidates.map(card => ({
+      card,
+      summary: labBatchSummary(card, statsById.get(String(card.id)) || labNewBatchCardStats(card), sameRankCount)
+    }));
+    const ordered = [...entries].sort((a, b) => {
+      if (!a.summary.count && b.summary.count) return 1;
+      if (a.summary.count && !b.summary.count) return -1;
+      return b.summary.winRate - a.summary.winRate
+        || b.summary.winPointRate - a.summary.winPointRate
+        || b.summary.count - a.summary.count
+        || String(a.card.name || '').localeCompare(String(b.card.name || ''), 'ja');
+    });
+    const completedCount = entries.filter(entry => entry.summary.count >= LAB_TOTAL_BATTLES).length;
     const rows = ordered.map((entry, index) => {
       const summary = entry.summary;
       const rankMarks = `${'★'.repeat(rank)}${'☆'.repeat(5 - rank)}`;
-      const value = summary.value == null ? '対象外' : labFormatYen(summary.value);
-      return `<tr class="border-t border-slate-800"><td class="px-3 py-3 text-center font-black text-slate-300">${index + 1}</td><td class="px-3 py-3"><div class="font-black text-slate-100">${labEsc(entry.card.name || '名称未設定')}</div><div class="text-[10px] text-amber-300 mt-1">${rankMarks}</div></td><td class="px-3 py-3 text-right font-black text-cyan-200 whitespace-nowrap">${labPercent(summary.winRate)}</td><td class="px-3 py-3 text-right text-xs text-slate-300 whitespace-nowrap">${summary.wins}勝 ${summary.draws}分 ${summary.losses}敗</td><td class="px-3 py-3 text-right text-xs text-slate-300 whitespace-nowrap">${labFormatNumber(summary.averageDamageDealt)}</td><td class="px-3 py-3 text-right text-xs text-slate-300 whitespace-nowrap">${summary.averageKills.toFixed(2)}</td><td class="px-3 py-3 text-right text-xs text-slate-300 whitespace-nowrap">${labPercent(summary.survivalRate)}</td><td class="px-3 py-3 text-right text-xs text-amber-200 whitespace-nowrap">${value}</td></tr>`;
+      const value = summary.value == null ? '—' : labFormatYen(summary.value);
+      const winRate = summary.count ? labPercent(summary.winRate) : '—';
+      const participationStatus = summary.count >= LAB_TOTAL_BATTLES
+        ? `<span class="text-emerald-300">150戦到達</span>`
+        : `<span class="text-amber-300">${summary.count} / 150</span>`;
+      return `<tr class="border-t border-slate-800"><td class="px-3 py-3 text-center font-black text-slate-300">${index + 1}</td><td class="px-3 py-3"><div class="font-black text-slate-100">${labEsc(entry.card.name || '名称未設定')}</div><div class="text-[10px] text-amber-300 mt-1">${rankMarks}</div><div class="text-[10px] mt-1">${participationStatus}</div></td><td class="px-3 py-3 text-right text-xs text-slate-300 whitespace-nowrap">${summary.count.toLocaleString('ja-JP')}</td><td class="px-3 py-3 text-right font-black text-cyan-200 whitespace-nowrap">${winRate}</td><td class="px-3 py-3 text-right text-xs text-slate-300 whitespace-nowrap">${summary.wins}勝 ${summary.draws}分 ${summary.losses}敗</td><td class="px-3 py-3 text-right text-xs text-amber-200 whitespace-nowrap">${value}</td></tr>`;
     }).join('');
     const status = complete
-      ? `<div class="rounded-lg border border-emerald-700/50 bg-emerald-950/20 p-3 text-sm text-emerald-200">評価完了：${entries.length}枚すべて150戦を完了しました。勝率が高い順に表示しています。</div>`
-      : `<div class="rounded-lg border border-amber-700/50 bg-amber-950/20 p-3 text-sm text-amber-200">一括評価は中断されました。150戦を完了した${entries.length}枚のみランキングに含めています。現在のカードは${currentCardDone} / 150戦、全${candidateCount}枚中${Math.min(currentIndex + 1, candidateCount)}枚目まで処理中でした。未完了のカードは順位に含めていません。</div>`;
+      ? `<div class="rounded-lg border border-emerald-700/50 bg-emerald-950/20 p-3 text-sm text-emerald-200">評価完了：対象${entries.length}枚すべての参加試合数が150回以上になりました。合計${totalBattles.toLocaleString('ja-JP')}戦を実行しました。最後の対戦で150回を超えたキャラも、その実数のまま表示しています。</div>`
+      : `<div class="rounded-lg border border-amber-700/50 bg-amber-950/20 p-3 text-sm text-amber-200">一括評価は中断されました。${completedCount} / ${entries.length}枚が150回以上に到達しています。実施${totalBattles.toLocaleString('ja-JP')}戦。未到達カードの勝率は途中経過なので参考値です。</div>`;
+    const playedAppearances = entries.reduce((sum, entry) => sum + entry.summary.count, 0);
     report.innerHTML = `
       <section class="rounded-2xl border border-violet-500/50 bg-gradient-to-br from-slate-900 via-slate-950 to-violet-950 p-4 sm:p-6 shadow-xl">
         <div class="text-[10px] font-black tracking-widest text-violet-300">BATCH PERFORMANCE RANKING</div>
         <h3 class="text-xl sm:text-2xl font-black text-white mt-1">★${rank}キャラ 一括評価ランキング</h3>
-        <p class="text-xs text-slate-300 mt-2">各カードをチームに入れて150戦ずつ検証。勝率の高い順です。チームは従来ルールに合わせ、★3・★4は同ランク5体、★5は★5を1体＋★4を4体で編成。作成カード一覧の登録キャラのみを使用し、マジックは使いません。</p>
-        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-4">${labMetricCard('評価対象', `${entries.length} / ${candidateCount} 枚`, '各カード150戦完了分のみ')}${labMetricCard('完了した対戦数', labFormatNumber(entries.length * LAB_TOTAL_BATTLES), 'カード間で対戦条件は共通')}${labMetricCard('ランク', `★${rank}`, '最高ランクAI同士')}</div>
+        <p class="text-xs text-slate-300 mt-2">ランク帯のランダム対戦を共通で実施し、各対戦のチームに参加した対象キャラの試合数・勝敗を個別に加算します。全キャラが150回以上参加した時点で終了します。★3・★4は同ランク5体、★5は★5を1体＋★4を4体の編成です。登録済み作成カードのみを使い、マジックは使いません。</p>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-4">${labMetricCard('評価対象', `${entries.length} 枚`, '選択ランクの作成キャラ')}${labMetricCard('実施対戦数', labFormatNumber(totalBattles), '共有した戦闘シミュレーション数')}${labMetricCard('150回到達', `${completedCount} / ${entries.length} 枚`, `参加回数合計 ${labFormatNumber(playedAppearances)}`)}</div>
       </section>
       ${status}
-      <section class="rounded-xl border border-slate-800 bg-slate-900 p-2 sm:p-4"><div class="flex flex-wrap justify-between items-end gap-2 px-1 pb-3"><h4 class="text-base font-black text-cyan-200">勝率ランキング</h4><p class="text-[10px] text-slate-400">同率時は勝ち点率・生存率・名前順で整列</p></div><div class="overflow-x-auto"><table class="w-full text-left text-xs"><thead class="bg-slate-950 text-[10px] text-slate-400"><tr><th class="px-3 py-3 text-center">順位</th><th class="px-3 py-3">キャラ</th><th class="px-3 py-3 text-right">勝率</th><th class="px-3 py-3 text-right">戦績</th><th class="px-3 py-3 text-right">平均与ダメ</th><th class="px-3 py-3 text-right">平均撃破</th><th class="px-3 py-3 text-right">生存率</th><th class="px-3 py-3 text-right">推定価値</th></tr></thead><tbody>${rows || `<tr><td colspan="8" class="px-3 py-8 text-center text-slate-400">150戦を完了したカードはありません。</td></tr>`}</tbody></table></div><p class="text-[10px] text-slate-500 mt-3">勝率＝勝利数 ÷ 試合数。引き分けは勝利数に含めず、同率時の補助比較としてのみ勝ち点率（勝利1・引き分け0.5）を使います。推定価値は勝率50%をランク帯の中央値、30%以下を下限、70%以上を上限として算出します。</p></section>
+      <section class="rounded-xl border border-slate-800 bg-slate-900 p-2 sm:p-4"><div class="flex flex-wrap justify-between items-end gap-2 px-1 pb-3"><h4 class="text-base font-black text-cyan-200">勝率ランキング</h4><p class="text-[10px] text-slate-400">勝率順。同率時は勝ち点率、参加回数、名前順で整列</p></div><div class="overflow-x-auto"><table class="w-full text-left text-xs"><thead class="bg-slate-950 text-[10px] text-slate-400"><tr><th class="px-3 py-3 text-center">順位</th><th class="px-3 py-3">キャラ</th><th class="px-3 py-3 text-right">参加試合数</th><th class="px-3 py-3 text-right">勝率</th><th class="px-3 py-3 text-right">戦績</th><th class="px-3 py-3 text-right">推定価値</th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="px-3 py-8 text-center text-slate-400">まだ参加したキャラがありません。</td></tr>`}</tbody></table></div><p class="text-[10px] text-slate-500 mt-3">参加試合数は、そのキャラがプレイヤー側または相手側のデッキに入っていた回数です。同じキャラが両チームに登場した場合は、それぞれのチームでの結果を1回ずつ記録します。勝率＝勝利数 ÷ 参加回数。引き分けは勝利数に含めません。推定価値は勝率50%をランク帯の中央値、30%以下を下限、70%以上を上限として算出します。</p></section>
       <div class="flex flex-wrap gap-2"><button type="button" onclick="resetPerformanceLabReport()" class="px-4 py-3 bg-violet-700 hover:bg-violet-600 rounded-xl text-sm font-black">別のランク・カードを評価</button><button type="button" onclick="switchView('deck')" class="px-4 py-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-sm font-bold">作成カード一覧へ</button></div>`;
     report.dataset.batchRank = String(rank);
     report.classList.remove('hidden');
@@ -720,7 +788,7 @@
       return;
     }
     try {
-      // Verify the team constraints before starting a long batch.
+      // Check that this rank has enough registered cards to build the requested team format.
       for (const card of candidates) {
         labBuildPlayerRoster(card, allUnits);
         labBuildEnemyRoster(card, allUnits);
@@ -730,6 +798,7 @@
       return;
     }
 
+    const statsById = new Map(candidates.map(card => [String(card.id), labNewBatchCardStats(card)]));
     labRunning = true;
     labCancelRequested = false;
     const previousRunLabFlag = window.__performanceLabRunning;
@@ -745,40 +814,49 @@
     const cancelButton = document.getElementById('performance-lab-cancel');
     if (cancelButton) { cancelButton.disabled = false; cancelButton.textContent = '一括評価を中断'; }
 
-    const totalBattles = candidates.length * LAB_TOTAL_BATTLES;
-    const entries = [];
-    let overallDone = 0;
-    let currentIndex = 0;
-    let currentCardDone = 0;
+    const sameRankCount = candidates.length;
+    let totalBattles = 0;
+    const allReachedTarget = () => candidates.every(card => (statsById.get(String(card.id))?.games || 0) >= LAB_TOTAL_BATTLES);
     try {
-      labSetBatchProgress(0, totalBattles, candidates[0], 0, 0, candidates.length);
+      labSetBatchProgress(totalBattles, rank, candidates, statsById);
       await labYieldToBrowser();
-      for (currentIndex = 0; currentIndex < candidates.length; currentIndex++) {
-        const targetCard = candidates[currentIndex];
-        const sameRankCount = allUnits.filter(card => labStars(card) === rank).length;
-        const results = [];
-        const uniqueRosters = new Set();
-        currentCardDone = 0;
-        for (let battleIndex = 0; battleIndex < LAB_TOTAL_BATTLES; battleIndex++) {
-          if (labCancelRequested) {
-            labRenderBatchReport(rank, entries, false, candidates.length, currentIndex, currentCardDone);
-            return;
-          }
-          const playerRoster = labBuildPlayerRoster(targetCard, allUnits);
-          const enemyRoster = labBuildEnemyRoster(targetCard, allUnits);
-          const row = await labPlayBattle(targetCard, 'random', overallDone, playerRoster, enemyRoster, []);
-          results.push(row);
-          uniqueRosters.add(row.opponentRosterKey);
-          currentCardDone++;
-          overallDone++;
-          labSetBatchProgress(overallDone, totalBattles, targetCard, currentCardDone, currentIndex, candidates.length);
-          await labYieldToBrowser();
+      while (!allReachedTarget()) {
+        if (labCancelRequested) {
+          labRenderBatchReport(rank, candidates, statsById, false, totalBattles);
+          return;
         }
-        // A card joins the ranking only after it has reached the full 150 battles.
-        const summary = labScoreAndValue(targetCard, results, uniqueRosters.size, sameRankCount);
-        entries.push({ card: targetCard, summary });
+
+        // Pick a different focal card per battle, then give credit to every selected-rank
+        // character appearing in either team's deck. This avoids running 150 isolated
+        // battles for every single card.
+        const focalCard = candidates[Math.floor(Math.random() * candidates.length)];
+        const playerRoster = labBuildPlayerRoster(focalCard, allUnits);
+        let enemyRoster;
+        if (rank !== 5 && candidates.length >= 10) {
+          // Keep both sides distinct when the pool allows it; smaller pools retain the
+          // previously supported same-rank sampling behavior.
+          enemyRoster = labPick(candidates, 5, playerRoster.map(card => card.id));
+        } else {
+          enemyRoster = labBuildEnemyRoster(focalCard, allUnits);
+        }
+        const row = await labPlayBattle(focalCard, 'random', totalBattles, playerRoster, enemyRoster, []);
+        totalBattles++;
+        const playerRosterKey = row.playerRosterKey || row.playerRosterIds.map(String).sort().join('|');
+        const enemyRosterKey = row.enemyRosterKey || row.enemyRosterIds.map(String).sort().join('|');
+
+        for (const cardId of row.playerRosterIds) {
+          const stats = statsById.get(String(cardId));
+          if (stats) labRecordBatchAppearance(stats, row.winner, 'player', enemyRosterKey);
+        }
+        for (const cardId of row.enemyRosterIds) {
+          const stats = statsById.get(String(cardId));
+          if (stats) labRecordBatchAppearance(stats, row.winner, 'enemy', playerRosterKey);
+        }
+
+        labSetBatchProgress(totalBattles, rank, candidates, statsById);
+        await labYieldToBrowser();
       }
-      labRenderBatchReport(rank, entries, true, candidates.length);
+      labRenderBatchReport(rank, candidates, statsById, true, totalBattles);
     } catch (error) {
       console.error('[Performance Lab] Batch verification failed:', error);
       if (report) {
