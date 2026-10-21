@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.16</title>
+  <title>都道府県カード戦争 v1.0.17</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -307,7 +307,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.16</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.17</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -1187,6 +1187,25 @@
     function durationActive(value) { const n=Number(value); return n === -1 || n > 0; }
     function normalizeDuration(value) { const n=Number(value); return n === -1 ? -1 : Math.max(1, Number.isFinite(n)&&n>0?n:1); }
     function durationText(value, suffix=true) { return Number(value)===-1 ? '永続' : `${Math.max(1,Number(value)||1)}${suffix?'ターン':''}`; }
+    const RANDOM_CLEAR_EFFECT_TYPES = new Set(['clear_random_buffs','clear_random_debuffs']);
+    function isRandomClearCountEffect(type) { return RANDOM_CLEAR_EFFECT_TYPES.has(String(type || '')); }
+    function randomClearCount(value) { const n=Number(value); return Math.max(1, Math.floor(Number.isFinite(n) ? n : 1)); }
+    // バフ／デバフの各効果インスタンスから、指定個数を重複なしでランダムに除去する。
+    // バフ配列に旧形式のデータが混ざっている場合は、全解除処理と同じく明示的な非バフ source を保持する。
+    function removeRandomEffectEntries(target, arrayName, requestedCount, eligible = () => true) {
+      if (!target) return 0;
+      const entries = Array.isArray(target[arrayName]) ? target[arrayName] : [];
+      const indices = entries.map((entry, index) => ({ entry, index }))
+        .filter(item => eligible(item.entry, item.index)).map(item => item.index);
+      const amount = Math.min(indices.length, randomClearCount(requestedCount));
+      for (let i = 0; i < amount; i++) {
+        const j = i + Math.floor(Math.random() * (indices.length - i));
+        [indices[i], indices[j]] = [indices[j], indices[i]];
+      }
+      const removed = new Set(indices.slice(0, amount));
+      target[arrayName] = entries.filter((entry, index) => !removed.has(index));
+      return amount;
+    }
     function statusName(type) { return STATUS_DEFS[type]?.name || type || '状態異常'; }
     function statusOptions(selected='') {
       return Object.entries(STATUS_DEFS).map(([k,v]) => `<option value="${k}" ${selected===k?'selected':''}>${v.name}</option>`).join('');
@@ -1476,6 +1495,8 @@
         case "damage_cut_ratio": return `受けるダメージを${-Number(eff.val||0) >= 0 ? "+" : ""}${-Number(eff.val||0)}%(${Number(eff.val||0) > 0 ? "バフ" : "デバフ"})${durText}`;
         case "clear_buffs": return `バフを全て解除`;
         case "clear_debuffs": return `デバフを全て解除`;
+        case "clear_random_buffs": return `ランダムで${randomClearCount(eff.val)}個のバフを解除`;
+        case "clear_random_debuffs": return `ランダムで${randomClearCount(eff.val)}個のデバフを解除`;
         case "heal_block": return `回復禁止(デバフ)${durText}`;
         case "skill_block": return `スキル使用禁止(デバフ)${durText}`;
         case "status_apply": return `${statusName(eff.status)}を付与${durText}`;
@@ -2065,7 +2086,7 @@
           <div class="bg-slate-900/80 p-2 rounded border border-slate-800 space-y-1">
             <span class="text-[9px] font-bold text-emerald-400">【メイン効果】</span>
             <div class="grid grid-cols-2 gap-1 mb-1">
-              <select class="${prefix}-main-eff-type bg-slate-800 text-[10px] rounded" onchange="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">
+              <select class="${prefix}-main-eff-type bg-slate-800 text-[10px] rounded" onchange="handleEffectTypeChange('${prefix}', 'main-eff', '${skillType}', ${isMagic})">
                 <option value="dmg_atk_ratio">攻撃力×○％ダメージ</option>
                 <option value="dmg_fixed">○の固定ダメージ</option>
                 <option value="dmg_fixed_pierce">○の固定貫通ダメージ（受けるダメージ増減・シールドを無視）</option>
@@ -2081,6 +2102,8 @@
                 <option value="mod_ap">APを○増加/減少</option>
                 <option value="clear_buffs">バフを全て解除</option>
                 <option value="clear_debuffs">デバフを全て解除</option>
+                <option value="clear_random_buffs">ランダムで○個のバフを解除</option>
+                <option value="clear_random_debuffs">ランダムで○個のデバフを解除</option>
                 <option value="heal_block">回復禁止(デバフ)</option>
                 <option value="skill_block">スキル使用禁止(デバフ)</option>
                 <option value="status_apply">(状態異常)を付与</option>
@@ -2123,7 +2146,7 @@
                 </div>
                 <div>
                   <span class="text-[8px] text-slate-400">追加効果の種別:</span>
-                  <select class="${prefix}-sub-eff-type bg-slate-800 text-[10px] rounded w-full" onchange="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">
+                  <select class="${prefix}-sub-eff-type bg-slate-800 text-[10px] rounded w-full" onchange="handleEffectTypeChange('${prefix}', 'sub-eff', '${skillType}', ${isMagic})">
                     <option value="dmg_atk_ratio">攻撃力×○％ダメージ</option>
                     <option value="dmg_fixed">○の固定ダメージ</option>
                     <option value="dmg_fixed_pierce">○の固定貫通ダメージ（受けるダメージ増減・シールドを無視）</option>
@@ -2139,6 +2162,8 @@
                     <option value="mod_ap">APを○増加/減少</option>
                     <option value="clear_buffs">バフを全て解除</option>
                     <option value="clear_debuffs">デバフを全て解除</option>
+                    <option value="clear_random_buffs">ランダムで○個のバフを解除</option>
+                    <option value="clear_random_debuffs">ランダムで○個のデバフを解除</option>
                     <option value="heal_block">回復禁止</option>
                     <option value="skill_block">スキル使用禁止</option>
                     <option value="status_apply">状態異常を付与</option>
@@ -2214,20 +2239,23 @@
         status: getVal(`${prefix}-target-cond-status`) || "poison"
       };
 
+      const mainEffectType = getVal(`${prefix}-main-eff-type`) || "dmg_atk_ratio";
+      const parsedMainEffectVal = parseInt(getVal(`${prefix}-main-eff-val`), 10);
       const mainEffect = {
-        type: getVal(`${prefix}-main-eff-type`) || "dmg_atk_ratio",
-        val: parseInt(getVal(`${prefix}-main-eff-val`)) || 100,
+        type: mainEffectType,
+        val: isRandomClearCountEffect(mainEffectType) ? randomClearCount(parsedMainEffectVal) : (Number.isFinite(parsedMainEffectVal) ? parsedMainEffectVal : 100),
         duration: getVal(`${prefix}-main-eff-duration-mode`) === "permanent" ? -1 : (parseInt(getVal(`${prefix}-main-eff-dur`)) || 1),
-
         status: getVal(`${prefix}-main-eff-status`) || "poison"
       };
 
       const hasSubEffect = !!isChecked(`${prefix}-has-sub`);
+      const subEffectType = getVal(`${prefix}-sub-eff-type`) || "heal_fixed";
+      const parsedSubEffectVal = parseInt(getVal(`${prefix}-sub-eff-val`), 10);
       const subEffect = {
         targetType: getVal(`${prefix}-sub-target-type`) || "same_main_target",
         targetCond: { type:getVal(`${prefix}-sub-target-cond-type`)||"none", val:parseInt(getVal(`${prefix}-sub-target-cond-val`))||0, attr:getVal(`${prefix}-sub-target-cond-attr`)||"炎", status:getVal(`${prefix}-sub-target-cond-status`)||"poison" },
-        type: getVal(`${prefix}-sub-eff-type`) || "heal_fixed",
-        val: parseInt(getVal(`${prefix}-sub-eff-val`)) || 0,
+        type: subEffectType,
+        val: isRandomClearCountEffect(subEffectType) ? randomClearCount(parsedSubEffectVal) : (Number.isFinite(parsedSubEffectVal) ? parsedSubEffectVal : 0),
         duration: getVal(`${prefix}-sub-eff-duration-mode`) === "permanent" ? -1 : (parseInt(getVal(`${prefix}-sub-eff-dur`)) || 1),
         status: getVal(`${prefix}-sub-eff-status`) || "poison",
         chance: clamp(parseInt(getVal(`${prefix}-sub-eff-chance`) ?? 100), 0, 100)
@@ -2242,7 +2270,39 @@
       return rawSkill;
     }
 
+    function handleEffectTypeChange(prefix, slot, skillType, isMagic = false) {
+      const selector = document.querySelector(`.${prefix}-${slot}-type`);
+      const valueInput = document.querySelector(`.${prefix}-${slot}-val`);
+      const oldType = selector?.dataset.lastEffectType || '';
+      const newType = selector?.value || '';
+      if (valueInput && isRandomClearCountEffect(newType) && !isRandomClearCountEffect(oldType)) valueInput.value = '1';
+      if (selector) selector.dataset.lastEffectType = newType;
+      updateSkillFormDisplay(prefix, skillType, isMagic);
+    }
+
+    function syncEffectValueInput(prefix, slot) {
+      const selector = document.querySelector(`.${prefix}-${slot}-type`);
+      const valueInput = document.querySelector(`.${prefix}-${slot}-val`);
+      if (!selector || !valueInput) return;
+      const type = selector.value;
+      selector.dataset.lastEffectType = type;
+      if (isRandomClearCountEffect(type)) {
+        valueInput.placeholder = '解除個数';
+        valueInput.min = '1';
+        valueInput.step = '1';
+        valueInput.title = type === 'clear_random_buffs' ? 'ランダムに解除するバフ効果の個数' : 'ランダムに解除するデバフ効果の個数';
+        if (valueInput.value === '' || !Number.isFinite(Number(valueInput.value)) || Number(valueInput.value) < 1) valueInput.value = '1';
+      } else {
+        valueInput.placeholder = '効果量';
+        valueInput.removeAttribute('min');
+        valueInput.removeAttribute('step');
+        valueInput.removeAttribute('title');
+      }
+    }
+
     function updateSkillFormDisplay(prefix, skillType, isMagic = false) {
+      syncEffectValueInput(prefix, 'main-eff');
+      syncEffectValueInput(prefix, 'sub-eff');
       const timingValue = document.querySelector(`.${prefix}-timing`)?.value || 'turn_start';
       const attackerAllowed = skillType === 'passive' && timingValue === 'damage_taken' && !isMagic;
       for (const suffix of ['target-type','sub-target-type']) {
@@ -2548,7 +2608,7 @@
         else if (String(type).startsWith('heal_')) categories.add('回復');
         else if (['status_apply'].includes(type)) categories.add('状態異常付与');
         else if (['status_remove','clear_statuses'].includes(type)) categories.add('状態異常解除');
-        else if (['clear_buffs','clear_debuffs'].includes(type)) categories.add('バフ・デバフ解除');
+        else if (['clear_buffs','clear_debuffs','clear_random_buffs','clear_random_debuffs'].includes(type)) categories.add('バフ・デバフ解除');
         else if (['mod_atk_ratio','mod_atk_val','damage_taken_ratio','mod_speed','mod_max_hp_val','heal_block','skill_block'].includes(type)) categories.add('強化・弱体');
         else if (type === 'mod_ap') categories.add('AP操作');
         else categories.add('その他');
@@ -5215,6 +5275,19 @@
         const weight = (effect.type === 'damage_cut_ratio' || effect.type === 'damage_taken_ratio') ? 18 : effect.type === 'mod_speed' ? 10 : 7;
         return ok({ value: Math.abs(val) * weight * (target.side === actor.side ? 1 : 0.8), kills: 0, damage: 0, healing: 0 });
       }
+      if (effect.type === 'clear_random_buffs') {
+        const before = target.currentHp;
+        const removed = removeRandomEffectEntries(target, 'buffs', effect.val, b => !b?.source || b.source === 'buff');
+        const delta = aiPlannerRefreshEffectiveMaxHp(target, false);
+        const killed = before > 0 && target.currentHp <= 0;
+        const baseValue = target.side !== actor.side ? 20 : -8;
+        return ok({ value: removed * baseValue + (killed ? 1300 : 0), kills: killed ? 1 : 0, damage: Math.max(0,before-target.currentHp), healing: 0, maxHpChange: delta.newMax-delta.oldMax, removedCount: removed });
+      }
+      if (effect.type === 'clear_random_debuffs') {
+        const removed = removeRandomEffectEntries(target, 'debuffs', effect.val);
+        const delta = aiPlannerRefreshEffectiveMaxHp(target, false);
+        return ok({ value: removed * (target.side === actor.side ? 18 : -5), kills: 0, damage: 0, healing: 0, maxHpChange: delta.newMax-delta.oldMax, removedCount: removed });
+      }
       if (effect.type === 'clear_buffs') {
         const before = target.currentHp;
         target.buffs = (target.buffs || []).filter(b => b.source && b.source !== 'buff');
@@ -6308,6 +6381,42 @@
         }
         logBattle(`❤️ ${target.name} の最大HPが ${Number(eff.val) >= 0 ? '+' : ''}${eff.val}変化！`);
         return {effect:`最大HP ${Number(eff.val) >= 0 ? '+' : ''}${eff.val}（${Number(eff.val) >= 0 ? 'バフ' : 'デバフ'}）`, result:`${target.name} 最大HP ${beforeMax}→${target.maxHp} / HP ${target.currentHp}/${target.maxHp}（${durationText(duration)}）`};
+      }
+
+      if (eff.type === "clear_random_buffs") {
+        const before = target.currentHp;
+        const requested = randomClearCount(eff.val);
+        const removed = removeRandomEffectEntries(target, 'buffs', requested, b => !b?.source || b.source === 'buff');
+        refreshEffectiveMaxHp(target, false);
+        if (target.currentHp < before) triggerPassiveEvent('hp_decrease', target);
+        if (target.currentHp <= 0 && before > 0) {
+          triggerPassiveEvent('death', target);
+          [...getActiveUnits(target.side === 'player' ? 'player' : 'enemy')].filter(u=>u!==target).forEach(u=>triggerPassiveEvent('ally_death',u));
+        }
+        if (removed > 0) {
+          logBattle(`✨ ${target.name} のバフをランダムに${removed}個解除した！（指定：${requested}個）`);
+          return {effect:`ランダムで${requested}個のバフを解除`, result:`${target.name} のバフを${removed}個解除`};
+        }
+        logBattle(`✨ ${target.name} には解除できるバフがなかった！`);
+        return {effect:`ランダムで${requested}個のバフを解除`, result:`${target.name} に解除可能なバフなし`};
+      }
+
+      if (eff.type === "clear_random_debuffs") {
+        const requested = randomClearCount(eff.val);
+        const removed = removeRandomEffectEntries(target, 'debuffs', requested);
+        const before = target.currentHp;
+        refreshEffectiveMaxHp(target, false);
+        if (target.currentHp < before) triggerPassiveEvent('hp_decrease', target);
+        if (target.currentHp <= 0 && before > 0) {
+          triggerPassiveEvent('death', target);
+          [...getActiveUnits(target.side === 'player' ? 'player' : 'enemy')].filter(u=>u!==target).forEach(u=>triggerPassiveEvent('ally_death',u));
+        }
+        if (removed > 0) {
+          logBattle(`✨ ${target.name} のデバフをランダムに${removed}個解除した！（指定：${requested}個）`);
+          return {effect:`ランダムで${requested}個のデバフを解除`, result:`${target.name} のデバフを${removed}個解除`};
+        }
+        logBattle(`✨ ${target.name} には解除できるデバフがなかった！`);
+        return {effect:`ランダムで${requested}個のデバフを解除`, result:`${target.name} に解除可能なデバフなし`};
       }
 
       if (eff.type === "clear_buffs") {

@@ -164,7 +164,7 @@ function prefCardProfile(card) {
     if(t.startsWith('heal_')||(t==='mod_max_hp_val'&&val>0))tags.add('healing');
     if(t.startsWith('dmg_')||t==='atk_ratio'||t==='atk_val')tags.add('damage');
     if(['mod_atk_ratio','mod_atk_val','atk_ratio','atk_val','mod_speed'].includes(t))tags.add('attack_speed_buff');
-    if(['status_apply','status_remove','clear_statuses','skill_block','heal_block','clear_buffs','clear_debuffs'].includes(t)||(t==='damage_taken_ratio'&&val>0))tags.add('status_debuff');
+    if(['status_apply','status_remove','clear_statuses','skill_block','heal_block','clear_buffs','clear_debuffs','clear_random_buffs','clear_random_debuffs'].includes(t)||(t==='damage_taken_ratio'&&val>0))tags.add('status_debuff');
     if(t==='sub_chance_mod'||n?.hasSubEffect||n?.subEffect)tags.add('extra_effect');
     const conditions=[n?.targetCond,n?.selfCond,n?.subEffect?.targetCond,n?.subEffect?.selfCond].filter(Boolean);
     if(conditions.some(c=>['status_is','any_status','self_status','self_any_status','ally_has_status','enemy_has_status','ally_has_any_status','enemy_has_any_status'].includes(String(c.type||''))))tags.add('status_condition');
