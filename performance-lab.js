@@ -1,5 +1,5 @@
 /*
- * 都道府県カード戦争 v1.0.24 - カード性能検証ラボ
+ * 都道府県カード戦争 v1.0.25 - カード性能検証ラボ
  * Uses the existing battle engine in isolated, temporary headless battles.
  * Results are intentionally memory-only and never saved to IndexedDB/campaign state.
  */
@@ -15,6 +15,8 @@
   let labNavigationState = [];
 
   let LAB_TOTAL_BATTLES = 150;
+  // Estimated values from the latest completed batch report; not persisted until user confirms.
+  let labLastCompleteBatchValues = null;
 
   function labReadBattleCount() {
     const input = document.getElementById('performance-lab-battle-count');
@@ -847,6 +849,13 @@
       ? `<div class="rounded-lg border border-emerald-700/50 bg-emerald-950/20 p-3 text-sm text-emerald-200">評価完了：対象${entries.length}枚すべての参加試合数が${LAB_TOTAL_BATTLES}回以上になりました。合計${totalBattles.toLocaleString('ja-JP')}戦を実行しました。最後の対戦で設定回数を超えたキャラも、その実数のまま表示しています。</div>`
       : `<div class="rounded-lg border border-amber-700/50 bg-amber-950/20 p-3 text-sm text-amber-200">一括評価は中断されました。${completedCount} / ${entries.length}枚が${LAB_TOTAL_BATTLES}回以上に到達しています。実施${totalBattles.toLocaleString('ja-JP')}戦。未到達カードの勝率は途中経過なので参考値です。</div>`;
     const playedAppearances = entries.reduce((sum, entry) => sum + entry.summary.count, 0);
+    labLastCompleteBatchValues = complete
+      ? entries.filter(entry => entry.summary.value != null && Number.isFinite(Number(entry.summary.value)) && Number(entry.summary.value) > 0)
+          .map(entry => ({ cardId: String(entry.card.id), name: String(entry.card.name || '名称未設定'), value: Math.round(Number(entry.summary.value) / 10000) * 10000 }))
+      : null;
+    const bulkApplyButton = complete && labLastCompleteBatchValues?.length
+      ? `<button type="button" data-lab-bulk-apply onclick="applyPerformanceLabBatchValues(this)" class="px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-sm font-black text-white">一括で価値を実際の価値に反映（${labLastCompleteBatchValues.length}枚）</button><p class="text-[10px] text-slate-400 mt-2">ボタンを押した後の確認で承認すると、今回評価した全カードの市場価値をまとめて上書きします。</p>`
+      : '';
     report.innerHTML = `
       <section class="rounded-2xl border border-violet-500/50 bg-gradient-to-br from-slate-900 via-slate-950 to-violet-950 p-4 sm:p-6 shadow-xl">
         <div class="text-[10px] font-black tracking-widest text-violet-300">BATCH PERFORMANCE RANKING</div>
@@ -855,6 +864,7 @@
         <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-4">${labMetricCard('評価対象', `${entries.length} 枚`, '選択ランクの作成キャラ')}${labMetricCard('実施対戦数', labFormatNumber(totalBattles), '共有した戦闘シミュレーション数')}${labMetricCard(`${LAB_TOTAL_BATTLES}回到達`, `${completedCount} / ${entries.length} 枚`, `参加回数合計 ${labFormatNumber(playedAppearances)}`)}</div>
       </section>
       ${status}
+      ${bulkApplyButton ? `<section class="rounded-xl border border-amber-500/40 bg-amber-950/10 p-3 sm:p-4">${bulkApplyButton}</section>` : ''}
       <section class="rounded-xl border border-slate-800 bg-slate-900 p-2 sm:p-4"><div class="flex flex-wrap justify-between items-end gap-2 px-1 pb-3"><h4 class="text-base font-black text-cyan-200">勝率ランキング</h4><p class="text-[10px] text-slate-400">勝率順。同率時は勝ち点率、参加回数、名前順で整列</p></div><div class="overflow-x-auto"><table class="w-full text-left text-xs"><thead class="bg-slate-950 text-[10px] text-slate-400"><tr><th class="px-3 py-3 text-center">順位</th><th class="px-3 py-3">キャラ</th><th class="px-3 py-3 text-right">参加試合数</th><th class="px-3 py-3 text-right">勝率</th><th class="px-3 py-3 text-right">戦績</th><th class="px-3 py-3 text-right">推定価値／操作</th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="px-3 py-8 text-center text-slate-400">まだ参加したキャラがありません。</td></tr>`}</tbody></table></div><p class="text-[10px] text-slate-500 mt-3">参加試合数は、そのキャラが所属した有効な対戦での出場回数です。両陣営のカードIDに重複がある編成は無効試合として再抽選し、試合数・勝敗には加算しません。勝率＝勝利数 ÷ 出場回数。引き分けは勝利数に含めません。推定価値は勝率50%をランク帯の中央値、30%以下を下限、70%以上を上限として算出します。</p></section>
       <div class="flex flex-wrap gap-2"><button type="button" onclick="resetPerformanceLabReport()" class="px-4 py-3 bg-violet-700 hover:bg-violet-600 rounded-xl text-sm font-black">別のランク・カードを評価</button><button type="button" onclick="switchView('deck')" class="px-4 py-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-sm font-bold">作成カード一覧へ</button></div>`;
     report.dataset.batchRank = String(rank);
@@ -930,6 +940,7 @@
     }
 
     const statsById = new Map(candidates.map(card => [String(card.id), labNewBatchCardStats(card)]));
+    labLastCompleteBatchValues = null;
     labRunning = true;
     labCancelRequested = false;
     const previousRunLabFlag = window.__performanceLabRunning;
@@ -1039,6 +1050,7 @@
 
   function resetPerformanceLabReport() {
     labCancelRequested = false;
+    labLastCompleteBatchValues = null;
     const report = document.getElementById('performance-lab-report');
     const progress = document.getElementById('performance-lab-progress-panel');
     report?.classList.add('hidden');
@@ -1080,6 +1092,7 @@
 
   async function runPerformanceLab(cardId) {
     if (labRunning) return;
+    labLastCompleteBatchValues = null;
     labReadBattleCount();
     const targetCard = labAllUnits().find(card => String(card.id) === String(cardId));
     if (!targetCard) {
@@ -1154,6 +1167,64 @@
       if (cancelButton) { cancelButton.disabled = false; cancelButton.textContent = '検証を中断'; }
       if (picker && !report?.classList.contains('hidden')) picker.classList.add('hidden');
       if (picker && report?.classList.contains('hidden')) picker.classList.remove('hidden');
+    }
+  }
+
+  async function applyPerformanceLabBatchValues(button = null) {
+    const report = document.getElementById('performance-lab-report');
+    const reportRank = report?.dataset?.batchRank;
+    const items = Array.isArray(labLastCompleteBatchValues) ? labLastCompleteBatchValues : [];
+    if (!report || report.classList.contains('hidden') || reportRank == null || !items.length) {
+      alert('一括反映できる完了済み評価がありません。ランクの一括評価を最後まで完了してください。');
+      return;
+    }
+
+    const currentCards = Array.isArray(allCards) ? allCards : [];
+    const byId = new Map(currentCards.filter(card => card && (card.cardType || 'unit') === 'unit' && !card.campaignInstance)
+      .map(card => [String(card.id), card]));
+    const applicable = items.map(item => ({ item, card: byId.get(String(item.cardId)) }))
+      .filter(entry => entry.card && Number.isFinite(Number(entry.item.value)) && Number(entry.item.value) > 0);
+    const missingCount = items.length - applicable.length;
+    if (!applicable.length) {
+      alert('反映できる作成キャラカードが見つかりません。作成カード一覧を開き直してから再度お試しください。');
+      return;
+    }
+    const previewLines = applicable.slice(0, 6).map(({ item, card }) =>
+      `・${String(card.name || item.name || '名称未設定')}：${labFormatYen(Math.max(0, Number(card.value) || 0))} → ${labFormatYen(item.value)}`);
+    if (applicable.length > 6) previewLines.push(`・ほか${applicable.length - 6}枚`);
+    const promptText = `★${reportRank}の一括評価結果を、実際の市場価値に反映します。
+
+対象カード：${applicable.length}枚${missingCount ? `（見つからないカード${missingCount}枚は除外）` : ''}
+
+${previewLines.join('\n')}
+
+対象カードの現在の価値を推定価値でまとめて上書きします。実行しますか？`;
+    if (!confirm(promptText)) return;
+
+    if (button) { button.disabled = true; button.textContent = 'まとめて反映中…'; }
+    let applied = 0;
+    try {
+      for (const { item, card } of applicable) {
+        card.value = Math.round(Number(item.value) / 10000) * 10000;
+        await saveToStore('cards', card);
+        applied++;
+      }
+      allCards = await getAllFromStore('cards');
+      renderPerformanceLabCardPicker();
+      if (typeof renderDeckList === 'function') renderDeckList();
+      if (button) {
+        button.textContent = '一括反映済み';
+        button.disabled = true;
+        button.classList.remove('bg-amber-600', 'hover:bg-amber-500');
+        button.classList.add('bg-emerald-700');
+      }
+      alert(`${applied}枚のキャラカードの市場価値を、推定価値に更新しました。`);
+    } catch (error) {
+      console.error('[Performance Lab] Failed to apply batch estimated values:', error);
+      try { allCards = await getAllFromStore('cards'); } catch (_) {}
+      if (typeof renderDeckList === 'function') renderDeckList();
+      if (button) { button.disabled = false; button.textContent = `一括で価値を実際の価値に反映（${items.length}枚）`; }
+      alert(`一括反映中に保存エラーが発生しました。${applied}枚は保存済みです。再確認してから残りを反映してください。\n${error?.message || error}`);
     }
   }
 
@@ -1236,4 +1307,5 @@ ${error?.message || error}`);
   window.resetPerformanceLabReport = resetPerformanceLabReport;
   window.rerunPerformanceLab = rerunPerformanceLab;
   window.applyPerformanceLabValue = applyPerformanceLabValue;
+  window.applyPerformanceLabBatchValues = applyPerformanceLabBatchValues;
 })();
