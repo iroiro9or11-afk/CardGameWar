@@ -1,5 +1,5 @@
 /*
- * 都道府県カード戦争 v1.0.18 - カード性能検証ラボ
+ * 都道府県カード戦争 v1.0.19 - カード性能検証ラボ
  * Uses the existing battle engine in isolated, temporary headless battles.
  * Results are intentionally memory-only and never saved to IndexedDB/campaign state.
  */
@@ -65,11 +65,14 @@
   }
 
   function labAllUnits() {
-    return labUniqueCards((allCards || []).filter(card => (card.cardType || 'unit') === 'unit'));
+    // Campaign instances are runtime copies of an authored template (owned, listed, gacha, etc.).
+    // The lab picker must show each created/authored card only once, never those campaign copies.
+    return labUniqueCards((allCards || []).filter(card => !card.campaignInstance && (card.cardType || 'unit') === 'unit'));
   }
 
   function labAllMagics() {
-    return labUniqueCards((allCards || []).filter(card => card.cardType === 'magic'));
+    // Use authored magic templates only so campaign copies do not bias the shared candidate pool.
+    return labUniqueCards((allCards || []).filter(card => !card.campaignInstance && card.cardType === 'magic'));
   }
 
   function labStars(card) {
