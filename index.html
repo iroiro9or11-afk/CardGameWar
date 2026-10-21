@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.26</title>
+  <title>都道府県カード戦争 v1.0.27</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -307,7 +307,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.26</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.27</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -5439,7 +5439,7 @@
       return { value: actual * 1.05 + (before > 0 && actualTarget.currentHp <= 0 ? 1300 : 0), kills: before > 0 && actualTarget.currentHp <= 0 ? 1 : 0, damage: actual, healing: 0 };
     }
 
-    function aiPlannerEvaluateState(state, side) {
+    function aiPlannerEvaluateStateBase(state, side) {
       const own = aiPlannerActive(state, side, true);
       const enemy = aiPlannerActive(state, side === 'player' ? 'enemy' : 'player', true);
       let score = 0;
@@ -5477,6 +5477,80 @@
       // 行動可能数が多いほど次の局面が安定する。
       score += own.filter(u => u.currentHp > 0).length * 90;
       return score;
+    }
+
+    // 条件付きパッシブの「条件を整える価値」を状態評価に含める。
+    // 例：自身に「印」を付与すると、印条件の自己強化パッシブが有効になる。
+    // 従来は status_apply 自体の即時効果が小さく/マイナスに評価され、候補から落ちやすかった。
+    function aiPlannerPassiveCanTriggerSoon(state, unit, skill) {
+      if (!skill || skill.type !== 'passive' || !['before_action','after_action','turn_end','turn_start'].includes(skill.timing)) return false;
+      if (!aiPlannerCondition(skill.selfCond, unit, state)) return false;
+      // ターン開始時パッシブは、現在ターンの終了後も条件が残る場合だけ準備価値を認める。
+      // 付与ターンだけ有効な1ターン状態異常を使い、次ターンに発動しないパッシブを過大評価しない。
+      if (skill.timing === 'turn_start') {
+        const cond = skill.selfCond || {};
+        if (cond.type === 'self_status') {
+          const status = (unit.statuses || []).find(x => x.type === cond.status && durationActive(x.duration));
+          if (!status || (Number(status.duration) !== -1 && Number(status.duration) <= 1)) return false;
+        } else if (cond.type === 'self_any_status') {
+          const persistent = (unit.statuses || []).some(x => durationActive(x.duration) && (Number(x.duration) === -1 || Number(x.duration) > 1));
+          if (!persistent) return false;
+        }
+      }
+      return true;
+    }
+
+    function aiPlannerPassivePotentialScore(state, perspectiveSide) {
+      let score = 0;
+      const units = state.units.filter(u => u && u.isActive && u.currentHp > 0);
+      for (const unit of units) {
+        for (const passive of (unit.skills || [])) {
+          if (!aiPlannerPassiveCanTriggerSoon(state, unit, passive)) continue;
+          const candidates = aiPlannerCandidateTargets(state, unit, passive);
+          const options = candidates.length ? candidates : [{targetInstanceId:null,subTargetInstanceId:null}];
+          let bestValue = 0;
+          const beforeOwner = aiPlannerEvaluateStateBase(state, unit.side);
+          for (const option of options) {
+            const sim = aiPlannerCloneState(state);
+            const result = aiPlannerApplySkill(sim, unit.instanceId, passive, option.targetInstanceId || null, false, option.subTargetInstanceId || null);
+            if (!result || Number(result.value) <= -500) continue;
+            const afterOwner = aiPlannerEvaluateStateBase(sim, unit.side);
+            // 状態評価で拾いにくい効果（シールド・状態異常など）も少し加味。強い効果を過剰二重加点しない。
+            const direct = Math.max(-300, Math.min(1800, Number(result.value) || 0)) * 0.16;
+            bestValue = Math.max(bestValue, afterOwner - beforeOwner + direct);
+          }
+          if (bestValue > 0) {
+            const chance = Math.max(0, Math.min(100, Number(passive.chance ?? 100))) / 100;
+            const timingWeight = passive.timing === 'turn_start' ? 0.62 : passive.timing === 'turn_end' ? 0.78 : 0.92;
+            const sign = unit.side === perspectiveSide ? 1 : -1;
+            score += sign * bestValue * chance * timingWeight;
+          }
+        }
+      }
+      return score;
+    }
+
+    function aiPlannerEvaluateState(state, side) {
+      return aiPlannerEvaluateStateBase(state, side) + aiPlannerPassivePotentialScore(state, side);
+    }
+
+    function aiPlannerEstimatePassiveSetupBonus(side, actor, skill) {
+      if (!actor || !skill) return 0;
+      const state = aiPlannerCreateState(side);
+      const simActor = aiPlannerFindUnit(state, actor.instanceId);
+      if (!simActor) return 0;
+      const before = aiPlannerPassivePotentialScore(state, side);
+      const candidates = aiPlannerCandidateTargets(state, simActor, skill);
+      const options = candidates.length ? candidates : [{targetInstanceId:null,subTargetInstanceId:null}];
+      let best = 0;
+      for (const option of options) {
+        const sim = aiPlannerCloneState(state);
+        const result = aiPlannerApplySkill(sim, actor.instanceId, skill, option.targetInstanceId || null, false, option.subTargetInstanceId || null);
+        if (!result || Number(result.value) <= -500) continue;
+        best = Math.max(best, aiPlannerPassivePotentialScore(sim, side) - before);
+      }
+      // 低～中ランクAIにも、パッシブ条件を整える価値だけは分かるようにする。
+      return Math.max(0, Math.min(1200, best)) * 0.78;
     }
 
     function aiPlannerEstimateThreat(state, side) {
@@ -5761,7 +5835,7 @@
           if (cost > remainingAp) return;
           const candidates = getAiTargetsForSkill(sk, u);
           if (skillNeedsManualTarget(sk) && !candidates.length) return;
-          usable.push({sIdx,sk,candidates,score:Number(sk.mainEffect?.val||0) - cost * 0.25 + aiStrategyScoreAdjustment(side,sk.mainEffect,cost,'skill',u) + aiEvaluationError(side)});
+          usable.push({sIdx,sk,candidates,score:Number(sk.mainEffect?.val||0) - cost * 0.25 + aiStrategyScoreAdjustment(side,sk.mainEffect,cost,'skill',u) + aiPlannerEstimatePassiveSetupBonus(side,u,sk) + aiEvaluationError(side)});
         });
         let pick = null;
         if(usable.length){
