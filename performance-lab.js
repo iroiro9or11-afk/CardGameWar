@@ -1,5 +1,5 @@
 /*
- * 都道府県カード戦争 v1.0.20 - カード性能検証ラボ
+ * 都道府県カード戦争 v1.0.21 - カード性能検証ラボ
  * Uses the existing battle engine in isolated, temporary headless battles.
  * Results are intentionally memory-only and never saved to IndexedDB/campaign state.
  */
@@ -14,7 +14,7 @@
   let labOriginalSwitchView = null;
   let labNavigationState = [];
 
-  const LAB_TOTAL_BATTLES = 300;
+  const LAB_TOTAL_BATTLES = 150;
   const LAB_VALUE_RANGES = {
     3: { min: 1_000_000, max: 30_000_000 },
     4: { min: 30_000_000, max: 150_000_000 },
@@ -169,16 +169,24 @@
     const type = String(effect.type || '');
     if (!type || type === 'none' || /^dmg_/.test(type)) return;
     const resultText = String(result.result || result.effect || '');
-    if (/失敗|不発|効果を受けない|対象なし|条件未達/.test(resultText)) return;
+    if (/失敗|不発|効果を受けない|対象なし|条件未達|既に継続中|解除対象なし|解除できる.*なし/.test(resultText)) return;
 
     const sourceSide = source?.side || 'player';
     const targetSide = target?.side || (target?.__playerTarget ? (target.__playerTarget === 'opp' ? (sourceSide === 'player' ? 'enemy' : 'player') : sourceSide) : null);
-    const isHeal = type === 'heal_fixed' || type === 'heal_max_hp_ratio';
-    const isShield = type === 'shield';
     const isFriendly = targetSide === sourceSide;
-    const controlTypes = new Set(['status_apply', 'skill_block', 'heal_block', 'damage_taken_ratio', 'mod_atk_ratio', 'mod_atk_val', 'mod_speed', 'clear_buffs', 'clear_random_buffs']);
+    const value = Number(effect.val) || 0;
+    // Support credit is reserved for beneficial effects. Applying a debuff to oneself/allies
+    // (for example weak, poison, reduced attack, or increased damage taken) is not support.
+    const beneficialTypes = new Set(['heal_fixed', 'heal_max_hp_ratio', 'shield', 'status_remove', 'clear_statuses', 'clear_debuffs', 'clear_random_debuffs']);
+    const positiveFriendlyEffect = beneficialTypes.has(type)
+      || (type === 'status_apply' && String(effect.status || 'poison') === 'stealth')
+      || (['mod_atk_ratio', 'mod_atk_val', 'mod_speed', 'mod_max_hp_val', 'sub_chance_mod'].includes(type) && value > 0)
+      || (type === 'damage_taken_ratio' && value < 0)
+      || (type === 'damage_cut_ratio' && value > 0)
+      || (type === 'mod_ap' && value > 0);
+    const controlTypes = new Set(['status_apply', 'skill_block', 'heal_block', 'damage_taken_ratio', 'mod_atk_ratio', 'mod_atk_val', 'mod_speed', 'mod_max_hp_val', 'clear_buffs', 'clear_random_buffs']);
     const isControl = !isFriendly && controlTypes.has(type);
-    const isSupport = isFriendly && (isHeal || isShield || !/^dmg_/.test(type));
+    const isSupport = isFriendly && positiveFriendlyEffect;
 
     if (isSupport) labCurrentMatch.sides[sourceSide].supportEffects++;
     if (isControl) labCurrentMatch.sides[sourceSide].controlEffects++;
@@ -326,7 +334,7 @@
     if (count) count.textContent = `${done} / ${LAB_TOTAL_BATTLES} 戦`;
     if (percent) percent.textContent = `${pct}%`;
     if (title) title.textContent = `${selectedCard.name || '選択カード'} を検証中…`;
-    if (description) description.textContent = `登録済みの★3〜★5キャラからランダム編成し、マジックなしで最高ランクAI同士が対戦しています。`;
+    if (description) description.textContent = `選択カードのランクに合わせ、登録済みキャラをランダム編成。マジックなし・最高ランクAI同士で150戦しています。`;
     const el = document.getElementById('performance-lab-tier-progress');
     if (el) el.innerHTML = `<div class="rounded-lg border border-violet-400 bg-violet-950/50 p-3 col-span-3"><div class="text-xs font-black text-violet-200">ランダム編成での総合検証</div><div class="text-lg font-black text-white mt-1">${done} / ${LAB_TOTAL_BATTLES} 戦</div></div>`;
   }
@@ -472,7 +480,9 @@
     const wins = results.filter(row => row.winner === 'player').length;
     const draws = results.filter(row => row.winner === 'draw').length;
     const losses = results.filter(row => row.winner === 'enemy').length;
-    const winRate = (wins + draws * 0.5) / count;
+    // Win rate for value calibration counts wins only; draws are shown separately.
+    const winRate = wins / count;
+    const winPointRate = (wins + draws * 0.5) / count;
     const totalTarget = labNewTotals();
     const totalPlayer = labNewSideTotals();
     const totalEnemy = labNewSideTotals();
@@ -507,13 +517,14 @@
     const combinedScore = labClamp(absoluteScore * 0.70 + relativeScore * 0.30, 0, 100);
     const stars = labStars(targetCard);
     const range = LAB_VALUE_RANGES[stars] || null;
-    const value = range ? Math.round((range.min + (range.max - range.min) * combinedScore / 100) / 10_000) * 10_000 : null;
+    const valueProgress = labClamp((winRate - 0.30) / 0.40, 0, 1);
+    const value = range ? Math.round((range.min + (range.max - range.min) * valueProgress) / 10_000) * 10_000 : null;
     const confidence = uniqueEnemyRosters >= 30 && sameRankCount >= 8 ? '比較的高い' : uniqueEnemyRosters >= 10 && sameRankCount >= 4 ? '標準' : '限定的';
     const confidenceFactor = confidence === '比較的高い' ? 0.06 : confidence === '標準' ? 0.12 : 0.22;
     const margin = range ? Math.round((range.max - range.min) * confidenceFactor / 10_000) * 10_000 : null;
     const interval = range && value != null ? { min: Math.max(range.min, value - margin), max: Math.min(range.max, value + margin) } : null;
     return {
-      stars, wins, draws, losses, winRate, totalTarget, totalPlayer, totalEnemy,
+      stars, wins, draws, losses, winRate, winPointRate, totalTarget, totalPlayer, totalEnemy,
       survivalRate, averageHpRatio: targetHpRatio / count, averageTurns: turnTotal / count,
       damageShare, offenseScore: offenseScore * 100, supportScore: supportScore * 100, activityScore: activityScore * 100,
       absoluteScore, relativeScore, combinedScore, range, value, interval,
@@ -521,6 +532,33 @@
       averageDamageDealt, averageDamageTaken, averageKills, averageActions, averageSkills,
       averageHealing, averageShield, averageSupport, averageControl
     };
+  }
+
+  function labEffectCanBePositiveSupport(effect, targetType) {
+    if (!effect || typeof effect !== 'object') return false;
+    const type = String(effect.type || '');
+    const value = Number(effect.val) || 0;
+    const target = String(targetType || 'self');
+    const canTargetFriend = target === 'self' || target === 'player_self' || target.includes('ally') || target === 'same_main_target';
+    if (!canTargetFriend) return false;
+    if (['heal_fixed', 'heal_max_hp_ratio', 'shield', 'status_remove', 'clear_statuses', 'clear_debuffs', 'clear_random_debuffs'].includes(type)) return true;
+    if (type === 'status_apply') return String(effect.status || 'poison') === 'stealth';
+    if (['mod_atk_ratio', 'mod_atk_val', 'mod_speed', 'mod_max_hp_val', 'sub_chance_mod'].includes(type)) return value > 0;
+    if (type === 'damage_taken_ratio') return value < 0;
+    if (type === 'damage_cut_ratio') return value > 0;
+    if (type === 'mod_ap') return value > 0;
+    return false;
+  }
+
+  function labCardHasPositiveSupportSkill(card) {
+    for (const skill of (Array.isArray(card?.skills) ? card.skills : [])) {
+      if (labEffectCanBePositiveSupport(skill.mainEffect, skill.targetType)) return true;
+      if (skill.hasSubEffect && skill.subEffect) {
+        const targetType = skill.subEffect.targetType === 'same_main_target' ? skill.targetType : skill.subEffect.targetType;
+        if (labEffectCanBePositiveSupport(skill.subEffect, targetType)) return true;
+      }
+    }
+    return false;
   }
 
   function labBuildEvaluationText(card, summary) {
@@ -538,26 +576,24 @@
     const avgControl = summary.averageControl;
     const survival = summary.survivalRate;
     const rate = summary.winRate;
-    if (rate >= 0.65) strengths.push(`300戦の勝ち点率は${labPercent(rate)}（${summary.wins}勝・${summary.draws}分・${summary.losses}敗）。ランダム編成の同ランク帯に対して、チーム全体として高い勝率を記録しました。`);
-    else if (rate >= 0.52) strengths.push(`300戦の勝ち点率は${labPercent(rate)}（${summary.wins}勝・${summary.draws}分・${summary.losses}敗）。ランダム編成の同ランク帯に対して、平均よりやや有利な結果です。`);
-    else if (rate < 0.42) weaknesses.push(`勝ち点率は${labPercent(rate)}（${summary.wins}勝・${summary.draws}分・${summary.losses}敗）で、今回のランダム編成群に対して苦戦しました。本人の性能だけでなく、味方との相性や行動選択も含めて確認が必要です。`);
+    if (rate >= 0.70) strengths.push(`150戦の勝率は${labPercent(rate)}（${summary.wins}勝・${summary.draws}分・${summary.losses}敗）。ランダム編成の同ランク帯に対して、チーム全体として高い勝率を記録しました。`);
+    else if (rate >= 0.50) strengths.push(`150戦の勝率は${labPercent(rate)}（${summary.wins}勝・${summary.draws}分・${summary.losses}敗）。ランダム編成の同ランク帯に対して、平均よりやや有利な結果です。`);
+    else if (rate <= 0.30) weaknesses.push(`勝率は${labPercent(rate)}（${summary.wins}勝・${summary.draws}分・${summary.losses}敗）で、今回のランダム編成群に対して苦戦しました。本人の性能だけでなく、味方との相性や行動選択も含めて確認が必要です。`);
     if (share >= 0.30) strengths.push(`本人の平均与ダメージは1試合あたり${labFormatNumber(avgDmg)}。チーム総ダメージの${(share * 100).toFixed(1)}%を担当しており、主力アタッカーとして勝利に貢献しています。平均撃破数は${avgKills.toFixed(2)}体です。`);
     else if (share < 0.12) weaknesses.push(`本人の平均与ダメージは1試合あたり${labFormatNumber(avgDmg)}、チーム総ダメージに占める割合は${(share * 100).toFixed(1)}%です。直接攻撃での貢献は限定的でした。支援役として設計されたカードでない場合、攻撃スキルや行動機会が十分に活かせていない可能性があります。`);
     if (avgKills >= 0.45) strengths.push(`平均撃破数は1試合あたり${avgKills.toFixed(2)}体。ダメージを与えるだけでなく、相手を戦闘不能にするところまでつなげています。`);
     else if (avgDmg > 0 && avgKills < 0.12) weaknesses.push(`平均撃破数は1試合あたり${avgKills.toFixed(2)}体です。ダメージを与えても撃破に結びつく頻度は低めで、相手の残りHPを削り切る役割は味方に依存しやすい結果でした。`);
-    if (survival >= 0.75) strengths.push(`300戦を通じた本人の生存率は${labPercent(survival)}。平均行動回数は1試合あたり${avgActions.toFixed(2)}回で、倒されずに複数回行動しやすい耐久性が見られます。`);
+    if (survival >= 0.75) strengths.push(`150戦を通じた本人の生存率は${labPercent(survival)}。平均行動回数は1試合あたり${avgActions.toFixed(2)}回で、倒されずに複数回行動しやすい耐久性が見られます。`);
     else if (survival < 0.4) weaknesses.push(`本人の生存率は${labPercent(survival)}、平均被ダメージは1試合あたり${labFormatNumber(avgTaken)}です。早期に倒されて行動機会を失う試合が多く、耐久力や味方の保護を弱点として確認できます。`);
     if (avgHealing >= 250 || avgShield >= 300 || avgSupport >= 1.0) strengths.push(`支援面では、平均回復量${labFormatNumber(avgHealing)}、平均シールド付与量${labFormatNumber(avgShield)}、味方への支援効果${avgSupport.toFixed(2)}回／試合を記録しました。味方の生存や継戦能力を支える働きが確認できます。`);
     if (avgControl >= 0.7) strengths.push(`敵への妨害効果は平均${avgControl.toFixed(2)}回／試合。状態異常・弱体などを通じ、相手の行動や火力を抑える貢献が見られます。`);
     if (avgSkills < 0.35 && (Array.isArray(card.skills) ? card.skills.length : 0) > 0) weaknesses.push(`スキル行動は平均${avgSkills.toFixed(2)}回／試合でした。設定スキルの発動頻度が低く、APコスト・発動条件・行動順などの影響でスキル性能を活かし切れていない可能性があります。`);
     if (avgTaken > Math.max(1, avgDmg) * 1.7 && survival < 0.65) weaknesses.push(`平均被ダメージ${labFormatNumber(avgTaken)}が平均与ダメージ${labFormatNumber(avgDmg)}を大きく上回っています。攻撃と耐久の交換効率が悪く、相手の攻撃を受ける前に行動する工夫や保護役との連携が課題です。`);
-    if (avgHealing < 1 && avgShield < 1 && avgSupport < 0.25 && avgControl < 0.25) {
-      if (Array.isArray(card.skills) && card.skills.some(skill => /heal|shield|buff|debuff|status|mod_|clear_/.test(String(skill?.mainEffect?.type || '') + ' ' + String(skill?.subEffect?.type || '')))) {
-        weaknesses.push('スキル構成には支援・妨害系の効果が含まれていますが、今回の戦闘では実際に観測された貢献が少なめでした。対象条件、発動条件、味方の状態、行動順との相性を確認する余地があります。');
-      }
+    if (avgHealing < 1 && avgShield < 1 && avgSupport < 0.25 && avgControl < 0.25 && labCardHasPositiveSupportSkill(card)) {
+      weaknesses.push('味方を支える効果を持っていますが、今回の150戦では回復・シールド・有利な強化などの実測貢献が少なめでした。対象指定、発動条件、必要AP、行動順と味方の残HPを確認する余地があります。');
     }
     if (!strengths.length) strengths.push(`平均与ダメージ${labFormatNumber(avgDmg)}、平均行動回数${avgActions.toFixed(2)}回、生存率${labPercent(survival)}という結果でした。今回のデータでは突出した強みを断定できないため、これらの実績値を基準に判断するのが適切です。`);
-    if (!weaknesses.length) weaknesses.push(`今回の300戦では明確な致命的弱点は数値上確認できませんでした。ただし平均被ダメージ${labFormatNumber(avgTaken)}、平均スキル行動${avgSkills.toFixed(2)}回、生存率${labPercent(survival)}などの指標を、他カードと比較すると改善点を見つけやすくなります。`);
+    if (!weaknesses.length) weaknesses.push(`今回の150戦では明確な致命的弱点は数値上確認できませんでした。ただし平均被ダメージ${labFormatNumber(avgTaken)}、平均スキル行動${avgSkills.toFixed(2)}回、生存率${labPercent(survival)}などの指標を、他カードと比較すると改善点を見つけやすくなります。`);
     return { strengths: strengths.slice(0, 6), weaknesses: weaknesses.slice(0, 6) };
   }
 
@@ -574,15 +610,15 @@
     const imgHtml = img ? `<img src="${labEsc(img)}" alt="${labEsc(card.name)}" class="w-20 h-28 sm:w-24 sm:h-32 rounded-lg border border-violet-500/50 object-cover bg-slate-950" onerror="this.style.display='none'">` : `<div class="w-20 h-28 sm:w-24 sm:h-32 flex items-center justify-center rounded-lg border border-violet-500/50 bg-slate-950 text-3xl">⚔️</div>`;
     const valueHtml = summary.value == null
       ? `<div class="text-2xl sm:text-3xl font-black text-amber-200">金額評価対象外</div><p class="text-xs text-slate-400 mt-1">推定金額帯は★3〜★5に設定されています。戦闘性能の結果は下記に表示します。</p>`
-      : `<div class="text-3xl sm:text-4xl font-black text-amber-200">${labFormatYen(summary.value)}</div><div class="text-xs sm:text-sm text-slate-300 mt-2">参考範囲：${labFormatYen(summary.interval.min)}〜${labFormatYen(summary.interval.max)}</div>`;
+      : `<div class="text-3xl sm:text-4xl font-black text-amber-200">${labFormatYen(summary.value)}</div><div class="text-xs sm:text-sm text-slate-300 mt-2">参考範囲：${labFormatYen(summary.interval.min)}〜${labFormatYen(summary.interval.max)}</div><p class="text-[10px] text-slate-400 mt-2">勝率50%でランク帯の価値中央値、30%以下で下限、70%以上で上限。</p>`;
     report.innerHTML = `
       <section class="rounded-2xl border border-violet-500/50 bg-gradient-to-br from-slate-900 via-slate-950 to-violet-950 p-4 sm:p-6 shadow-xl">
-        <div class="flex flex-wrap items-center gap-4">${imgHtml}<div class="min-w-0 flex-1"><div class="text-[10px] tracking-widest font-black text-violet-300">性能検証レポート</div><h3 class="text-xl sm:text-2xl font-black text-white mt-1">${labEsc(card.name || '名称未設定')}</h3><div class="text-amber-300 font-black mt-1">${'★'.repeat(summary.stars)}${'☆'.repeat(5 - summary.stars)}</div><div class="text-xs text-slate-400 mt-2">登録済みキャラのみ／マジックなし／最高ランクAI同士の300戦集計</div></div></div>
-        <div class="mt-5 rounded-xl border border-amber-500/30 bg-black/30 p-4"><div class="text-[10px] font-black text-amber-300">推定カード価値</div><div class="mt-1">${valueHtml}</div><div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">${labMetricCard('総合評価スコア', `${summary.combinedScore.toFixed(1)} / 100`, '絶対評価＋実測勝率')}${labMetricCard('全体勝ち点率', labPercent(summary.winRate), '勝利1点・引き分け0.5点')}${labMetricCard('本人の生存率', labPercent(summary.survivalRate), `${summary.wins}勝 ${summary.draws}分 ${summary.losses}敗（300戦）`)}${labMetricCard('評価の信頼度', summary.confidence, `${summary.uniqueEnemyRosters}種類の敵編成／登録対象${summary.sameRankCount}枚`)}</div></div>
+        <div class="flex flex-wrap items-center gap-4">${imgHtml}<div class="min-w-0 flex-1"><div class="text-[10px] tracking-widest font-black text-violet-300">性能検証レポート</div><h3 class="text-xl sm:text-2xl font-black text-white mt-1">${labEsc(card.name || '名称未設定')}</h3><div class="text-amber-300 font-black mt-1">${'★'.repeat(summary.stars)}${'☆'.repeat(5 - summary.stars)}</div><div class="text-xs text-slate-400 mt-2">登録済みキャラのみ／マジックなし／最高ランクAI同士の150戦集計</div></div></div>
+        <div class="mt-5 rounded-xl border border-amber-500/30 bg-black/30 p-4"><div class="text-[10px] font-black text-amber-300">推定カード価値</div><div class="mt-1">${valueHtml}</div><div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">${labMetricCard('総合評価スコア', `${summary.combinedScore.toFixed(1)} / 100`, '絶対評価＋実測勝率')}${labMetricCard('本人が参加した試合の勝率', labPercent(summary.winRate), '勝利数 ÷ 全試合数（引き分けは勝利に含めない）')}${labMetricCard('本人の生存率', labPercent(summary.survivalRate), `${summary.wins}勝 ${summary.draws}分 ${summary.losses}敗（150戦）`)}${labMetricCard('評価の信頼度', summary.confidence, `${summary.uniqueEnemyRosters}種類の敵編成／登録対象${summary.sameRankCount}枚`)}</div></div>
       </section>
-      <section class="rounded-xl border border-slate-800 bg-slate-900 p-4"><h4 class="text-base font-black text-cyan-200 mb-3">本人の実戦貢献（1試合あたり平均）</h4><div class="grid grid-cols-2 sm:grid-cols-4 gap-2">${labMetricCard('与ダメージ', labFormatNumber(summary.averageDamageDealt), `チーム総ダメージの${(summary.damageShare * 100).toFixed(1)}%`)}${labMetricCard('撃破数', summary.averageKills.toFixed(2), '体／試合')}${labMetricCard('行動回数', summary.averageActions.toFixed(2), '回／試合')}${labMetricCard('スキル行動', summary.averageSkills.toFixed(2), '回／試合')}${labMetricCard('被ダメージ', labFormatNumber(summary.averageDamageTaken), '1試合あたり平均')}${labMetricCard('回復量', labFormatNumber(summary.averageHealing), '1試合あたり平均')}${labMetricCard('シールド付与量', labFormatNumber(summary.averageShield), '1試合あたり平均')}${labMetricCard('支援効果', summary.averageSupport.toFixed(2), '回／試合')}${labMetricCard('妨害効果', summary.averageControl.toFixed(2), '回／試合')}${labMetricCard('生存時HP割合', labPercent(summary.averageHpRatio), '試合終了時点の平均')}${labMetricCard('試合ターン数', summary.averageTurns.toFixed(2), 'ターン／試合')}${labMetricCard('受けたダメージ合計', labFormatNumber(summary.totalTarget.damageTaken), '参考：300戦の合計')}</div><p class="text-[10px] text-slate-500 mt-3">ダメージ・回復・シールドは戦闘中に実際に処理された数値です。支援／妨害回数は効果処理の観測数であり、すべてが勝敗を決めたことを意味するものではありません。</p></section>
+      <section class="rounded-xl border border-slate-800 bg-slate-900 p-4"><h4 class="text-base font-black text-cyan-200 mb-3">本人の実戦貢献（1試合あたり平均）</h4><div class="grid grid-cols-2 sm:grid-cols-4 gap-2">${labMetricCard('与ダメージ', labFormatNumber(summary.averageDamageDealt), `チーム総ダメージの${(summary.damageShare * 100).toFixed(1)}%`)}${labMetricCard('撃破数', summary.averageKills.toFixed(2), '体／試合')}${labMetricCard('行動回数', summary.averageActions.toFixed(2), '回／試合')}${labMetricCard('スキル行動', summary.averageSkills.toFixed(2), '回／試合')}${labMetricCard('被ダメージ', labFormatNumber(summary.averageDamageTaken), '1試合あたり平均')}${labMetricCard('回復量', labFormatNumber(summary.averageHealing), '1試合あたり平均')}${labMetricCard('シールド付与量', labFormatNumber(summary.averageShield), '1試合あたり平均')}${labMetricCard('支援効果', summary.averageSupport.toFixed(2), '回／試合')}${labMetricCard('妨害効果', summary.averageControl.toFixed(2), '回／試合')}${labMetricCard('生存時HP割合', labPercent(summary.averageHpRatio), '試合終了時点の平均')}${labMetricCard('試合ターン数', summary.averageTurns.toFixed(2), 'ターン／試合')}${labMetricCard('受けたダメージ合計', labFormatNumber(summary.totalTarget.damageTaken), '参考：150戦の合計')}</div><p class="text-[10px] text-slate-500 mt-3">ダメージ・回復・シールドは戦闘中に実際に処理された数値です。支援／妨害回数は効果処理の観測数であり、すべてが勝敗を決めたことを意味するものではありません。</p></section>
       <section class="grid grid-cols-1 md:grid-cols-2 gap-3"><div class="rounded-xl border border-emerald-800/60 bg-slate-900 p-4"><h4 class="text-base font-black text-emerald-300 mb-3">強いところ・実際の貢献</h4><ul class="space-y-3">${copy.strengths.map(text => `<li class="text-sm leading-relaxed text-slate-200 flex gap-2"><span class="text-emerald-300">＋</span><span>${labEsc(text)}</span></li>`).join('')}</ul></div><div class="rounded-xl border border-rose-800/60 bg-slate-900 p-4"><h4 class="text-base font-black text-rose-300 mb-3">弱いところ・改善できそうな点</h4><ul class="space-y-3">${copy.weaknesses.map(text => `<li class="text-sm leading-relaxed text-slate-200 flex gap-2"><span class="text-rose-300">−</span><span>${labEsc(text)}</span></li>`).join('')}</ul></div></section>
-      <section class="rounded-xl border border-slate-800 bg-slate-900 p-4"><h4 class="text-sm font-black text-slate-200">今回の検証条件</h4><p class="text-xs leading-relaxed text-slate-400 mt-2">合計300戦。検証対象のランクに合わせ、作成カード一覧に登録済みの★3〜★5キャラのみでチームをランダム編成します。★5カードを検証する場合は、双方とも★5を1体・★4を4体に固定します。★3・★4カードは同ランク5体で編成します。マジックカードは一切使用しません。双方の戦術AIは最高設定です。結果は一時表示のみで、キャンペーンデータや通常戦績は変更しません。</p></section>
+      <section class="rounded-xl border border-slate-800 bg-slate-900 p-4"><h4 class="text-sm font-black text-slate-200">今回の検証条件</h4><p class="text-xs leading-relaxed text-slate-400 mt-2">合計150戦。検証対象のランクに合わせ、作成カード一覧に登録済みの★3〜★5キャラのみでチームをランダム編成します。★5カードを検証する場合は、双方とも★5を1体・★4を4体に固定します。★3・★4カードは同ランク5体で編成します。マジックカードは一切使用しません。双方の戦術AIは最高設定です。結果は一時表示のみで、キャンペーンデータや通常戦績は変更しません。</p></section>
       <div class="flex flex-wrap gap-2"><button type="button" onclick="rerunPerformanceLab()" class="px-4 py-3 bg-violet-600 hover:bg-violet-500 rounded-xl text-sm font-black">同じカードを再検証</button><button type="button" onclick="resetPerformanceLabReport()" class="px-4 py-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-sm font-bold">別のカードを選ぶ</button></div>`;
     report.classList.remove('hidden');
     progress?.classList.add('hidden');
@@ -618,6 +654,146 @@
       const button = wrap.querySelector('[data-performance-lab-pick]');
       button?.addEventListener('click', () => runPerformanceLab(String(card.id)));
       list.appendChild(wrap);
+    }
+  }
+
+  function labSetBatchProgress(overallDone, totalBattles, card, cardDone, cardIndex, cardCount) {
+    const pct = totalBattles > 0 ? Math.round(overallDone / totalBattles * 100) : 0;
+    const bar = document.getElementById('performance-lab-progress-bar');
+    const count = document.getElementById('performance-lab-progress-count');
+    const percent = document.getElementById('performance-lab-progress-percent');
+    const title = document.getElementById('performance-lab-progress-title');
+    const description = document.getElementById('performance-lab-progress-description');
+    if (bar) bar.style.width = `${pct}%`;
+    if (count) count.textContent = `このカード ${cardDone} / ${LAB_TOTAL_BATTLES} 戦　・　全体 ${overallDone.toLocaleString('ja-JP')} / ${totalBattles.toLocaleString('ja-JP')} 戦`;
+    if (percent) percent.textContent = `${pct}%`;
+    if (title) title.textContent = `一括評価中：${card?.name || 'キャラカード'}（${cardIndex + 1} / ${cardCount} 枚目）`;
+    if (description) description.textContent = `ランク帯の登録キャラを使って1枚あたり150戦。マジックなし・最高ランクAI同士で評価しています。`;
+    const details = document.getElementById('performance-lab-tier-progress');
+    if (details) details.innerHTML = `<div class="rounded-lg border border-violet-400 bg-violet-950/50 p-3 col-span-3"><div class="text-xs font-black text-violet-200">ランク内一括評価</div><div class="text-lg font-black text-white mt-1">カード ${cardIndex + 1} / ${cardCount} 枚目</div><div class="text-xs text-slate-300 mt-1">${labEsc(card?.name || '')}：${cardDone} / ${LAB_TOTAL_BATTLES} 戦完了</div></div>`;
+  }
+
+  function labRenderBatchReport(rank, entries, complete, candidateCount, currentIndex = candidateCount, currentCardDone = LAB_TOTAL_BATTLES) {
+    const report = document.getElementById('performance-lab-report');
+    const progress = document.getElementById('performance-lab-progress-panel');
+    if (!report) return;
+    const ordered = [...entries].sort((a, b) => b.summary.winRate - a.summary.winRate
+      || b.summary.winPointRate - a.summary.winPointRate
+      || b.summary.survivalRate - a.summary.survivalRate
+      || String(a.card.name || '').localeCompare(String(b.card.name || ''), 'ja'));
+    const rows = ordered.map((entry, index) => {
+      const summary = entry.summary;
+      const rankMarks = `${'★'.repeat(rank)}${'☆'.repeat(5 - rank)}`;
+      const value = summary.value == null ? '対象外' : labFormatYen(summary.value);
+      return `<tr class="border-t border-slate-800"><td class="px-3 py-3 text-center font-black text-slate-300">${index + 1}</td><td class="px-3 py-3"><div class="font-black text-slate-100">${labEsc(entry.card.name || '名称未設定')}</div><div class="text-[10px] text-amber-300 mt-1">${rankMarks}</div></td><td class="px-3 py-3 text-right font-black text-cyan-200 whitespace-nowrap">${labPercent(summary.winRate)}</td><td class="px-3 py-3 text-right text-xs text-slate-300 whitespace-nowrap">${summary.wins}勝 ${summary.draws}分 ${summary.losses}敗</td><td class="px-3 py-3 text-right text-xs text-slate-300 whitespace-nowrap">${labFormatNumber(summary.averageDamageDealt)}</td><td class="px-3 py-3 text-right text-xs text-slate-300 whitespace-nowrap">${summary.averageKills.toFixed(2)}</td><td class="px-3 py-3 text-right text-xs text-slate-300 whitespace-nowrap">${labPercent(summary.survivalRate)}</td><td class="px-3 py-3 text-right text-xs text-amber-200 whitespace-nowrap">${value}</td></tr>`;
+    }).join('');
+    const status = complete
+      ? `<div class="rounded-lg border border-emerald-700/50 bg-emerald-950/20 p-3 text-sm text-emerald-200">評価完了：${entries.length}枚すべて150戦を完了しました。勝率が高い順に表示しています。</div>`
+      : `<div class="rounded-lg border border-amber-700/50 bg-amber-950/20 p-3 text-sm text-amber-200">一括評価は中断されました。150戦を完了した${entries.length}枚のみランキングに含めています。現在のカードは${currentCardDone} / 150戦、全${candidateCount}枚中${Math.min(currentIndex + 1, candidateCount)}枚目まで処理中でした。未完了のカードは順位に含めていません。</div>`;
+    report.innerHTML = `
+      <section class="rounded-2xl border border-violet-500/50 bg-gradient-to-br from-slate-900 via-slate-950 to-violet-950 p-4 sm:p-6 shadow-xl">
+        <div class="text-[10px] font-black tracking-widest text-violet-300">BATCH PERFORMANCE RANKING</div>
+        <h3 class="text-xl sm:text-2xl font-black text-white mt-1">★${rank}キャラ 一括評価ランキング</h3>
+        <p class="text-xs text-slate-300 mt-2">各カードをチームに入れて150戦ずつ検証。勝率の高い順です。チームは従来ルールに合わせ、★3・★4は同ランク5体、★5は★5を1体＋★4を4体で編成。作成カード一覧の登録キャラのみを使用し、マジックは使いません。</p>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-4">${labMetricCard('評価対象', `${entries.length} / ${candidateCount} 枚`, '各カード150戦完了分のみ')}${labMetricCard('完了した対戦数', labFormatNumber(entries.length * LAB_TOTAL_BATTLES), 'カード間で対戦条件は共通')}${labMetricCard('ランク', `★${rank}`, '最高ランクAI同士')}</div>
+      </section>
+      ${status}
+      <section class="rounded-xl border border-slate-800 bg-slate-900 p-2 sm:p-4"><div class="flex flex-wrap justify-between items-end gap-2 px-1 pb-3"><h4 class="text-base font-black text-cyan-200">勝率ランキング</h4><p class="text-[10px] text-slate-400">同率時は勝ち点率・生存率・名前順で整列</p></div><div class="overflow-x-auto"><table class="w-full text-left text-xs"><thead class="bg-slate-950 text-[10px] text-slate-400"><tr><th class="px-3 py-3 text-center">順位</th><th class="px-3 py-3">キャラ</th><th class="px-3 py-3 text-right">勝率</th><th class="px-3 py-3 text-right">戦績</th><th class="px-3 py-3 text-right">平均与ダメ</th><th class="px-3 py-3 text-right">平均撃破</th><th class="px-3 py-3 text-right">生存率</th><th class="px-3 py-3 text-right">推定価値</th></tr></thead><tbody>${rows || `<tr><td colspan="8" class="px-3 py-8 text-center text-slate-400">150戦を完了したカードはありません。</td></tr>`}</tbody></table></div><p class="text-[10px] text-slate-500 mt-3">勝率＝勝利数 ÷ 試合数。引き分けは勝利数に含めず、同率時の補助比較としてのみ勝ち点率（勝利1・引き分け0.5）を使います。推定価値は勝率50%をランク帯の中央値、30%以下を下限、70%以上を上限として算出します。</p></section>
+      <div class="flex flex-wrap gap-2"><button type="button" onclick="resetPerformanceLabReport()" class="px-4 py-3 bg-violet-700 hover:bg-violet-600 rounded-xl text-sm font-black">別のランク・カードを評価</button><button type="button" onclick="switchView('deck')" class="px-4 py-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-sm font-bold">作成カード一覧へ</button></div>`;
+    report.dataset.batchRank = String(rank);
+    report.classList.remove('hidden');
+    progress?.classList.add('hidden');
+  }
+
+  async function runPerformanceLabBatch() {
+    if (labRunning) return;
+    const rank = Number(document.getElementById('performance-lab-batch-rank')?.value || 3);
+    if (![3, 4, 5].includes(rank)) {
+      alert('★3・★4・★5から評価ランクを選択してください。');
+      return;
+    }
+    const allUnits = labAllUnits();
+    const candidates = allUnits.filter(card => labStars(card) === rank)
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
+    if (!candidates.length) {
+      alert(`作成カード一覧に評価対象の★${rank}キャラカードがありません。`);
+      return;
+    }
+    try {
+      // Verify the team constraints before starting a long batch.
+      for (const card of candidates) {
+        labBuildPlayerRoster(card, allUnits);
+        labBuildEnemyRoster(card, allUnits);
+      }
+    } catch (error) {
+      alert(error.message || String(error));
+      return;
+    }
+
+    labRunning = true;
+    labCancelRequested = false;
+    const previousRunLabFlag = window.__performanceLabRunning;
+    window.__performanceLabRunning = true;
+    labLockNavigation(true);
+    const picker = document.getElementById('performance-lab-picker-panel');
+    const progress = document.getElementById('performance-lab-progress-panel');
+    const report = document.getElementById('performance-lab-report');
+    picker?.classList.add('hidden');
+    progress?.classList.remove('hidden');
+    report?.classList.add('hidden');
+    if (report) report.innerHTML = '';
+    const cancelButton = document.getElementById('performance-lab-cancel');
+    if (cancelButton) { cancelButton.disabled = false; cancelButton.textContent = '一括評価を中断'; }
+
+    const totalBattles = candidates.length * LAB_TOTAL_BATTLES;
+    const entries = [];
+    let overallDone = 0;
+    let currentIndex = 0;
+    let currentCardDone = 0;
+    try {
+      labSetBatchProgress(0, totalBattles, candidates[0], 0, 0, candidates.length);
+      await labYieldToBrowser();
+      for (currentIndex = 0; currentIndex < candidates.length; currentIndex++) {
+        const targetCard = candidates[currentIndex];
+        const sameRankCount = allUnits.filter(card => labStars(card) === rank).length;
+        const results = [];
+        const uniqueRosters = new Set();
+        currentCardDone = 0;
+        for (let battleIndex = 0; battleIndex < LAB_TOTAL_BATTLES; battleIndex++) {
+          if (labCancelRequested) {
+            labRenderBatchReport(rank, entries, false, candidates.length, currentIndex, currentCardDone);
+            return;
+          }
+          const playerRoster = labBuildPlayerRoster(targetCard, allUnits);
+          const enemyRoster = labBuildEnemyRoster(targetCard, allUnits);
+          const row = await labPlayBattle(targetCard, 'random', overallDone, playerRoster, enemyRoster, []);
+          results.push(row);
+          uniqueRosters.add(row.opponentRosterKey);
+          currentCardDone++;
+          overallDone++;
+          labSetBatchProgress(overallDone, totalBattles, targetCard, currentCardDone, currentIndex, candidates.length);
+          await labYieldToBrowser();
+        }
+        // A card joins the ranking only after it has reached the full 150 battles.
+        const summary = labScoreAndValue(targetCard, results, uniqueRosters.size, sameRankCount);
+        entries.push({ card: targetCard, summary });
+      }
+      labRenderBatchReport(rank, entries, true, candidates.length);
+    } catch (error) {
+      console.error('[Performance Lab] Batch verification failed:', error);
+      if (report) {
+        report.innerHTML = `<section class="rounded-xl border border-rose-500/40 bg-slate-900 p-4"><h3 class="text-lg font-black text-rose-300">一括評価を完了できませんでした</h3><p class="text-sm text-slate-300 mt-2">${labEsc(error?.message || String(error))}</p><p class="text-xs text-slate-500 mt-2">カードやキャンペーンデータは保存・変更していません。登録カードの編成条件とカード設定を確認してください。</p><button type="button" onclick="resetPerformanceLabReport()" class="mt-4 px-4 py-3 bg-slate-800 rounded-lg text-sm font-bold">評価画面に戻る</button></section>`;
+        report.classList.remove('hidden');
+      }
+      progress?.classList.add('hidden');
+    } finally {
+      labRunning = false;
+      labCancelRequested = false;
+      window.__performanceLabRunning = previousRunLabFlag;
+      labLockNavigation(false);
+      if (cancelButton) { cancelButton.disabled = false; cancelButton.textContent = '検証を中断'; }
+      if (picker && !report?.classList.contains('hidden')) picker.classList.add('hidden');
+      if (picker && report?.classList.contains('hidden')) picker.classList.remove('hidden');
     }
   }
 
@@ -700,7 +876,7 @@
     const uniqueRosters = new Set();
     let done = 0;
     try {
-      // Preflight once, then run 300 randomized registered-card team battles.
+      // Preflight once, then run 150 randomized registered-card team battles.
       labBuildPlayerRoster(targetCard, allUnits);
       labBuildEnemyRoster(targetCard, allUnits);
       labSetProgress(done, targetCard);
@@ -778,6 +954,7 @@
   };
   window.renderPerformanceLabCardPicker = renderPerformanceLabCardPicker;
   window.runPerformanceLab = runPerformanceLab;
+  window.runPerformanceLabBatch = runPerformanceLabBatch;
   window.cancelPerformanceLab = cancelPerformanceLab;
   window.resetPerformanceLabReport = resetPerformanceLabReport;
   window.rerunPerformanceLab = rerunPerformanceLab;
