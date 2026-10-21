@@ -619,12 +619,23 @@ async function prefLoadState() {
     for(const t of prefCardTemplates().filter(c=>c.cardType==='unit'&&prefRankStars(c)>=3)){
       if(!known.has(String(t.id))){const inst=prefCreateInstance(t.id,'gacha',null,{source:'created-after-start'}); if(inst)prefLog(`新規キャラカード「${t.name}」がガチャに追加されました。`,'success');}
     }
-    if(campaignState.turnProcessing && campaignState.turnProcessing.stage==='battles') {
+    if(campaignState.turnProcessing) {
       const tx=campaignState.turnProcessing;
       if(tx.pairIndex==null)tx.pairIndex=0;
-      // v1.0.10以前の保存データには player-preview の段階がありません。
-      // プレイヤー対戦が未決着なら、AIの処理済み結果を保持したまま編成確認へ戻します。
-      prefRecoverPendingBattlePreview(tx, true);
+      // Migrate previous releases' early player-preview pause into a rank-ordered queue.
+      // Preserve the draft lineup but ask for confirmation only when Kyoto's rank slot is reached.
+      if(tx.stage==='player-preview'&&!Array.isArray(tx.resolutionQueue)){
+        tx.stage='battles';tx.playerLoadoutConfirmed=false;tx.currentPairId=null;
+        tx.resolutionQueue=prefBuildTurnResolutionQueue(tx.actions||{},tx.pairs||[],tx.unmatched,!!tx.investigationsResolved);
+        tx.resolutionIndex=0;
+      }
+      if(tx.stage==='battles'){
+        // A reload can interrupt an AI simulation between its saved checkpoints; replay only
+        // the not-yet-committed pair instead of leaving the transaction stuck as "simulating".
+        for(const pair of tx.pairs||[])if(pair.status==='simulating')pair.status='pending';
+        for(const step of tx.resolutionQueue||[])if(step.status==='processing')step.status='pending';
+        prefRecoverPendingBattlePreview(tx, true);
+      }
     }
     await prefSave();
   }
@@ -712,6 +723,20 @@ function prefCalculateRankings() {
 }
 function prefYearWinRate(region) { const s=region?.yearStats||{}; const played=(s.wins||0)+(s.losses||0); return played?(s.wins||0)/played:0; }
 function prefRankOf(regionId) { const r=prefRegion(regionId); return r?.rankPosition||47; }
+// Use the visible current ranking as the single source of truth for turn order.
+// Lower position number means a higher-ranked representative. RankingOrder breaks ties stably.
+function prefTurnOrderRegions() {
+  if(!campaignState?.regions)return [];
+  const savedOrder=Array.isArray(campaignState.rankingOrder)?campaignState.rankingOrder:[];
+  const orderIndex=new Map(savedOrder.map((id,index)=>[String(id),index]));
+  return Object.values(campaignState.regions).slice().sort((a,b)=>{
+    const ia=orderIndex.has(String(a.id))?orderIndex.get(String(a.id)):Number.MAX_SAFE_INTEGER;
+    const ib=orderIndex.has(String(b.id))?orderIndex.get(String(b.id)):Number.MAX_SAFE_INTEGER;
+    const ra=Number(a.rankPosition)>0?Number(a.rankPosition):ia+1;
+    const rb=Number(b.rankPosition)>0?Number(b.rankPosition):ib+1;
+    return ra-rb || ia-ib || String(a.prefecture||a.id).localeCompare(String(b.prefecture||b.id),'ja');
+  });
+}
 function prefTierBadge(tier) { return `<span class="inline-flex items-center justify-center min-w-8 px-2 py-1 rounded-md border font-black ${prefTierClass(tier)}">${prefEsc(tier)}</span>`; }
 function prefRankLabel(region) { const pos=region?.rankPosition||47; return `${pos}位${(region?.rankTieCount||1)>1?'タイ':''}`; }
 function prefBook(regionId, delta, reason='income', noAllTime=false) {
@@ -1095,25 +1120,26 @@ function renderPrefDashboard(){prefRenderDashboard();}
 function renderPrefMarket(){prefRenderMarket();}
 
 function prefRecoverPendingBattlePreview(tx=campaignState?.turnProcessing, silent=false) {
-  if(!campaignState||!tx||tx.stage==='player-preview')return tx?.stage==='player-preview';
+  if(!campaignState||!tx)return false;
+  if(tx.stage==='player-preview')return true;
   const playerAction=tx.actions?.[PREF_PLAYER_ID];
   if(playerAction?.type!=='battle'||!Array.isArray(tx.pairs))return false;
   const pair=tx.pairs.find(item=>(item.a===PREF_PLAYER_ID||item.b===PREF_PLAYER_ID)&&item.status!=='done');
   if(!pair)return false;
+  // Do not jump ahead of higher-ranked actions after a reload. Recover the player's preview
+  // only when their battle is the next unresolved item in the rank-ordered resolution queue.
+  const queue=prefEnsureTurnResolutionQueue(tx);
+  const next=queue[tx.resolutionIndex];
+  if(next?.type!=='battle'||String(next.pairId)!==String(pair.id))return false;
   const pairIndex=tx.pairs.indexOf(pair);
-  const savedCursor=Number.isInteger(tx.pairIndex)?Math.max(0,tx.pairIndex):0;
-  // Battle outcomes are committed atomically before a pair becomes "done". A pending or
-  // player-running pair therefore has no saved result and can safely return to preview.
   pair.status='pending';
-  tx.stage='player-preview';
-  // Keep any earlier unfinished AI matches queued; resume from the saved cursor, but never beyond this player pair.
-  tx.pairIndex=Math.min(savedCursor,pairIndex);
+  tx.stage='player-preview';tx.pairIndex=Math.max(0,pairIndex);
+  tx.resolutionQueue[tx.resolutionIndex].status='pending';
   tx.currentPairId=null;
   const units=prefOwnedUnits(PREF_PLAYER_ID);
   const candidate=campaignState.draftLoadout||playerAction.loadout||prefDefaultLoadout(PREF_PLAYER_ID);
   let active=(candidate.active||[]).filter(id=>units.some(unit=>String(unit.id)===String(id))).slice(0,3);
   let reserve=(candidate.reserve||[]).filter(id=>units.some(unit=>String(unit.id)===String(id))&&!active.some(x=>String(x)===String(id))).slice(0,2);
-  // Preserve as much of the previously selected lineup as possible; fill missing slots only if needed.
   for(const unit of units){
     if(active.length>=3)break;
     if(!active.some(x=>String(x)===String(unit.id))&&!reserve.some(x=>String(x)===String(unit.id)))active.push(unit.id);
@@ -1123,16 +1149,18 @@ function prefRecoverPendingBattlePreview(tx=campaignState?.turnProcessing, silen
     if(!active.some(x=>String(x)===String(unit.id))&&!reserve.some(x=>String(x)===String(unit.id)))reserve.push(unit.id);
   }
   campaignState.draftLoadout={active,reserve};
-  if(!silent)prefLog('保存データの復旧：未決着の対戦を、対戦相手決定後の編成確認に戻しました。','warning');
+  if(!silent)prefLog('保存データの復旧：順位順の行動処理が京都府の対戦に到達したため、編成確認に戻しました。','warning');
   return true;
 }
+
 function prefEnsurePreviewResumeButton() {
   const button=document.getElementById('campaign-preview-resume');if(!button)return;
   // Keep the rescue control outside switchable views so navigation cannot orphan it.
   if(button.parentElement!==document.body)document.body.appendChild(button);
   const tx=campaignState?.turnProcessing;
   const waiting=tx?.stage==='player-preview';
-  const recoverable=!!tx && tx.stage!=='player-preview' && tx.stage==='battles' && tx.actions?.[PREF_PLAYER_ID]?.type==='battle' && (tx.pairs||[]).some(pair=>(pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID)&&pair.status!=='done') && !campaignBattlePending;
+  const nextStep=tx?prefNextTurnResolution(tx):null;
+  const recoverable=!!tx && tx.stage!=='player-preview' && tx.stage==='battles' && !tx.playerLoadoutConfirmed && tx.actions?.[PREF_PLAYER_ID]?.type==='battle' && (tx.pairs||[]).some(pair=>(pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID)&&pair.status!=='done'&&nextStep?.type==='battle'&&String(nextStep.pairId)===String(pair.id)) && !campaignBattlePending;
   const processing=!!tx && !waiting && !recoverable && !campaignBattlePending;
   const currentView=document.querySelector('.view-section:not(.hidden)')?.id||'';
   const loadoutOpen=currentView==='view-prefecture'&&!document.getElementById('pref-battle-selection')?.classList.contains('hidden');
@@ -1442,9 +1470,65 @@ function prefAiTryEconomy(region) {
   }
 }
 
+function prefBuildTurnResolutionQueue(actions,pairs,unmatched,investigationsAlreadyResolved=false) {
+  const pairByRegion=new Map();
+  for(const pair of Array.isArray(pairs)?pairs:[]){pairByRegion.set(String(pair.a),pair);pairByRegion.set(String(pair.b),pair);}
+  const queue=[];const seenPairs=new Set();
+  // Once every command/opponent is known, resolve actions a second time in the same rank order.
+  // A battle is one joint action and is placed where the higher-ranked member appears first.
+  for(const region of prefTurnOrderRegions()){
+    const id=String(region.id),action=actions?.[region.id];
+    if(action?.type==='battle'){
+      const pair=pairByRegion.get(id);
+      if(pair&&!seenPairs.has(String(pair.id))){
+        seenPairs.add(String(pair.id));
+        queue.push({id:`battle:${pair.id}`,type:'battle',pairId:pair.id,status:pair.status==='done'?'done':'pending'});
+      }else if(unmatched===region.id){
+        queue.push({id:`unmatched:${id}`,type:'unmatched',regionId:region.id,status:'done'});
+      }
+    }else if(action?.type==='investigate'){
+      queue.push({id:`investigate:${id}`,type:'investigate',regionId:region.id,status:investigationsAlreadyResolved?'done':'pending'});
+    }
+  }
+  return queue;
+}
+function prefEnsureTurnResolutionQueue(tx) {
+  if(!tx)return [];
+  tx.pairs=Array.isArray(tx.pairs)?tx.pairs:[];
+  tx.actions=tx.actions&&typeof tx.actions==='object'?tx.actions:{};
+  if(!Array.isArray(tx.resolutionQueue)){
+    tx.resolutionQueue=prefBuildTurnResolutionQueue(tx.actions,tx.pairs,tx.unmatched,!!tx.investigationsResolved);
+  }
+  const resolvedInvestigations=new Set(Array.isArray(tx.resolvedInvestigationIds)?tx.resolvedInvestigationIds.map(String):[]);
+  for(const step of tx.resolutionQueue){
+    if(step.type==='battle'){
+      const pair=tx.pairs.find(x=>String(x.id)===String(step.pairId));
+      if(pair?.status==='done')step.status='done';
+    }else if(step.type==='investigate'&&(tx.investigationsResolved||resolvedInvestigations.has(String(step.regionId))))step.status='done';
+  }
+  const next=tx.resolutionQueue.findIndex(step=>step.status!=='done');
+  tx.resolutionIndex=next<0?tx.resolutionQueue.length:next;
+  return tx.resolutionQueue;
+}
+function prefTurnResolutionProgress(tx) {
+  const queue=Array.isArray(tx?.resolutionQueue)?tx.resolutionQueue:[];
+  const done=queue.filter(step=>step.status==='done').length;
+  const progress=Math.round(done/Math.max(1,queue.length)*100);
+  const bar=document.getElementById('pref-turn-progress-bar'),txt=document.getElementById('pref-turn-progress-text');
+  if(bar)bar.style.width=`${progress}%`;
+  if(txt)txt.textContent=`順位順の行動処理 ${done}/${queue.length} 件を処理しました。`;
+  return {done,total:queue.length,progress};
+}
+function prefNextTurnResolution(tx) {
+  const queue=prefEnsureTurnResolutionQueue(tx);
+  const step=queue[tx.resolutionIndex];
+  return step||null;
+}
+
 function prefPairBattlers(actions) {
+  const orderIndex=new Map(prefTurnOrderRegions().map((r,i)=>[String(r.id),i]));
   let fighters=Object.entries(actions).filter(([id,a])=>a?.type==='battle').map(([id])=>id);
-  fighters.sort((a,b)=>prefRankOf(a)-prefRankOf(b)||String(a).localeCompare(String(b),'ja'));
+  fighters.sort((a,b)=>prefRankOf(a)-prefRankOf(b)||(orderIndex.get(String(a))??999)-(orderIndex.get(String(b))??999)||String(a).localeCompare(String(b),'ja'));
   let unmatched=null;
   if(fighters.length%2===1){
     const eligible=fighters.filter(id=>id!==PREF_PLAYER_ID);
@@ -1461,8 +1545,8 @@ function prefPairBattlers(actions) {
   return {pairs,unmatched};
 }
 function prefApplyCommandStreaks(actions) {
-  for(const [id,action] of Object.entries(actions)){
-    const region=prefRegion(id);if(!region)continue;
+  for(const region of prefTurnOrderRegions()){
+    const action=actions?.[region.id];if(!action)continue;
     region.lastCommand=action.type;region.lastCommandAbs=prefAbsTurn();
     if(action.type==='battle'){region.nonBattleStreak=0;region.lastBattleAbs=prefAbsTurn();}
     else region.nonBattleStreak=Math.min(3,(region.nonBattleStreak||0)+1);
@@ -1501,15 +1585,87 @@ function prefAutoBuyListedMagics(region){
   }
   return false;
 }
-function prefMakeTurnActions(playerAction) {
-  const actions={[PREF_PLAYER_ID]:playerAction};
-  for(const r of Object.values(campaignState.regions).filter(x=>!x.isPlayer)){
-    prefAiTryEconomy(r);
-    const action=prefDecideAiCommand(r);
-    actions[r.id]=action;
-  }
-  return actions;
+function prefFallbackAiCommand(region) {
+  const otherIds=prefTurnOrderRegions().filter(r=>r.id!==region?.id).map(r=>r.id);
+  const target=otherIds.length?prefRandom(otherIds):null;
+  const mustBattle=(Number(region?.nonBattleStreak)||0)>=3 && prefOwnedUnits(region.id).length>=3;
+  const justBattled=Number(region?.lastBattleAbs)>0 && Number(region.lastBattleAbs)===prefAbsTurn()-1;
+  if(mustBattle && !justBattled)return {type:'battle'};
+  return {type:'investigate',target:target||PREF_PLAYER_ID,topic:'cards'};
 }
+function prefGetAiTurnAction(region) {
+  try {
+    prefAiTryEconomy(region);
+  } catch(err) {
+    console.error(`[Prefecture] AI economy failed for ${region.id}; continuing this turn`,err);
+    prefLog(`${region.prefecture}の市場・ガチャ判断でエラーが発生したため、購入処理をスキップしました。`,'warning');
+  }
+  let action=null;
+  try { action=prefDecideAiCommand(region); }
+  catch(err) {
+    console.error(`[Prefecture] AI command decision failed for ${region.id}; using fallback`,err);
+    prefLog(`${region.prefecture}のコマンド選択でエラーが発生したため、安全な代替コマンドを使用しました。`,'warning');
+    action=prefFallbackAiCommand(region);
+  }
+  if(!action || !['battle','investigate'].includes(action.type))action=prefFallbackAiCommand(region);
+  if(action.type==='investigate' && (!action.target || !prefRegion(action.target) || action.target===region.id)){
+    action={...action,target:prefTurnOrderRegions().find(x=>x.id!==region.id)?.id||PREF_PLAYER_ID,topic:action.topic||'cards'};
+  }
+  return action;
+}
+function prefMakeTurnActions(playerAction) {
+  // Normally all actions were planned in a single ranked pass, after the market/gacha decision
+  // for each representative. The fallback below supports older or partially saved transactions.
+  const prepared=campaignState?.turnProcessing?.preparedActions;
+  const actionById={[PREF_PLAYER_ID]:playerAction};
+  for(const r of prefTurnOrderRegions()){
+    if(r.isPlayer || r.id===PREF_PLAYER_ID)continue;
+    const preselected=prepared?.[r.id];
+    actionById[r.id]=preselected&&['battle','investigate'].includes(preselected.type)?preselected:prefGetAiTurnAction(r);
+  }
+  const ordered={};
+  for(const r of prefTurnOrderRegions())if(actionById[r.id])ordered[r.id]=actionById[r.id];
+  if(!ordered[PREF_PLAYER_ID])ordered[PREF_PLAYER_ID]=playerAction;
+  return ordered;
+}
+async function prefPrepareTurnActionsInRankOrder(playerAction,tx) {
+  if(!campaignState||!tx||campaignState.turnProcessing!==tx)return false;
+  const ordered=prefTurnOrderRegions();
+  tx.preparedActions=tx.preparedActions&&typeof tx.preparedActions==='object'?tx.preparedActions:{};
+  tx.preparedActions[PREF_PLAYER_ID]=playerAction;
+  tx.preparationProcessedIds=Array.isArray(tx.preparationProcessedIds)?tx.preparationProcessedIds.map(String):[];
+  const processed=new Set(tx.preparationProcessedIds);
+  const start=Math.max(0,Number(tx.preparationIndex)||0);
+  for(let i=start;i<ordered.length;i++){
+    const region=ordered[i],id=String(region.id);
+    if(processed.has(id))continue;
+    tx.preparationIndex=i;
+    // Each representative finishes their configured auto-buy, discretionary market/gacha
+    // evaluation, and command selection before the next-ranked representative starts.
+    let autoBuyResult=false;
+    try { autoBuyResult=prefAutoBuyListedMagics(region); }
+    catch(err) {
+      console.error(`[Prefecture] auto-buy failed for ${id}; skipping only this representative's auto-buy`,err);
+      prefLog(`${region.prefecture}の自動市場購入に失敗したため、その購入のみスキップしました。`,'warning');
+    }
+    if(autoBuyResult==='pending'){
+      tx.stage='awaiting-capacity';tx.resumePlayerAction=playerAction;tx.preparationIndex=i;
+      await prefSave();prefSyncCampaignClones();prefRenderAll();prefShowReplaceModal();return false;
+    }
+    if(!region.isPlayer&&id!==String(PREF_PLAYER_ID))tx.preparedActions[id]=prefGetAiTurnAction(region);
+    processed.add(id);tx.preparationProcessedIds=[...processed];tx.preparationIndex=i+1;
+  }
+  tx.preparationComplete=true;tx.stage='matching';delete tx.resumePlayerAction;
+  await prefSave();
+  return true;
+}
+async function prefStartTurnAfterAutoBuy(playerAction,tx) {
+  if(!campaignState||!tx||campaignState.turnProcessing!==tx)return;
+  const ready=await prefPrepareTurnActionsInRankOrder(playerAction,tx);
+  if(!ready)return;
+  await prefFinishTurnInitialization(playerAction,tx);
+}
+
 async function prefBeginTurn(playerAction) {
   if(!campaignState||campaignState.gameOver||campaignState.turnProcessing)return;
   const p=prefPlayerRegion();
@@ -1523,45 +1679,45 @@ async function prefBeginTurn(playerAction) {
   await prefStartTurnAfterAutoBuy(playerAction,tx);
 }
 
-async function prefStartTurnAfterAutoBuy(playerAction,tx) {
-  if(!campaignState||!tx||campaignState.turnProcessing!==tx)return;
-  // If a player's auto-buy reaches the 50-card limit, pause the turn transaction until the user chooses
-  // which owned magic to list. Resolving the choice returns here and continues the same saved turn.
-  for(const region of Object.values(campaignState.regions)){
-    const result=prefAutoBuyListedMagics(region);
-    if(result==='pending'){
-      tx.stage='awaiting-capacity';tx.resumePlayerAction=playerAction;
-      await prefSave();prefSyncCampaignClones();prefRenderAll();prefShowReplaceModal();return;
-    }
-  }
-  tx.stage='matching';delete tx.resumePlayerAction;
-  await prefFinishTurnInitialization(playerAction,tx);
-}
-
-async function prefFinishTurnInitialization(playerAction,tx) {
+function prefInitializeTurnResolution(tx,playerAction) {
   const actions=prefMakeTurnActions(playerAction);
   prefApplyCommandStreaks(actions);
   let matched=prefPairBattlers(actions);
-  // Normally there are many AI entrants, but if the player is the only entrant, assign an eligible rival so the selected battle command can still proceed.
+  // Normally there are many AI entrants. If the player is the only entrant, assign a valid
+  // rival so a selected battle can proceed, then rebuild the opponent list before any action resolves.
   if(playerAction.type==='battle'&&matched.unmatched===PREF_PLAYER_ID&&!(matched.pairs||[]).some(pair=>pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID)){
-    const fallback=Object.values(campaignState.regions).filter(r=>r.id!==PREF_PLAYER_ID&&prefOwnedUnits(r.id).length>=3&&!(r.lastBattleAbs>0&&r.lastBattleAbs===prefAbsTurn()-1)).sort((a,b)=>Math.abs(prefRankOf(a.id)-prefRankOf(PREF_PLAYER_ID))-Math.abs(prefRankOf(b.id)-prefRankOf(PREF_PLAYER_ID)))[0];
+    const fallback=prefTurnOrderRegions().filter(r=>r.id!==PREF_PLAYER_ID&&prefOwnedUnits(r.id).length>=3&&!(r.lastBattleAbs>0&&r.lastBattleAbs===prefAbsTurn()-1))
+      .sort((a,b)=>Math.abs(prefRankOf(a.id)-prefRankOf(PREF_PLAYER_ID))-Math.abs(prefRankOf(b.id)-prefRankOf(PREF_PLAYER_ID)))[0];
     if(fallback){fallback.lastCommand='battle';fallback.lastCommandAbs=prefAbsTurn();fallback.nonBattleStreak=0;fallback.lastBattleAbs=prefAbsTurn();actions[fallback.id]={type:'battle'};matched=prefPairBattlers(actions);}
   }
-  tx.actions=actions;tx.pairs=matched.pairs;tx.unmatched=matched.unmatched;tx.stage='battles';tx.pairIndex=0;
+  tx.actions=actions;tx.pairs=matched.pairs;tx.unmatched=matched.unmatched;tx.stage='battles';tx.pairIndex=0;tx.currentPairId=null;
+  delete tx.preparedActions;delete tx.preparationProcessedIds;delete tx.preparationIndex;delete tx.preparationComplete;
+  tx.investigationsResolved=false;tx.resolvedInvestigationIds=[];tx.playerLoadoutConfirmed=false;
+  tx.resolutionQueue=prefBuildTurnResolutionQueue(actions,matched.pairs,matched.unmatched,false);tx.resolutionIndex=0;
   if(matched.unmatched)prefLog(`${prefRegion(matched.unmatched)?.prefecture||matched.unmatched}は対戦希望者が奇数だったため、今週は対戦不成立（対戦扱い）となりました。`,'info');
-  Object.entries(actions).forEach(([id,a])=>{if(id!==PREF_PLAYER_ID&&a.type==='investigate')tx.actions[id]={...a};});
+  return tx;
+}
+async function prefFinishTurnInitialization(playerAction,tx) {
+  if(!campaignState||campaignState.turnProcessing!==tx)return;
+  prefInitializeTurnResolution(tx,playerAction);
   await prefSave();prefRenderAll();
-  const playerPair=(tx.pairs||[]).find(pair=>pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID);
-  if(playerPair){
-    const opponentId=playerPair.a===PREF_PLAYER_ID?playerPair.b:playerPair.a;const opponent=prefRegion(opponentId);
-    campaignState.draftLoadout=JSON.parse(JSON.stringify(playerAction.loadout||prefDefaultLoadout(PREF_PLAYER_ID)));
-    tx.stage='player-preview';await prefSave();prefRenderDashboard();prefEnsurePreviewResumeButton();
-    const opponentIconUrl=prefRegionIconUrl(opponent);
-    const opponentAvatar=opponentIconUrl?`<img src="${prefEsc(opponentIconUrl)}" alt="" class="w-16 h-16 rounded-full object-cover mx-auto mb-2 border-2 border-rose-500" onerror="this.remove()">`:`<div class="text-4xl mb-2">${prefEsc(opponent?.icon||'🏯')}</div>`;
-    prefShowModal('⚔️ 対戦相手が決定',`<div class="text-center">${opponentAvatar}<div class="text-2xl font-black text-rose-200">${prefEsc(opponent?.prefecture||opponentId)}</div><div class="text-lg font-bold mt-1">${prefEsc(opponent?.repName||'代表')}</div><div class="mt-2 text-amber-200 font-black">現在順位：${prefRankOf(opponentId)}位（${prefEsc(opponent?.tier||'E')}ランク）</div><div class="text-xs text-slate-400 mt-1">所持資金：${prefFormatMoney(opponent?.funds||0)}</div><div class="mt-4 rounded-lg border border-rose-900/60 bg-slate-900 p-3 text-sm text-slate-200">対戦相手のカード内容は、この時点では公開されません。カード情報は調査で判明した範囲だけ確認できます。</div><p class="text-xs text-slate-400 mt-3">相手は確定しました。編成はこの後で変更して最終確定できます。カードホルダーや調査結果を確認した後も、ゲーム画面の「編成を確定して対戦開始」から再開できます。</p></div>`,[{label:'閉じる',action:'close-modal'},{label:'編成・調査を確認',action:'battle-preview-back'},{label:'編成を選んで対戦開始',action:'battle-preview-continue',style:'primary'}]);
-    return;
-  }
+  // All pairings are now fixed. The joint battle/investigation actions are resolved in the same rank order.
   await prefContinueTurn();
+}
+
+async function prefShowRankedPlayerBattlePreview(pair,tx) {
+  if(!campaignState||!tx||campaignState.turnProcessing!==tx||!pair)return;
+  const playerAction=tx.actions?.[PREF_PLAYER_ID]||{};
+  const opponentId=pair.a===PREF_PLAYER_ID?pair.b:pair.a;
+  const opponent=prefRegion(opponentId);
+  campaignState.draftLoadout=JSON.parse(JSON.stringify(playerAction.loadout||prefDefaultLoadout(PREF_PLAYER_ID)));
+  tx.stage='player-preview';tx.currentPairId=pair.id;tx.pairIndex=Math.max(0,tx.pairs.indexOf(pair));
+  tx.playerLoadoutConfirmed=false;
+  await prefSave();prefRenderDashboard();prefEnsurePreviewResumeButton();
+  document.getElementById('pref-turn-progress')?.classList.remove('hidden');
+  const opponentIconUrl=prefRegionIconUrl(opponent);
+  const opponentAvatar=opponentIconUrl?`<img src="${prefEsc(opponentIconUrl)}" alt="" class="w-16 h-16 rounded-full object-cover mx-auto mb-2 border-2 border-rose-500" onerror="this.remove()">`:`<div class="text-4xl mb-2">${prefEsc(opponent?.icon||'🏯')}</div>`;
+  prefShowModal('⚔️ 対戦相手が決定',`<div class="text-center">${opponentAvatar}<div class="text-2xl font-black text-rose-200">${prefEsc(opponent?.prefecture||opponentId)}</div><div class="text-lg font-bold mt-1">${prefEsc(opponent?.repName||'代表')}</div><div class="mt-2 text-amber-200 font-black">現在順位：${prefRankOf(opponentId)}位（${prefEsc(opponent?.tier||'E')}ランク）</div><div class="text-xs text-slate-400 mt-1">所持資金：${prefFormatMoney(opponent?.funds||0)}</div><div class="mt-4 rounded-lg border border-rose-900/60 bg-slate-900 p-3 text-sm text-slate-200">全代表の対戦相手は確定済みです。現在の順位順で先行する代表の行動を処理し、京都府の行動順になりました。相手のカード内容は、調査で判明した範囲だけ確認できます。</div><p class="text-xs text-slate-400 mt-3">編成を最終確認すると、この順位から戦闘を行い、その後の代表の対戦・調査を順位順に処理します。</p></div>`,[{label:'閉じる',action:'close-modal'},{label:'編成・調査を確認',action:'battle-preview-back'},{label:'編成を選んで対戦開始',action:'battle-preview-continue',style:'primary'}]);
 }
 
 function prefEstimateBuildScenarios(region,activeCards,reserveCards,magicCards) {
@@ -1731,16 +1887,22 @@ function prefResignRival(region) {
   prefLog(`${region.prefecture}の代表${old}が資金マイナスで辞職。${name}が初期資金1億円で就任しました。カードと都道府県の年間成績は引き継がれます。`,'warning');
 }
 async function prefApplyBattleOutcome(aId,bId,engineResult,selectedA,selectedB) {
-  const a=prefRegion(aId),b=prefRegion(bId);if(!a||!b)return;
-  prefConsumeMagic(aId,engineResult.usedAMagic||[]);prefConsumeMagic(bId,engineResult.usedBMagic||[]);
-  const result=engineResult.winner||'draw';let winnerId=null,loserId=null;
+  const a=prefRegion(aId),b=prefRegion(bId);if(!a||!b)throw new Error(`対戦結果を適用する代表が見つかりません: ${aId} / ${bId}`);
+  const ensureStats=region=>{
+    region.yearStats=region.yearStats&&typeof region.yearStats==='object'?region.yearStats:prefNewStats();
+    region.allTimeStats=region.allTimeStats&&typeof region.allTimeStats==='object'?region.allTimeStats:{wins:0,losses:0,draws:0,battles:0,assetMetric:0};
+  };
+  ensureStats(a);ensureStats(b);
+  prefConsumeMagic(aId,engineResult?.usedAMagic||[]);prefConsumeMagic(bId,engineResult?.usedBMagic||[]);
+  const rawResult=engineResult?.winner;
+  const result=['player','enemy','draw'].includes(rawResult)?rawResult:'draw';let winnerId=null,loserId=null;
   if(result==='player'){winnerId=aId;loserId=bId;}else if(result==='enemy'){winnerId=bId;loserId=aId;}
   if(result==='draw'){
     a.yearStats.draws=(a.yearStats.draws||0)+1;b.yearStats.draws=(b.yearStats.draws||0)+1;
     a.allTimeStats.draws=(a.allTimeStats.draws||0)+1;b.allTimeStats.draws=(b.allTimeStats.draws||0)+1;
     a.yearStats.battles=(a.yearStats.battles||0)+1;b.yearStats.battles=(b.yearStats.battles||0)+1;
     a.allTimeStats.battles=(a.allTimeStats.battles||0)+1;b.allTimeStats.battles=(b.allTimeStats.battles||0)+1;
-    prefLog(`${a.prefecture}と${b.prefecture}の対戦は引き分けでした。`,'info');
+    try{prefLog(`${a.prefecture}と${b.prefecture}の対戦は引き分けでした。`,'info');}catch(err){console.warn('[Prefecture] match log update failed',err);}
   }else{
     const w=prefRegion(winnerId),l=prefRegion(loserId);
     w.yearStats.wins=(w.yearStats.wins||0)+1;l.yearStats.losses=(l.yearStats.losses||0)+1;
@@ -1750,12 +1912,18 @@ async function prefApplyBattleOutcome(aId,bId,engineResult,selectedA,selectedB) 
     const amount=Math.max(30000000,Math.floor(Math.max(0,Number(l.funds)||0)*0.30));
     prefBook(winnerId,amount,'battle-win');prefBook(loserId,-amount,'battle-loss');
     const loserDeck=loserId===aId?selectedA:selectedB;
-    const destroyed=prefRandomDestroyUnits(loserId,loserDeck);if(loserId===PREF_PLAYER_ID)campaignState.lastPlayerBattleDestroyed=destroyed.map(id=>prefTemplate(campaignState.instances[id]?.templateId)?.name||'キャラカード');else campaignState.lastPlayerBattleDestroyed=[];
-    prefLog(`${w.prefecture}が${l.prefecture}に勝利。${prefFormatMoney(amount)}を獲得しました。${l.prefecture}は${prefFormatMoney(amount)}を支払い、キャラカード${destroyed.length}枚を失いました。`,'success');
+    let destroyed=[];
+    try{destroyed=prefRandomDestroyUnits(loserId,loserDeck)||[];}
+    catch(err){console.error('[Prefecture] card destruction follow-up failed; battle result was retained',err);}
+    if(loserId===PREF_PLAYER_ID)campaignState.lastPlayerBattleDestroyed=destroyed.map(id=>prefTemplate(campaignState.instances[id]?.templateId)?.name||'キャラカード');else campaignState.lastPlayerBattleDestroyed=[];
+    try{prefLog(`${w.prefecture}が${l.prefecture}に勝利。${prefFormatMoney(amount)}を獲得しました。${l.prefecture}は${prefFormatMoney(amount)}を支払い、キャラカード${destroyed.length}枚を失いました。`,'success');}catch(err){console.warn('[Prefecture] match log update failed',err);}
   }
-  prefPersistBattleMemory(aId,bId,engineResult,selectedA,selectedB,winnerId,loserId,result);
-  if(loserId){const loser=prefRegion(loserId);if(loser&&!loser.isPlayer&&loser.funds<0)prefResignRival(loser);}
-  prefRefreshAIPlan(a,'対戦結果・主要カード損失の確認',true);prefRefreshAIPlan(b,'対戦結果・主要カード損失の確認',true);
+  // Post-match AI memory/plan refresh is useful but must not turn a committed match into
+  // a failed match if an optional analytics function encounters malformed legacy data.
+  try { prefPersistBattleMemory(aId,bId,engineResult,selectedA,selectedB,winnerId,loserId,result); }
+  catch(err) { console.error('[Prefecture] could not refresh AI battle memory; result was already applied',err); }
+  if(loserId){const loser=prefRegion(loserId);if(loser&&!loser.isPlayer&&loser.funds<0){try{prefResignRival(loser);}catch(err){console.error('[Prefecture] rival resignation follow-up failed',err);}}}
+  for(const region of [a,b])try{prefRefreshAIPlan(region,'対戦結果・主要カード損失の確認',true);}catch(err){console.error(`[Prefecture] AI plan refresh failed for ${region.id}; match result was kept`,err);}
   return {winnerId,loserId,result};
 }
 function prefPersistBattleMemory(aId,bId,engineResult,selectedA,selectedB,winnerId,loserId,result) {
@@ -1777,55 +1945,81 @@ function prefPersistBattleMemory(aId,bId,engineResult,selectedA,selectedB,winner
   }
 }
 async function prefSimulateAiBattle(pair) {
-  const override=prefBattleOverrideForRegions(pair.a,pair.b);
-  campaignBattleOverride=override;campaignBattlePending=null;campaignHeadlessBattle=true;window.__campaignHeadlessBattle=true;
+  let override=null,engineResult=null,selectedA=[],selectedB=[],simulationError=null;
   try {
+    override=prefBattleOverrideForRegions(pair.a,pair.b);
+    selectedA=(override.selectedA||[]).slice();selectedB=(override.selectedB||[]).slice();
+    campaignBattleOverride=override;campaignBattlePending=null;campaignHeadlessBattle=true;window.__campaignHeadlessBattle=true;
     startBattle();
     await new Promise(resolve=>setTimeout(resolve,0));
     let guard=0;
-    while(!battleState.resultWinner && guard<20){
-      if(battleState.phase!=='decision') await new Promise(resolve=>setTimeout(resolve,0));
-      if(battleState.phase==='decision'){
+    while(!battleState?.resultWinner && guard<20){
+      if(battleState?.phase!=='decision') await new Promise(resolve=>setTimeout(resolve,0));
+      if(battleState?.phase==='decision'){
         chooseAiTurnPlan('player');
         await confirmPlayerActions();
-      } else if(battleState.phase==='result')break;
+      } else if(battleState?.phase==='result')break;
       await new Promise(resolve=>setTimeout(resolve,0));
       guard++;
     }
-    if(!battleState.resultWinner){battleState.resultWinner='draw';battleState.phase='result';}
-    const result=prefBattleResultFromEngine();
-    await prefApplyBattleOutcome(pair.a,pair.b,result,override.selectedA,override.selectedB);
-    return result.winner;
+    if(!battleState?.resultWinner){battleState.resultWinner='draw';battleState.phase='result';}
+    engineResult=prefBattleResultFromEngine();
   } catch(err) {
-    console.error('[Prefecture] AI battle simulation failed; fallback to HP evaluator',err);
-    const a=prefOwnedUnits(pair.a),b=prefOwnedUnits(pair.b);
-    const score=arr=>arr.reduce((sum,i)=>{const c=prefCardForInstance(i.id);return sum+(Number(c?.stats?.hp)||0)*0.2+(Number(c?.stats?.atk)||0)+prefRankStars(c)*250;},0);
-    const winner=score(a)>score(b)?'player':score(b)>score(a)?'enemy':'draw';
-    await prefApplyBattleOutcome(pair.a,pair.b,{winner,usedAMagic:[],usedBMagic:[]},prefDefaultLoadout(pair.a).active.concat(prefDefaultLoadout(pair.a).reserve),prefDefaultLoadout(pair.b).active.concat(prefDefaultLoadout(pair.b).reserve));
-    return winner;
+    simulationError=err;
   } finally {
     campaignHeadlessBattle=false;window.__campaignHeadlessBattle=false;campaignBattleOverride=null;campaignBattlePending=null;
-    prefSyncCampaignClones();
   }
+
+  if(simulationError||!engineResult){
+    console.error('[Prefecture] AI battle engine failed; using a safe, single-result fallback',simulationError||new Error('対戦エンジンが結果を返しませんでした'));
+    prefLog(`${prefRegion(pair.a)?.prefecture||pair.a}対${prefRegion(pair.b)?.prefecture||pair.b}の通常対戦処理に失敗したため、代替評価で結果を確定しました。原因詳細はコンソールに記録されています。`,'warning');
+    // Do not call the advanced deck search again here: that may be the source of the error.
+    const safeA=prefDefaultLoadoutFallback(pair.a),safeB=prefDefaultLoadoutFallback(pair.b);
+    if(!selectedA.length)selectedA=[...(safeA.active||[]),...(safeA.reserve||[])].slice(0,5);
+    if(!selectedB.length)selectedB=[...(safeB.active||[]),...(safeB.reserve||[])].slice(0,5);
+    const score=ids=>(ids||[]).reduce((sum,id)=>{
+      const card=prefCardForInstance(id)||prefTemplate(campaignState?.instances?.[id]?.templateId);
+      return sum+(Number(card?.stats?.hp)||0)*0.2+(Number(card?.stats?.atk)||0)+prefRankStars(card)*250;
+    },0);
+    engineResult={winner:score(selectedA)>score(selectedB)?'player':score(selectedB)>score(selectedA)?'enemy':'draw',usedAMagic:[],usedBMagic:[]};
+  }
+
+  // Apply the battle exactly once, outside the simulation catch. If result settlement itself fails,
+  // let the turn recovery UI show the precise stack rather than retrying and double-counting rewards.
+  await prefApplyBattleOutcome(pair.a,pair.b,engineResult,selectedA,selectedB);
+  try { prefSyncCampaignClones(); } catch(err) { console.warn('[Prefecture] card-clone refresh failed after AI battle',err); }
+  return engineResult.winner||'draw';
 }
 
 function prefLaunchPlayerBattle(pair) {
+  const tx=campaignState?.turnProcessing;
+  if(!tx||!pair)throw new Error('対戦開始時にターン情報または対戦相手が見つかりません。');
   const a=PREF_PLAYER_ID,bId=pair.a===PREF_PLAYER_ID?pair.b:pair.a;
-  const loadout=campaignState.turnProcessing.actions[PREF_PLAYER_ID].loadout||prefDefaultLoadout(PREF_PLAYER_ID);
+  const loadout=tx.actions?.[PREF_PLAYER_ID]?.loadout||prefDefaultLoadoutFallback(PREF_PLAYER_ID);
   const override=prefBattleOverrideForRegions(a,bId,loadout);
   campaignBattleOverride=override;
-  campaignBattlePending={pairId:pair.id,pairIndex:campaignState.turnProcessing.pairIndex,playerRegionId:a,opponentRegionId:bId,selectedPlayer:override.selectedA,selectedOpponent:override.selectedB};
-  pair.status='player-running';campaignState.turnProcessing.currentPairId=pair.id;
-  prefSave().then(()=>{prefRenderDashboard();startBattle();}).catch(console.error);
+  campaignBattlePending={pairId:pair.id,pairIndex:tx.pairs.indexOf(pair),playerRegionId:a,opponentRegionId:bId,selectedPlayer:override.selectedA,selectedOpponent:override.selectedB};
+  pair.status='player-running';tx.currentPairId=pair.id;
+  prefSave().then(()=>{prefRenderDashboard();startBattle();}).catch(err=>{
+    console.error('[Prefecture] player battle failed to launch',err);
+    pair.status='pending';tx.currentPairId=null;campaignBattlePending=null;campaignBattleOverride=null;
+    tx.stage='battles';
+    prefSave().catch(saveErr=>console.error('[Prefecture] could not save failed-launch recovery state',saveErr));
+    prefShowModal('対戦を開始できませんでした',`対戦相手は確定したままです。保存済みのターン処理から再開できます。<pre class="text-[10px] text-rose-200 whitespace-pre-wrap mt-2">${prefEsc(err?.stack||err?.message||String(err))}</pre>`,[{label:'閉じる',action:'close-modal',style:'slate'},{label:'保存済み処理を再開',action:'resume-turn-processing',style:'primary'}]);
+  });
 }
 async function prefFinalizePlayerBattle(winner) {
   const pending=campaignBattlePending;const tx=campaignState?.turnProcessing;if(!pending||!tx)return;
-  const pair=tx.pairs.find(x=>x.id===pending.pairId);if(!pair||pair.status==='done')return;
+  const pair=tx.pairs.find(x=>String(x.id)===String(pending.pairId));if(!pair||pair.status==='done')return;
   const engineResult=prefBattleResultFromEngine();
   await prefApplyBattleOutcome(pending.playerRegionId,pending.opponentRegionId,engineResult,pending.selectedPlayer,pending.selectedOpponent);
   pair.status='done';pair.winner=winner;pair.draw=winner==='draw';tx.pairIndex=Math.max(tx.pairIndex,pending.pairIndex+1);tx.currentPairId=null;
+  const queue=Array.isArray(tx.resolutionQueue)?tx.resolutionQueue:[];
+  const stepIndex=queue.findIndex(step=>step.type==='battle'&&String(step.pairId)===String(pair.id));
+  if(stepIndex>=0){queue[stepIndex].status='done';if(tx.resolutionIndex===stepIndex)tx.resolutionIndex=stepIndex+1;else tx.resolutionIndex=queue.findIndex(step=>step.status!=='done')<0?queue.length:queue.findIndex(step=>step.status!=='done');}
   campaignBattlePending=null;campaignBattleOverride=null;
-  prefSyncCampaignClones();await prefSave();
+  try{prefSyncCampaignClones();}catch(err){console.warn('[Prefecture] clone refresh failed after player match',err);}
+  prefTurnResolutionProgress(tx);await prefSave();
 }
 async function prefContinueTurn() {
   if(prefProcessingPromise)return prefProcessingPromise;
@@ -1833,79 +2027,135 @@ async function prefContinueTurn() {
   prefProcessingPromise=(async()=>{
     const tx=campaignState.turnProcessing;
     if(tx.stage==='matching'){
-      // The last durable checkpoint precedes AI economy/command selection, so it is safe to rebuild once.
-      const playerAction=tx.actions?.[PREF_PLAYER_ID]||{type:'investigate',target:Object.keys(campaignState.regions).find(id=>id!==PREF_PLAYER_ID),topic:'cards'};
-      const actions=prefMakeTurnActions(playerAction);prefApplyCommandStreaks(actions);
-      const matched=prefPairBattlers(actions);tx.actions=actions;tx.pairs=matched.pairs;tx.unmatched=matched.unmatched;tx.stage='battles';tx.pairIndex=0;
+      const playerAction=tx.resumePlayerAction||tx.actions?.[PREF_PLAYER_ID]||{type:'investigate',target:prefTurnOrderRegions().find(r=>r.id!==PREF_PLAYER_ID)?.id||PREF_PLAYER_ID,topic:'cards'};
+      const ready=await prefPrepareTurnActionsInRankOrder(playerAction,tx);
+      if(!ready)return;
+      prefInitializeTurnResolution(tx,playerAction);
       await prefSave();prefRenderAll();
-      if(playerAction.type==='battle'&&prefRecoverPendingBattlePreview(tx,true)){
-        await prefSave();prefRenderAll();prefEnsurePreviewResumeButton();
-        const playerPair=tx.pairs.find(pair=>(pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID)&&pair.status!=='done');
-        const opponentId=playerPair?(playerPair.a===PREF_PLAYER_ID?playerPair.b:playerPair.a):null;
-        const opponent=opponentId?prefRegion(opponentId):null;
-        if(opponent)prefShowModal('⚔️ 対戦準備を復旧しました',`<div class="text-center"><div class="text-3xl mb-2">${prefEsc(opponent.icon||'🏯')}</div><div class="text-xl font-black text-rose-200">${prefEsc(opponent.prefecture||opponentId)}</div><div class="font-bold mt-1">${prefEsc(opponent.repName||'代表')}</div><p class="text-xs text-slate-300 mt-3">更新前の保存データから、未決着の対戦を復旧しました。編成を確認して対戦を開始できます。</p></div>`,[{label:'あとで再開',action:'close-modal'},{label:'編成を確認',action:'battle-preview-continue',style:'primary'}]);
-        return;
-      }
     }
     if(tx.stage==='player-preview'){prefRenderDashboard();prefEnsurePreviewResumeButton();return;}
-    if(tx.stage==='settling'){
-      await prefCompleteTurn(tx);
-      return;
-    }
-    while(tx.pairIndex<(tx.pairs||[]).length){
-      const pair=tx.pairs[tx.pairIndex];
-      if(!pair){tx.pairIndex++;continue;}
-      if(pair.status==='done'){tx.pairIndex++;continue;}
-      if(pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID){
-        if(pair.status==='player-running' && !campaignBattlePending) { pair.status='pending'; }
-        if(!campaignBattlePending)prefLaunchPlayerBattle(pair);
-        return;
+    if(tx.stage==='settling'){await prefCompleteTurn(tx);return;}
+    // Only at the start of a resumed processing run, release stale in-progress markers.
+    // UI rerenders must not reset an action that is currently being resolved.
+    for(const pair of tx.pairs||[])if(pair.status==='simulating')pair.status='pending';
+    for(const step of tx.resolutionQueue||[])if(step.status==='processing')step.status='pending';
+    const queue=prefEnsureTurnResolutionQueue(tx);
+    if(!queue.length){tx.investigationsResolved=true;tx.stage='settling';await prefSave();await prefCompleteTurn(tx);return;}
+    document.getElementById('pref-turn-progress')?.classList.remove('hidden');
+    prefTurnResolutionProgress(tx);
+    let safety=0;
+    while(tx.resolutionIndex<queue.length && safety++<queue.length+2){
+      const step=queue[tx.resolutionIndex];
+      if(!step){tx.resolutionIndex++;continue;}
+      if(step.status==='done'){tx.resolutionIndex++;continue;}
+      if(step.type==='unmatched'){
+        step.status='done';tx.resolutionIndex++;prefTurnResolutionProgress(tx);await prefSave();continue;
       }
-      pair.status='simulating';tx.currentPairId=pair.id;await prefSave();
-      const winner=await prefSimulateAiBattle(pair);
-      pair.status='done';pair.winner=winner;pair.draw=winner==='draw';tx.pairIndex++;
-      const progress=Math.round(tx.pairIndex/Math.max(1,tx.pairs.length)*100);const bar=document.getElementById('pref-turn-progress-bar'),txt=document.getElementById('pref-turn-progress-text');if(bar)bar.style.width=`${progress}%`;if(txt)txt.textContent=`AI対戦 ${tx.pairIndex}/${tx.pairs.length} 組を処理しました。`;
-      await prefSave();prefRenderDashboard();
-      // Yield to the browser so the progress label remains responsive during multiple AI battles.
-      await new Promise(resolve=>setTimeout(resolve,0));
+      if(step.type==='battle'){
+        const pair=tx.pairs.find(item=>String(item.id)===String(step.pairId));
+        if(!pair){step.status='done';tx.resolutionIndex++;await prefSave();continue;}
+        if(pair.status==='done'){step.status='done';tx.resolutionIndex++;prefTurnResolutionProgress(tx);await prefSave();continue;}
+        if(pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID){
+          tx.pairIndex=Math.max(0,tx.pairs.indexOf(pair));tx.currentPairId=pair.id;
+          if(!tx.playerLoadoutConfirmed){await prefShowRankedPlayerBattlePreview(pair,tx);return;}
+          if(pair.status==='player-running'&&!campaignBattlePending)pair.status='pending';
+          tx.stage='battles';prefLaunchPlayerBattle(pair);return;
+        }
+        pair.status='simulating';step.status='processing';tx.currentPairId=pair.id;tx.pairIndex=Math.max(0,tx.pairs.indexOf(pair));
+        await prefSave();
+        const winner=await prefSimulateAiBattle(pair);
+        pair.status='done';pair.winner=winner;pair.draw=winner==='draw';step.status='done';tx.currentPairId=null;
+        tx.pairIndex=Math.max(tx.pairIndex,tx.pairs.indexOf(pair)+1);tx.resolutionIndex++;
+        prefTurnResolutionProgress(tx);await prefSave();prefRenderDashboard();
+        // Yield after each representative action so the progress display and UI stay responsive.
+        await new Promise(resolve=>setTimeout(resolve,0));
+        continue;
+      }
+      if(step.type==='investigate'){
+        const regionId=String(step.regionId);
+        const already=Array.isArray(tx.resolvedInvestigationIds)&&tx.resolvedInvestigationIds.includes(regionId);
+        step.status='processing';await prefSave();
+        if(!already){
+          try {
+            const resolved=prefResolveInvestigationAction(tx,regionId,tx.actions?.[regionId]);
+            if(!resolved)prefLog(`${prefRegion(regionId)?.prefecture||regionId}の調査は対象情報が不正なため実行できませんでした。`,'warning');
+          }
+          catch(err) {
+            console.error(`[Prefecture] investigation failed for ${regionId}; skipping only this investigation`,err);
+            prefLog(`${prefRegion(regionId)?.prefecture||regionId}の調査処理でエラーが発生しました。この調査のみ失敗として処理を続行します。`,'warning');
+          }
+          tx.resolvedInvestigationIds=Array.isArray(tx.resolvedInvestigationIds)?tx.resolvedInvestigationIds:[];
+          if(!tx.resolvedInvestigationIds.includes(regionId))tx.resolvedInvestigationIds.push(regionId);
+        }
+        step.status='done';tx.resolutionIndex++;
+        prefTurnResolutionProgress(tx);await prefSave();prefRenderDashboard();
+        await new Promise(resolve=>setTimeout(resolve,0));
+        continue;
+      }
+      // Unknown queue entries are ignored safely rather than locking the campaign turn.
+      console.warn('[Prefecture] unknown turn resolution entry; skipping',step);
+      step.status='done';tx.resolutionIndex++;await prefSave();
     }
-    if(!tx.investigationsResolved){
-      await prefResolveInvestigations(tx);
-      tx.investigationsResolved=true;
-      tx.stage='settling';
-      await prefSave();
+    if(tx.resolutionIndex<queue.length){
+      // Avoid an infinite loop if a malformed queue was restored from an older save.
+      prefLog('ターン処理の順序データを再構築しました。ゲーム画面から再開してください。','warning');
+      tx.resolutionQueue=prefBuildTurnResolutionQueue(tx.actions,tx.pairs,tx.unmatched,!!tx.investigationsResolved);
+      tx.resolutionIndex=0;prefEnsureTurnResolutionQueue(tx);await prefSave();prefRenderAll();return;
     }
-    await prefCompleteTurn(tx);
-  })().catch(err=>{console.error('[Prefecture] turn processing error',err);prefShowModal('ターン処理を復旧できませんでした',`保存済みの対戦結果は保持されています。ゲーム画面から再開できます。<pre class="text-[10px] text-rose-200 whitespace-pre-wrap mt-2">${prefEsc(err?.message||String(err))}</pre>`,[{label:'閉じる',action:'close-modal',style:'primary'}]);}).finally(()=>{prefProcessingPromise=null;});
+    tx.investigationsResolved=true;tx.stage='settling';tx.currentPairId=null;
+    await prefSave();await prefCompleteTurn(tx);
+  })().catch(err=>{
+    console.error('[Prefecture] turn processing error',err);
+    const tx=campaignState?.turnProcessing;
+    const action=tx?.actions?.[PREF_PLAYER_ID]?.type||'不明';
+    const step=tx?.resolutionQueue?.[tx.resolutionIndex];
+    prefShowModal('ターン処理を復旧できませんでした',`保存済みの結果は保持されています。現在の処理：${prefEsc(step?.type==='battle'?'対戦':step?.type==='investigate'?'調査':action)}／順位順 ${Number(tx?.resolutionIndex||0)+1} 件目。ゲーム画面の「ターン処理を再開する」から再開できます。<pre class="text-[10px] text-rose-200 whitespace-pre-wrap mt-2">${prefEsc(err?.stack||err?.message||String(err))}</pre>`,[{label:'閉じる',action:'close-modal',style:'slate'},{label:'保存済み処理を再開',action:'resume-turn-processing',style:'primary'}]);
+  }).finally(()=>{prefProcessingPromise=null;});
   return prefProcessingPromise;
 }
 
-async function prefResolveInvestigations(tx) {
-  const playerAction=tx.actions[PREF_PLAYER_ID];
-  for(const [id,action] of Object.entries(tx.actions)){
-    if(action.type!=='investigate')continue;
-    const investigator=prefRegion(id),target=prefRegion(action.target);if(!investigator||!target)continue;
-    const gradeGap=prefGradeValue(target)-prefGradeValue(investigator);
-    let chance=prefClamp(0.70-gradeGap*0.12,0.12,0.90);
-    if(investigator.personality==='scout')chance=Math.min(0.95,chance+0.12);
-    if(investigator.personality==='careful')chance=Math.min(0.92,chance+0.04);
-    const success=Math.random()<chance;const topic=action.topic||'cards';const result={year:campaignState.year,week:campaignState.week,absoluteTurn:prefAbsTurn(),investigatorId:id,targetPrefecture:target.prefecture,targetRepName:target.repName,targetTier:target.tier,chance,success,topic,cards:[],summary:''};
-    if(success){
-      const units=prefOwnedUnits(target.id);const max=gradeGap<=-2?Math.min(units.length,4):gradeGap>=2?Math.min(units.length,1):Math.min(units.length,2);
-      if(topic==='cards'||topic==='both'){
-        const selected=prefShuffle(units).slice(0,max);result.cards=selected.map(i=>{const c=prefCardForInstance(i.id)||prefTemplate(i.templateId);return {name:c?.name||'不明',rank:prefRankStars(c),mainAttr:c?.mainAttr||'',templateId:i.templateId,observedInstanceId:i.id};});
-      }
-      if(topic==='behavior'||topic==='both')result.summary=`行動方針：${target.personalityLabel}。${target.personalityFocus}。ランク${target.tier}、調査時点の資金 ${prefFormatMoney(target.funds)}。`;
-      if(topic==='cards')result.summary=`調査時点で${result.cards.length}枚のキャラカードを確認しました。`;
-      if(topic==='both')result.summary=`行動方針とキャラカードの一部を確認しました。`;
+function prefResolveInvestigationAction(tx,id,action) {
+  if(!campaignState||!tx||action?.type!=='investigate')return false;
+  const investigator=prefRegion(id),target=prefRegion(action.target);
+  if(!investigator||!target||target.id===investigator.id)return false;
+  const gradeGap=prefGradeValue(target)-prefGradeValue(investigator);
+  let chance=prefClamp(0.70-gradeGap*0.12,0.12,0.90);
+  if(investigator.personality==='scout')chance=Math.min(0.95,chance+0.12);
+  if(investigator.personality==='careful')chance=Math.min(0.92,chance+0.04);
+  const success=Math.random()<chance;const topic=action.topic||'cards';
+  const result={year:campaignState.year,week:campaignState.week,absoluteTurn:prefAbsTurn(),investigatorId:id,targetPrefecture:target.prefecture,targetRepName:target.repName,targetTier:target.tier,chance,success,topic,cards:[],summary:''};
+  if(success){
+    const units=prefOwnedUnits(target.id);const max=gradeGap<=-2?Math.min(units.length,4):gradeGap>=2?Math.min(units.length,1):Math.min(units.length,2);
+    if(topic==='cards'||topic==='both'){
+      const selected=prefShuffle(units).slice(0,max);result.cards=selected.map(i=>{const c=prefCardForInstance(i.id)||prefTemplate(i.templateId);return {name:c?.name||'不明',rank:prefRankStars(c),mainAttr:c?.mainAttr||'',templateId:i.templateId,observedInstanceId:i.id};});
     }
-    if(id===PREF_PLAYER_ID){campaignState.investigations.push(result);investigator.yearStats.investigations=(investigator.yearStats.investigations||0)+1;prefLog(success?`調査成功：${target.prefecture}の情報を入手しました。`:`調査失敗：${target.prefecture}の情報を得られませんでした。`,success?'success':'warning');}
-    else {
-      if(success)prefRecordAIScouting(investigator,target,result);
-      if(success||Math.random()<0.25)investigator.yearStats.investigations=(investigator.yearStats.investigations||0)+1;
-    }
+    if(topic==='behavior'||topic==='both')result.summary=`行動方針：${target.personalityLabel}。${target.personalityFocus}。ランク${target.tier}、調査時点の資金 ${prefFormatMoney(target.funds)}。`;
+    if(topic==='cards')result.summary=`調査時点で${result.cards.length}枚のキャラカードを確認しました。`;
+    if(topic==='both')result.summary='行動方針とキャラカードの一部を確認しました。';
   }
+  if(id===PREF_PLAYER_ID){
+    campaignState.investigations=Array.isArray(campaignState.investigations)?campaignState.investigations:[];
+    campaignState.investigations.push(result);investigator.yearStats.investigations=(investigator.yearStats.investigations||0)+1;
+    prefLog(success?`調査成功：${target.prefecture}の情報を入手しました。`:`調査失敗：${target.prefecture}の情報を得られませんでした。`,success?'success':'warning');
+  } else {
+    if(success)prefRecordAIScouting(investigator,target,result);
+    if(success||Math.random()<0.25)investigator.yearStats.investigations=(investigator.yearStats.investigations||0)+1;
+  }
+  return true;
 }
+async function prefResolveInvestigations(tx) {
+  if(!campaignState||!tx)return;
+  for(const region of prefTurnOrderRegions()){
+    const action=tx.actions?.[region.id];if(action?.type!=='investigate')continue;
+    const already=Array.isArray(tx.resolvedInvestigationIds)&&tx.resolvedInvestigationIds.includes(String(region.id));
+    if(already)continue;
+    prefResolveInvestigationAction(tx,region.id,action);
+    tx.resolvedInvestigationIds=Array.isArray(tx.resolvedInvestigationIds)?tx.resolvedInvestigationIds:[];
+    tx.resolvedInvestigationIds.push(String(region.id));
+  }
+  tx.investigationsResolved=true;
+}
+
 async function prefCompleteTurn(tx) {
   if(!campaignState||campaignState.turnProcessing!==tx)return;
   if(tx.stage!=='settling'){tx.stage='settling';await prefSave();}
@@ -2031,7 +2281,7 @@ async function prefHandleClick(action,id,button) {
     if(active.length!==3){prefShowModal('出撃メンバーを確認','出撃するキャラカードを3体選択してください。',[{label:'編成に戻る',action:'close-modal',style:'primary'}]);return;}
     const loadout={active,reserve};tx.actions[PREF_PLAYER_ID].loadout=JSON.parse(JSON.stringify(loadout));
     prefPlayerRegion().lastLoadout=JSON.parse(JSON.stringify(loadout));campaignState.lastLoadout=JSON.parse(JSON.stringify(loadout));
-    tx.stage='battles';tx.pairIndex=Math.max(0,tx.pairIndex||0);campaignState.draftLoadout=null;
+    tx.playerLoadoutConfirmed=true;tx.stage='battles';tx.pairIndex=Math.max(0,tx.pairIndex||0);campaignState.draftLoadout=null;
     document.getElementById('pref-battle-selection')?.classList.add('hidden');document.getElementById('pref-turn-progress')?.classList.remove('hidden');
     await prefSave();prefEnsurePreviewResumeButton();prefRenderDashboard();await prefContinueTurn();return;
   }
@@ -2058,7 +2308,14 @@ document.addEventListener('click',event=>{
   const button=event.target.closest('[data-pref-action]');if(!button)return;
   const action=button.dataset.prefAction,id=button.dataset.id;
   if(button.disabled)return;
-  prefHandleClick(action,id,button).catch(err=>{console.error('[Prefecture] action failed',err);prefShowModal('処理に失敗しました',`操作を完了できませんでした。<pre class="text-[10px] text-rose-200 whitespace-pre-wrap mt-2">${prefEsc(err?.message||String(err))}</pre>`,[{label:'閉じる',action:'close-modal'}]);});
+  prefHandleClick(action,id,button).catch(err=>{
+    console.error(`[Prefecture] action failed (${action})`,err);
+    const tx=campaignState?.turnProcessing;
+    const labels={'choose-battle':'対戦コマンド','confirm-battle':'対戦開始','choose-investigation':'調査コマンド','confirm-investigation':'調査実行','confirm-final-loadout':'出撃編成の確定','confirm-buy-card':'市場購入','pull-gacha':'ガチャ'};
+    const title=tx?'ターン処理でエラーが発生しました':'操作に失敗しました';
+    const body=`操作：${prefEsc(labels[action]||action||'不明')}<br>進行段階：${prefEsc(tx?.stage||'ターン外')}<br><p class="mt-2 text-slate-300">保存済みの進行データは自動消去していません。ターン処理が残っている場合は、再開操作を試してください。</p><pre class="text-[10px] text-rose-200 whitespace-pre-wrap mt-2">${prefEsc(err?.stack||err?.message||String(err))}</pre>`;
+    prefShowModal(title,body,tx?[{label:'閉じる',action:'close-modal',style:'slate'},{label:'保存済み処理を再開',action:'resume-turn-processing',style:'primary'}]:[{label:'閉じる',action:'close-modal'}]);
+  });
 });
 
 // The original card detail editor is retained. Campaign instances are read-only: editing the card library remains separate from the game state.
