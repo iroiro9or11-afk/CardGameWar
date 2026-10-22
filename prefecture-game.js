@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.16 — gacha reveal, magic capacity and ★3+ campaign pool */
+/* 都道府県カード戦争 v1.0.32 — roster-aware campaign AI economy and command planning */
 'use strict';
 
 let campaignState = null;
@@ -1271,7 +1271,7 @@ async function prefPullGacha(key) {
   const allowed=key==='A'?['S','A','B'].includes(p.tier):key==='B'?['S','A','B','C','D'].includes(p.tier):true;
   if(!allowed){prefShowModal('ガチャ未解放',`このガチャは都道府県ランク${key==='A'?'B':key==='B'?'D':'—'}以上で解放されます。`,[{label:'戻る',action:'close-modal'}]);return;}
   if(p.funds<g.price){prefShowModal('資金不足',`${g.label}を引くには${prefFormatMoney(g.price)}必要です。`,[{label:'戻る',action:'close-modal'}]);return;}
-  p.funds-=g.price;
+  prefBook(PREF_PLAYER_ID,-g.price,'gacha');
   const selected=prefResolveGachaTier(key);
   let resultCard=null;
   if(selected.kind==='unit'&&selected.instance){
@@ -1282,7 +1282,7 @@ async function prefPullGacha(key) {
   } else {
     const templates=prefCardTemplates().filter(c=>c.cardType==='magic');
     const template=prefRandom(templates);
-    if(!template){p.funds+=g.price;prefShowModal('ガチャ停止','マジックカードの作成データがありません。',[{label:'戻る',action:'close-modal'}]);return;}
+    if(!template){prefBook(PREF_PLAYER_ID,g.price,'gacha-refund');prefShowModal('ガチャ停止','マジックカードの作成データがありません。',[{label:'戻る',action:'close-modal'}]);return;}
     resultCard=prefCreateInstance(template.id,'pending',null,{source:'gacha'});
     const already=prefOwnedMagics(PREF_PLAYER_ID).some(x=>String(x.templateId)===String(template.id));
     if(already){prefListInstance(resultCard,PREF_PLAYER_ID,'duplicate-gacha');prefLog(`重複したマジックカード「${template.name}」を自動的に市場へ出品しました。`,'info');}
@@ -1359,16 +1359,46 @@ function prefShowInvestigationSelection() {
 }
 
 function prefDecideAiCommand(region) {
-  if(region.lastBattleAbs>0 && region.lastBattleAbs===prefAbsTurn()-1)return {type:'investigate',target:prefRandom(Object.keys(campaignState.regions).filter(x=>x!==region.id)),topic:region.personality==='scout'?'both':'cards'};
-  if((region.nonBattleStreak||0)>=3 && prefOwnedUnits(region.id).length>=3)return {type:'battle'};
-  const p=PREF_PERSONALITIES.find(x=>x.id===region.personality)||PREF_PERSONALITIES[1];
   const units=prefOwnedUnits(region.id).length;
+  const justBattled=Number(region.lastBattleAbs)>0&&Number(region.lastBattleAbs)===prefAbsTurn()-1;
+  if(justBattled){
+    const target=prefRandom(Object.keys(campaignState.regions).filter(x=>x!==region.id));
+    return {type:'investigate',target,topic:region.personality==='scout'?'both':'cards'};
+  }
+  if((Number(region.nonBattleStreak)||0)>=3&&units>=3){
+    prefRecordAIThought(region,'コマンド選択','連続非対戦の上限に達したため対戦を優先',[
+      `非対戦連続${Number(region.nonBattleStreak)||0}週のため、ゲームルール上ここで対戦が必要`,
+      `所持キャラ${units}枚。足りないカードの補充処理は対戦判断より先に実行済み`
+    ]);
+    return {type:'battle'};
+  }
+  const p=PREF_PERSONALITIES.find(x=>x.id===region.personality)||PREF_PERSONALITIES[1];
+  const profile=prefAIProfileForRegion(region);
   let battleProb=p.battle;
+  const hasReinforcementPath=units<5&&prefAiHasViableUnitReinforcement(region);
   if(units<3)battleProb=0;
-  if(region.funds<15000000)battleProb=Math.min(battleProb,0.35);
-  if(Math.random()<battleProb){prefRecordAIThought(region,'コマンド選択','今週は対戦を選択',[`運営方針「${p.name}」の対戦傾向を適用`,`所持キャラ${units}枚、資金${prefFormatMoney(region.funds)}`,`対戦確率の基準${Math.round(battleProb*100)}%`]);return {type:'battle'};}
-  const target=prefRandom(Object.keys(campaignState.regions).filter(x=>x!==region.id));const topic=region.personality==='scout'?'both':region.personality==='careful'?'behavior':'cards';
-  prefRecordAIThought(region,'コマンド選択','今週は調査を選択',[`運営方針「${p.name}」に基づき対戦より調査を選択`,`調査対象：${prefRegion(target)?.prefecture||target}`,`調査内容：${topic==='both'?'カードと行動方針':topic==='behavior'?'行動方針':'カード'}`]);
+  else if(units<5){
+    if(hasReinforcementPath)battleProb=0;
+    else battleProb*=units===4?0.45:0.2;
+  }
+  if(region.funds<15000000)battleProb=Math.min(battleProb,hasReinforcementPath?0:0.35);
+  // Even a well-funded rival should not attack with an incomplete five-card squad while a legal refill is available.
+  if(hasReinforcementPath)battleProb=0;
+  if(Math.random()<battleProb){
+    prefRecordAIThought(region,'コマンド選択','今週は対戦を選択',[
+      `運営方針「${p.name}」の対戦傾向を適用`,
+      `所持キャラ${units}/5枚、資金${prefFormatMoney(region.funds)}`,
+      `戦術IQ${profile.tacticalIQ}/100・カード選びIQ${profile.cardIQ}/100`,
+      units<5?'市場・ガチャに実行可能な補強手段がないため、現在の戦力で対戦を選択':'必要枚数を満たし、現デッキで対戦可能と判断'
+    ],{units,hasReinforcementPath,battleProbability:battleProb});
+    return {type:'battle'};
+  }
+  const others=Object.keys(campaignState.regions).filter(x=>x!==region.id);
+  const target=prefRandom(others);const topic=region.personality==='scout'?'both':region.personality==='careful'?'behavior':'cards';
+  let reasons=[`運営方針「${p.name}」に基づき今週は調査を選択`,`調査対象：${prefRegion(target)?.prefecture||target}`,`調査内容：${topic==='both'?'カードと行動方針':topic==='behavior'?'行動方針':'カード'}`];
+  if(units<5&&hasReinforcementPath)reasons.unshift(`所持キャラが${units}/5枚のため、購入・ガチャで補強できる可能性を優先して対戦を延期`);
+  else if(units<5)reasons.unshift(`所持キャラが${units}/5枚で不利なため対戦頻度を下げているが、現時点で実行可能な補充候補がない`);
+  prefRecordAIThought(region,'コマンド選択',units<5?'補強・調査を優先して今週は対戦を見送り':'今週は調査を選択',reasons,{units,hasReinforcementPath,battleProbability:battleProb});
   return {type:'investigate',target,topic};
 }
 function prefAiGachaAllowed(region,key) {
@@ -1377,19 +1407,114 @@ function prefAiGachaAllowed(region,key) {
   if(key==='B')return ['S','A','B','C','D'].includes(region.tier);
   return true;
 }
+function prefAiRosterComplementBonus(region,card) {
+  if(!region||!card||card.cardType==='magic')return 0;
+  const roster=prefOwnedUnits(region.id)
+    .filter(inst=>String(inst.templateId)!==String(card.templateId||card.id))
+    .map(inst=>prefCardForInstance(inst.id)||prefTemplate(inst.templateId)).filter(Boolean);
+  const cp=prefCardProfile(card), profiles=roster.map(prefCardProfile);
+  const has=tag=>profiles.some(p=>p.tags.has(tag));
+  const hasAny=tags=>profiles.some(p=>tags.some(tag=>p.tags.has(tag)));
+  let bonus=0;
+  // Give extra weight to filling a real tactical gap rather than merely duplicating a tag.
+  if(cp.tags.has('damage')&&!has('damage'))bonus+=4.5;
+  if(cp.tags.has('ap_supply')&&profiles.some(p=>p.maxCost>=25||p.tags.has('heavy_cost')))bonus+=5.5;
+  if(cp.tags.has('status_debuff')&&has('status_condition'))bonus+=5.0;
+  if(cp.tags.has('status_condition')&&has('status_debuff'))bonus+=5.0;
+  if((cp.tags.has('healing')||cp.tags.has('shield_defense'))&&!hasAny(['healing','shield_defense']))bonus+=3.5;
+  if(cp.tags.has('attack_speed_buff')&&hasAny(['damage','attack_role']))bonus+=2.0;
+  if(cp.tags.has('passive_chain')&&has('extra_effect')||cp.tags.has('extra_effect')&&has('passive_chain'))bonus+=3.0;
+  const rosterAttrs=new Set(roster.flatMap(c=>[String(c.mainAttr||''),...(Array.isArray(c.subAttrs)?c.subAttrs:[]).map(x=>String(typeof x==='string'?x:(x?.name||x?.id||'')))]).filter(Boolean));
+  if(cp.supportsAttrs.some(attr=>rosterAttrs.has(String(attr))))bonus+=3.0;
+  const profile=prefAIProfileForRegion(region);
+  if(profile.mainAttrPriority?.length && profile.mainAttrPriority.slice(0,3).includes(cp.mainAttr))bonus+=1.5;
+  // Avoid awarding the full completion bonus to redundant filler when five useful roles already exist.
+  if(roster.length>=4&&bonus>0)bonus*=0.8;
+  return bonus;
+}
+function prefAiMarketUpgradeQualifies(region,instance,utility) {
+  if(!region||!instance||!Number.isFinite(Number(utility)))return false;
+  const profile=prefAIProfileForRegion(region);
+  const complement=prefAiRosterComplementBonus(region,prefCardForInstance(instance.id)||prefTemplate(instance.templateId));
+  const baseThreshold=Number(profile.cardIQ)>=75?6:Number(profile.cardIQ)>=45?8:10;
+  // A reasonable-priced card that closes an explicit team-combo gap can be worth buying
+  // even when its isolated score is not dramatically higher than the weakest card.
+  return Number(utility)>=baseThreshold||(complement>=4.5&&Number(utility)>=-2);
+}
+function prefAiUnitReserveFloor(region) {
+  const funds=Math.max(0,Number(region?.funds)||0);
+  const owned=prefOwnedUnits(region?.id).length;
+  return Math.min(10000000,Math.max(1000000,funds*0.05),owned<3?2000000:10000000);
+}
+function prefAiCanBuyMarketUnit(region,instance,utility=null) {
+  if(!region||!instance||instance.kind!=='unit'||instance.zone!=='market'||instance.sellerRegionId===region.id)return false;
+  const card=prefCardForInstance(instance.id)||prefTemplate(instance.templateId);if(!card)return false;
+  const price=prefValueFromInstance(instance),funds=Number(region.funds)||0,owned=prefOwnedUnits(region.id);
+  if(price>funds)return false;
+  if(owned.some(x=>String(x.templateId)===String(instance.templateId)))return false;
+  if(prefOwnedInstancesAny().some(x=>String(x.templateId)===String(instance.templateId)&&x.ownerId!==region.id&&!x.copyException&&!instance.copyException))return false;
+  const floor=prefAiUnitReserveFloor(region);
+  if(owned.length>=3&&funds-price<floor)return false;
+  if(owned.length<3&&funds-price<0)return false;
+  if(utility!=null&&owned.length<5&&utility<-3)return false;
+  if(utility!=null&&owned.length>=5&&!prefAiMarketUpgradeQualifies(region,instance,utility))return false;
+  return true;
+}
+function prefAiHasViableUnitReinforcement(region) {
+  if(!region||prefOwnedUnits(region.id).length>=5)return false;
+  const funds=Number(region.funds)||0,units=prefOwnedUnits(region.id).length;
+  if(prefEligibleGachaUnitInstances().length && (funds>=PREF_GACHA.C.price+prefAiUnitReserveFloor(region) || units<3&&funds>=PREF_GACHA.C.price))return true;
+  return prefMarketListings('unit',false).some(inst=>{
+    if(!prefAiCanBuyMarketUnit(region,inst))return false;
+    return prefAiCanBuyMarketUnit(region,inst,prefAiMarketUtility(region,inst));
+  });
+}
+function prefAiChooseGachaTier(region,prioritizeQuality=false) {
+  const funds=Number(region?.funds)||0;
+  const floor=prefAiUnitReserveFloor(region);
+  const eligibleB=['S','A','B','C','D'].includes(region?.tier);
+  const eligibleA=['S','A','B'].includes(region?.tier);
+  // B is the default refill pull (80% character outcomes); C is the low-cash fallback.
+  if(eligibleA&&region.tier==='S'&&prioritizeQuality&&funds>=PREF_GACHA.A.price+floor&&funds>=300000000)return 'A';
+  if(eligibleB&&funds>=PREF_GACHA.B.price+floor)return 'B';
+  if(funds>=PREF_GACHA.C.price+floor||prefOwnedUnits(region.id).length<3&&funds>=PREF_GACHA.C.price)return 'C';
+  return null;
+}
+function prefAiBestGachaUpgradePotential(region) {
+  const owned=prefOwnedUnits(region.id);
+  if(owned.length<5)return Infinity;
+  const eligible=prefEligibleGachaUnitInstances();if(!eligible.length)return -Infinity;
+  const current=owned.map(inst=>({inst,score:prefCardScoreForRegion(region,inst)})).sort((a,b)=>a.score-b.score);
+  const weakest=current[0];if(!weakest)return -Infinity;
+  const potentials=eligible.map(inst=>{
+    const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
+    if(!card)return -Infinity;
+    return prefCardScoreForRegion(region,inst)+prefAiRosterComplementBonus(region,card)-weakest.score;
+  }).filter(Number.isFinite).sort((a,b)=>b-a);
+  if(!potentials.length)return -Infinity;
+  const topCount=Math.max(1,Math.ceil(potentials.length*0.35));
+  const topAverage=potentials.slice(0,topCount).reduce((a,b)=>a+b,0)/topCount;
+  const overallAverage=potentials.reduce((a,b)=>a+b,0)/potentials.length;
+  // Strong potential cards count, but a single outlier in a huge pool cannot trigger constant gambling.
+  return overallAverage*0.7+topAverage*0.3;
+}
+
 function prefAiMarketUtility(region,instance) {
   const card=prefCardForInstance(instance?.id)||prefTemplate(instance?.templateId);if(!card)return -Infinity;
   const profile=prefAIProfileForRegion(region);const ownUnits=prefOwnedUnits(region.id);const ownMagics=prefOwnedMagics(region.id);
   const scoreOf=inst=>prefCardScoreForRegion(region,inst);
-  const candidateScore=prefCardIntrinsicScore(region,card)+prefCardStrategyScore(region,card)+prefCardPreferenceScore(region,card)+prefCardSynergyScore(region,card)+prefAIPlanFitScore(region,card);
+  const complement=instance.kind==='unit'?prefAiRosterComplementBonus(region,card):0;
+  const candidateScore=prefCardIntrinsicScore(region,card)+prefCardStrategyScore(region,card)+prefCardPreferenceScore(region,card)+prefCardSynergyScore(region,card)+prefAIPlanFitScore(region,card)+complement;
   let improvement=0;
   if(instance.kind==='unit'){
-    if(ownUnits.length<3) improvement=18+candidateScore*0.25;
-    else if(ownUnits.length<5){const avg=ownUnits.reduce((sum,x)=>sum+scoreOf(x),0)/Math.max(1,ownUnits.length);improvement=5+candidateScore-avg*0.78;}
-    else {
+    if(ownUnits.length<3) improvement=22+candidateScore*0.30+complement*0.35;
+    else if(ownUnits.length<5){
+      const avg=ownUnits.reduce((sum,x)=>sum+scoreOf(x),0)/Math.max(1,ownUnits.length);
+      // Missing roster slots are strategically valuable; also evaluate whether the card closes a synergy gap.
+      improvement=8+candidateScore-avg*0.72+complement*0.65;
+    } else {
       const weakest=ownUnits.map(inst=>({inst,score:scoreOf(inst)})).sort((a,b)=>a.score-b.score)[0];
       improvement=weakest?candidateScore-weakest.score:-2;
-      // A full roster must not buy a card that would immediately be rejected instead of replacing a weaker card.
       if(improvement<=0)improvement-=4;
     }
   } else {
@@ -1397,11 +1522,11 @@ function prefAiMarketUtility(region,instance) {
     if(!ownMagics.length)improvement=4+candidateScore*0.25+prefCardSynergyScore(region,card)*0.35;
     else {const avg=ownMagics.reduce((sum,x)=>sum+scoreOf(x),0)/Math.max(1,ownMagics.length);improvement=4+candidateScore*0.48-avg*0.28;}
   }
-  const cost=prefCardValue(card);const reserve=region.funds-cost;
-  const shortage=instance.kind==='unit'&&ownUnits.length<3;
+  const cost=prefValueFromInstance(instance);const reserve=region.funds-cost;
+  const shortage=instance.kind==='unit'&&ownUnits.length<5;
   const pricePenalty=Math.min(12,Math.log10(Math.max(1,cost/10000))*1.8);
-  const reservePenalty=reserve<10000000&&!shortage?8:reserve<30000000&&!shortage?3:0;
-  return improvement-pricePenalty-reservePenalty+(shortage?18:0)+(profile.cardIQ/100)*2+prefCardEstimateError(profile.cardIQ);
+  const reservePenalty=reserve<2000000?14:reserve<10000000?(shortage?3:8):reserve<30000000?3:0;
+  return improvement-pricePenalty-reservePenalty+(shortage?8:0)+(profile.cardIQ/100)*2+prefCardEstimateError(profile.cardIQ);
 }
 function prefAiMarketReasons(region,instance) {
   const card=prefCardForInstance(instance?.id)||prefTemplate(instance?.templateId);const profile=prefAIProfileForRegion(region);const cp=prefCardProfile(card);const reasons=[];
@@ -1414,62 +1539,167 @@ function prefAiMarketReasons(region,instance) {
   return reasons.slice(0,6);
 }
 function prefAiTryEconomy(region) {
+  if(!region||region.isPlayer)return;
   prefRefreshAIPlan(region,'市場・所持カードの確認');
-  const units=prefOwnedUnits(region.id),magics=prefOwnedMagics(region.id);
-  const needUnits=units.length<3;
-  // A rival first checks the market for a unit if it is short on battle-ready cards.
-  let marketUnits=prefMarketListings('unit',false).filter(inst=>{
-    const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
-    if(!card||region.funds<prefCardValue(card)||inst.sellerRegionId===region.id)return false;
-    if(units.some(x=>String(x.templateId)===String(inst.templateId)))return false;
-    if(prefOwnedInstancesAny().some(x=>String(x.templateId)===String(inst.templateId)&&x.ownerId!==region.id&&!x.copyException&&!inst.copyException))return false;
-    return true;
-  }).map(inst=>({inst,utility:prefAiMarketUtility(region,inst)})).sort((a,b)=>b.utility-a.utility);
   const profile=prefAIProfileForRegion(region);
-  const marketChance=region.personality==='collector'?0.45:region.personality==='careful'?0.14:0.22;
-  const bestMarketUtility=marketUnits[0]?.utility??-Infinity;
-  const strongMarketUpgrade=bestMarketUtility>=14;
-  const opportunisticMarketAttempt=units.length<5?Math.random()<(marketChance+profile.cardIQ/100*0.16):Math.random()<(marketChance*0.35+profile.cardIQ/100*0.08);
-  if(marketUnits.length && (needUnits || strongMarketUpgrade || opportunisticMarketAttempt)){
-    const best=marketUnits[0],inst=best.inst,card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId),price=prefCardValue(card),seller=inst.sellerRegionId;
-    const reasons=prefAiMarketReasons(region,inst);reasons.push(`候補市場カードを価格${prefFormatMoney(price)}・推定効用${best.utility.toFixed(1)}で評価`);
-    // AI can reject a marginal purchase when it would leave almost no reserve, unless it needs a third unit to battle.
-    if(needUnits||best.utility>=8){
-      prefBook(region.id,-price,'market-buy');if(seller)prefBook(seller,price,'market-sale');prefSetInstanceOwner(inst,region.id,true);
-      if(units.length>=5){const old=prefAiReplacementChoice(region,units,inst);if(old===inst.id)prefListInstance(inst,region.id,'ai-rejected-card');else if(campaignState.instances[old])prefListInstance(campaignState.instances[old],region.id,'ai-replacement');}
-      prefRecordAIThought(region,'カード購入',`市場で「${card?.name||'キャラカード'}」を購入`,reasons,{cardName:card?.name,price,utility:best.utility});
-      prefLog(`${region.prefecture}がシナジー評価で市場の「${card.name}」を購入しました。`,'info');prefRefreshAIPlan(region,'カードを購入・獲得',true);return;
-    }
-    prefRecordAIThought(region,'購入見送り',`「${card?.name||'キャラカード'}」の購入を見送り`,['価格に対する改善幅が小さい、または資金を残す価値が高いと判断',`推定効用${best.utility.toFixed(1)}`],{cardName:card?.name,price,utility:best.utility});
+  let marketUnitPurchases=0,gachaAttempts=0,unitCountAtStart=prefOwnedUnits(region.id).length;
+  const maxMarketBuys=2;
+
+  // First preference: buy a real market card when it fits the current deck and does not consume the reserve.
+  // If fewer than five characters are owned, filling missing battle slots is valued above optional luxury buys.
+  while(prefOwnedUnits(region.id).length<5&&marketUnitPurchases<maxMarketBuys){
+    const currentUnits=prefOwnedUnits(region.id);
+    const marketUnits=prefMarketListings('unit',false)
+      .filter(inst=>prefAiCanBuyMarketUnit(region,inst))
+      .map(inst=>({inst,utility:prefAiMarketUtility(region,inst)}))
+      .filter(x=>x.utility>=-3)
+      .sort((a,b)=>b.utility-a.utility);
+    const best=marketUnits[0];if(!best)break;
+    const inst=best.inst,card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
+    if(!prefAiCanBuyMarketUnit(region,inst,best.utility))break;
+    const price=prefValueFromInstance(inst),seller=inst.sellerRegionId;
+    const reasons=prefAiMarketReasons(region,inst);
+    reasons.push(`所持キャラ${currentUnits.length}/5枚の不足を補い、シナジー効用${best.utility.toFixed(1)}・価格${prefFormatMoney(price)}・購入後資金を比較`);
+    prefBook(region.id,-price,'market-buy');if(seller)prefBook(seller,price,'market-sale');
+    prefSetInstanceOwner(inst,region.id,true);inst.expiresAtAbs=prefAbsTurn()+PREF_CARD_LIFETIME;
+    prefRecordAIThought(region,'カード購入',`市場で「${card?.name||'キャラカード'}」を購入`,reasons,{cardName:card?.name,price,utility:best.utility,rosterBefore:currentUnits.length,rosterAfter:prefOwnedUnits(region.id).length});
+    prefLog(`${region.prefecture}が所持キャラ${currentUnits.length}枚からの補強として、市場の「${card?.name||'キャラカード'}」を購入しました。`,'info');
+    marketUnitPurchases++;
+    prefRefreshAIPlan(region,'カード購入・編成シナジー再評価',true);
   }
-  // A single no-cost-per-turn decision may draw a gacha; the gacha fee itself is still paid normally.
-  const wantsShop=needUnits || Math.random()<(region.personality==='collector'?0.48:region.personality==='careful'?0.15:0.25);
-  if(wantsShop){
-    let key='C';if(prefAiGachaAllowed(region,'B')&&region.tier!=='E'&&Math.random()<0.45)key='B';if(prefAiGachaAllowed(region,'A')&&Math.random()<0.12)key='A';
-    if(prefAiGachaAllowed(region,key)){
-      region.funds-=PREF_GACHA[key].price;
-      const selected=prefResolveGachaTier(key);
-      if(selected.kind==='unit'&&selected.instance){const inst=selected.instance;const card=prefCardForInstance(inst.id);if(prefOwnedUnits(region.id).length<5)prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});else{const old=prefAiReplacementChoice(region,prefOwnedUnits(region.id),inst);if(old===inst.id)prefListInstance(inst,region.id,'ai-rejected-card');else{prefListInstance(campaignState.instances[old],region.id,'ai-replacement');prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});}}prefRecordAIThought(region,'ガチャ','ガチャでキャラカードを獲得',[`市場購入できるシナジー候補が限られるため、許可ランク内のガチャを利用`,`カード選びの賢さ${profile.cardIQ}/100。獲得後に既存カードとの相性を再評価`],{cardName:card?.name,rank:prefRankStars(card)});prefLog(`${region.prefecture}がガチャで「${card?.name||'キャラカード'}」を獲得しました。`,'info');}
-      else {
-        const templates=prefCardTemplates().filter(c=>c.cardType==='magic');if(templates.length){const t=prefRandom(templates),inst=prefCreateInstance(t.id,'pending',null,{source:'ai-gacha'});if(prefOwnedMagics(region.id).some(x=>String(x.templateId)===String(t.id)))prefListInstance(inst,region.id,'duplicate-gacha');else prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});}
+
+  // If the market cannot complete the roster, use gacha with a bounded budget and repeat while a slot is missing.
+  // B-rank gacha yields characters 80% of the time; C is the cheaper fallback (50%).
+  let attemptsLimit=Math.min(4,Math.max(1,5-prefOwnedUnits(region.id).length+2));
+  while(prefOwnedUnits(region.id).length<5&&gachaAttempts<attemptsLimit){
+    const available=prefEligibleGachaUnitInstances();if(!available.length)break;
+    const key=prefAiChooseGachaTier(region,false);if(!key)break;
+    const g=PREF_GACHA[key];const beforeCount=prefOwnedUnits(region.id).length;
+    const cost=g.price;prefBook(region.id,-cost,'gacha');gachaAttempts++;
+    const selected=prefResolveGachaTier(key);
+    if(selected.kind==='unit'&&selected.instance){
+      const inst=selected.instance;const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
+      prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});
+      const afterCount=prefOwnedUnits(region.id).length;
+      prefRecordAIThought(region,'ガチャ',`ガチャで「${card?.name||'キャラカード'}」を獲得`,[
+        `所持キャラ${beforeCount}/5枚の不足を埋めるため、補充を優先`,
+        `${g.label}を${prefFormatMoney(cost)}で利用`,
+        `獲得後に基礎性能・役割・手持ちとのシナジーを再評価`,
+        `カード選びIQ${profile.cardIQ}/100`
+      ],{cardName:card?.name,rank:prefRankStars(card),gacha:key,rosterBefore:beforeCount,rosterAfter:afterCount});
+      prefLog(`${region.prefecture}が${g.label}で「${card?.name||'キャラカード'}」を獲得し、所持キャラを${afterCount}/5枚に補充しました。`,'info');
+      prefRefreshAIPlan(region,'ガチャによるキャラ獲得',true);
+    } else {
+      const templates=prefCardTemplates().filter(c=>c.cardType==='magic');
+      if(templates.length){
+        const t=prefRandom(templates),inst=prefCreateInstance(t.id,'pending',null,{source:'ai-gacha'});
+        if(inst){
+          if(prefOwnedMagics(region.id).some(x=>String(x.templateId)===String(t.id)))prefListInstance(inst,region.id,'duplicate-gacha');
+          else prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});
+        }
+      }
+      prefRecordAIThought(region,'ガチャ','キャラ以外の結果を受領',[
+        `所持キャラ${beforeCount}/5枚の補充を試行`,`${g.label}はマジック排出だったためキャラ枚数は増えず`,
+        `まだ補充枠がある場合のみ次の抽選を検討`
+      ],{gacha:key,rosterBefore:beforeCount,rosterAfter:prefOwnedUnits(region.id).length});
+    }
+  }
+
+  // At five characters, evaluate replacements instead of buying blindly. A high complement value can trigger
+  // deterministic market reinforcement; one affordable gacha attempt is allowed only when its pool has
+  // a meaningful chance of improving the weakest card or closing a tactical hole.
+  let units=prefOwnedUnits(region.id);
+  if(units.length>=5&&unitCountAtStart>=5){
+    const marketUnits=prefMarketListings('unit',false)
+      .filter(inst=>prefAiCanBuyMarketUnit(region,inst))
+      .map(inst=>({inst,utility:prefAiMarketUtility(region,inst)}))
+      .filter(x=>prefAiMarketUpgradeQualifies(region,x.inst,x.utility))
+      .sort((a,b)=>b.utility-a.utility);
+    let boughtUpgrade=false;
+    for(const row of marketUnits){
+      const inst=row.inst,card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
+      const replacement=prefAiReplacementChoice(region,units,inst);
+      if(!replacement||replacement===inst.id)continue;
+      if(!prefAiCanBuyMarketUnit(region,inst,row.utility))continue;
+      const price=prefValueFromInstance(inst),seller=inst.sellerRegionId;
+      // Decide the replacement before the purchase. Never pay for a card that the AI immediately rejects.
+      prefBook(region.id,-price,'market-buy');if(seller)prefBook(seller,price,'market-sale');
+      const old=campaignState.instances[replacement];if(old)prefListInstance(old,region.id,'ai-synergy-upgrade');
+      prefSetInstanceOwner(inst,region.id,true);inst.expiresAtAbs=prefAbsTurn()+PREF_CARD_LIFETIME;
+      prefRecordAIThought(region,'カード購入',`シナジー強化のため「${card?.name||'キャラカード'}」を採用`,[
+        '5枚の基本枠は埋まっているため、単純な枚数確保ではなく置き換えを評価',
+        ...prefAiMarketReasons(region,inst),
+        `効用${row.utility.toFixed(1)}の候補を採用し、編成への適合度が低い「${prefCardForInstance(replacement)?.name||'既存カード'}」と交換`
+      ],{cardName:card?.name,price,utility:row.utility,replaced:prefCardForInstance(replacement)?.name||replacement});
+      prefLog(`${region.prefecture}がデッキの相性を強化するため「${card?.name||'キャラカード'}」を購入し、既存カードを入れ替えました。`,'info');
+      prefRefreshAIPlan(region,'シナジー向上カードへ交換',true);boughtUpgrade=true;break;
+    }
+
+    if(!boughtUpgrade){
+      const potential=prefAiBestGachaUpgradePotential(region);
+      const eligible=prefEligibleGachaUnitInstances();
+      const key=prefAiChooseGachaTier(region,potential>=8);
+      const utilityGate=profile.primaryStrategy==='collector'?2.0:profile.cardIQ>=75?4.0:6.0;
+      if(eligible.length&&potential>=utilityGate&&key){
+        const g=PREF_GACHA[key],cost=g.price,before=units.length;prefBook(region.id,-cost,'gacha');
+        const selected=prefResolveGachaTier(key);
+        if(selected.kind==='unit'&&selected.instance){
+          const inst=selected.instance,card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
+          const replacement=prefAiReplacementChoice(region,units,inst);
+          if(replacement&&replacement!==inst.id){
+            const old=campaignState.instances[replacement];if(old)prefListInstance(old,region.id,'ai-gacha-synergy-upgrade');
+            prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha-upgrade'});
+            prefRecordAIThought(region,'ガチャ','シナジー改善候補を抽選',[
+              `現デッキの期待補強値${potential.toFixed(1)}が基準${utilityGate.toFixed(1)}以上`,
+              `${g.label}を${prefFormatMoney(cost)}で利用し、獲得カードと最弱枠を比較`,
+              `採用できるカードが出たため、${prefCardForInstance(replacement)?.name||'既存カード'}と交換`
+            ],{cardName:card?.name,rank:prefRankStars(card),gacha:key,potential,replaced:prefCardForInstance(replacement)?.name||replacement});
+            prefLog(`${region.prefecture}がデッキ補強を狙ってガチャを利用し、シナジー候補「${card?.name||'キャラカード'}」を採用しました。`,'info');
+            prefRefreshAIPlan(region,'ガチャでシナジー補強',true);
+          }else{
+            // A non-upgrade draw is not allowed to displace a stronger card; return it to the market without charge loss recovery.
+            prefListInstance(inst,region.id,'ai-rejected-gacha-upgrade');
+            prefBook(region.id,cost,'gacha-refund');
+          }
+        }else{
+          // A magic result can still be useful, but should not make the AI persistently gamble on character replacement.
+          const templates=prefCardTemplates().filter(c=>c.cardType==='magic');
+          if(templates.length){const t=prefRandom(templates),inst=prefCreateInstance(t.id,'pending',null,{source:'ai-gacha-upgrade'});if(inst){if(prefOwnedMagics(region.id).some(x=>String(x.templateId)===String(t.id)))prefListInstance(inst,region.id,'duplicate-gacha');else prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha-upgrade'});}}
+          prefRecordAIThought(region,'ガチャ','シナジー補強を狙ったがマジック排出',[
+            `現デッキの補強期待値${potential.toFixed(1)}を確認して抽選`,`${g.label}からマジックが排出されたため、キャラ編成は維持`
+          ],{gacha:key,potential});
+        }
       }
     }
   }
-  // Gacha acquisition can change the intended combo; refresh only when the roster or market signature changed.
-  prefRefreshAIPlan(region,'カード獲得・市場の変化');
-  // Magic purchases are scored against the current character roster instead of being collector-only.
-  if(magics.length<5){
-    const candidates=prefMarketListings('magic',false).filter(inst=>inst.sellerRegionId!==region.id&&region.funds>=prefValueFromInstance(inst)&&!magics.some(x=>String(x.templateId)===String(inst.templateId)))
+
+  // Magic buying is secondary to the five-character battle roster, but still uses synergy and a cash reserve.
+  units=prefOwnedUnits(region.id);
+  const magics=prefOwnedMagics(region.id);
+  if(units.length>=5&&magics.length<5){
+    const candidates=prefMarketListings('magic',false)
+      .filter(inst=>inst.sellerRegionId!==region.id&&Number(region.funds)>=prefValueFromInstance(inst)&&!magics.some(x=>String(x.templateId)===String(inst.templateId)))
       .map(inst=>({inst,utility:prefAiMarketUtility(region,inst)})).sort((a,b)=>b.utility-a.utility);
     const best=candidates[0];
-    if(best&&(best.utility>=7||region.personality==='collector'&&best.utility>2)&&Math.random()<(0.08+profile.cardIQ/100*0.22)){
+    const floor=Math.min(10000000,Math.max(1000000,(Number(region.funds)||0)*0.05));
+    const threshold=profile.primaryStrategy==='collector'?7:profile.cardIQ>=75?10:12;
+    if(best&&best.utility>=threshold&&region.funds-prefValueFromInstance(best.inst)>=floor){
       const candidate=best.inst,card=prefCardForInstance(candidate.id)||prefTemplate(candidate.templateId),price=prefValueFromInstance(candidate),seller=candidate.sellerRegionId;
       prefBook(region.id,-price,'market-buy');if(seller)prefBook(seller,price,'market-sale');prefSetInstanceOwner(candidate,region.id,false);candidate.expiresAtAbs=null;
-      prefRecordAIThought(region,'マジック購入',`「${card?.name||'マジック'}」を購入`,[...prefAiMarketReasons(region,candidate),`キャラ構成との組み合わせを評価し、価格${prefFormatMoney(price)}で購入`],{cardName:card?.name,price,utility:best.utility});prefRefreshAIPlan(region,'マジックカードを購入',true);
+      prefRecordAIThought(region,'マジック購入',`「${card?.name||'マジック'}」を購入`,[...prefAiMarketReasons(region,candidate),`キャラ5枚の枠を確保したうえで、シナジー効用${best.utility.toFixed(1)}と価格${prefFormatMoney(price)}を比較`],{cardName:card?.name,price,utility:best.utility});
+      prefLog(`${region.prefecture}がキャラ5枚を確保したうえで、相性のよいマジック「${card?.name||'マジック'}」を購入しました。`,'info');
+      prefRefreshAIPlan(region,'マジックカードを購入',true);
     }
   }
+  prefRefreshAIPlan(region,'カード獲得・市場の変化');
+  const countEnd=prefOwnedUnits(region.id).length;
+  if(countEnd<5){
+    prefRecordAIThought(region,'補充状況','補充処理後も5枚未満',[
+      `開始時${unitCountAtStart}枚→現在${countEnd}枚`,
+      prefEligibleGachaUnitInstances().length?'ガチャに対象キャラが残っているため、次のターンも補充を優先':'ガチャ対象キャラが残っていないため、市場への出品を待つ'
+    ],{rosterStart:unitCountAtStart,rosterEnd:countEnd});
+  }
 }
-
 function prefBuildTurnResolutionQueue(actions,pairs,unmatched,investigationsAlreadyResolved=false) {
   const pairByRegion=new Map();
   for(const pair of Array.isArray(pairs)?pairs:[]){pairByRegion.set(String(pair.a),pair);pairByRegion.set(String(pair.b),pair);}
