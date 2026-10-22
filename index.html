@@ -5612,6 +5612,65 @@
       return out;
     }
 
+    // Tactical look-ahead beyond immediate state deltas: prioritize disabling the enemy's
+    // actual threats, avoid wasting control effects on reliable pre-action cleansers, and
+    // penalize self-harm unless it enables a meaningful passive/condition.
+    function aiPlannerTacticalBonus(state, side, actor, skill, result, targetId, subTargetId) {
+      if (!skill || !actor || !result) return 0;
+      let bonus = 0;
+      const effects = [{ effect: skill.mainEffect, targetType: skill.targetType, targetId }];
+      if (skill.hasSubEffect && skill.subEffect) effects.push({ effect: skill.subEffect, targetType: skill.subEffect.targetType || 'same_main_target', targetId: (skill.subEffect.targetType || 'same_main_target') === 'same_main_target' ? targetId : subTargetId });
+      const sourceState = aiPlannerCreateState(side);
+      for (const entry of effects) {
+        const effect = entry.effect || {};
+        const target = aiPlannerFindUnit(state, entry.targetId) || (entry.targetType === 'self' ? aiPlannerFindUnit(state, actor.instanceId) : null);
+        if (!target) continue;
+        const friendly = target.side === actor.side;
+        const type = String(effect.type || '');
+        if (/^dmg_/.test(type) && friendly) {
+          // Self-damage is justified only if it creates a real payoff, not merely because
+          // the skill has a numerically large value. Reward lethal/low-HP setup passives.
+          let payoff = 0;
+          for (const passive of actor.skills || []) {
+            if (passive.type !== 'passive' || !passive.selfCond) continue;
+            if (['hp_ratio_lte','hp_val_lte','self_any_status','self_status'].includes(passive.selfCond.type)) payoff += 35;
+          }
+          const damage = Math.max(0, Math.round(type === 'dmg_atk_ratio' ? aiPlannerEffectiveAtk(actor) * (Number(effect.val) || 0) / 100 : (Number(effect.val) || 0)));
+          bonus -= Math.max(90, Math.min(650, damage * 0.16)) - Math.min(90, payoff);
+        }
+        if (type === 'status_apply' && !friendly) {
+          const status = String(effect.status || 'poison');
+          const targetTemplate = (allCards || []).find(c => String(c.id) === String(target.cardId));
+          const hasPreActionCleanse = (target.skills || targetTemplate?.skills || []).some(passive => {
+            if (passive.type !== 'passive' || !['before_action','turn_start'].includes(passive.timing)) return false;
+            const pe = passive.mainEffect || {};
+            return ['status_remove','clear_statuses','clear_debuffs','clear_random_debuffs'].includes(pe.type) &&
+              (!passive.selfCond || passive.selfCond.type === 'none' || aiPlannerCondition(passive.selfCond, target, state));
+          });
+          const already = (target.statuses || []).some(x => x.type === status && durationActive(x.duration));
+          if (already) bonus -= 80;
+          if (hasPreActionCleanse) bonus -= 105;
+          // Control is more valuable on a fast debuffer's slow/high-damage target than on a
+          // low-impact unit. The engine's action order is speed-descending.
+          const threat = Math.max(0, aiPlannerEffectiveAtk(target));
+          const speed = aiPlannerEffectiveSpeed(target);
+          const faster = aiPlannerActive(state, actor.side).some(ally => ally.instanceId !== actor.instanceId && aiPlannerEffectiveSpeed(ally) > speed);
+          if (['freeze','paralysis','skill_block','slow','weak'].includes(status)) bonus += Math.min(150, threat * 0.045) + (faster ? 65 : 0);
+        }
+        if (!friendly && ['mod_atk_ratio','mod_atk_val','damage_taken_ratio','skill_block','heal_block','mod_speed'].includes(type)) {
+          const threat = Math.max(0, aiPlannerEffectiveAtk(target));
+          const speed = aiPlannerEffectiveSpeed(target);
+          const fasterAlly = aiPlannerActive(state, actor.side).some(ally => ally.instanceId !== actor.instanceId && aiPlannerEffectiveSpeed(ally) > speed);
+          bonus += Math.min(125, threat * 0.035) + (fasterAlly ? 30 : 0);
+        }
+      }
+      // A setup effect that newly activates a useful allied/self passive should not be discarded
+      // simply because its immediate numerical effect is small.
+      // Passive-setup value is already reflected by aiPlannerEvaluateState(copy) above;
+      // avoid re-simulating the entire passive graph for every beam-search candidate.
+      return bonus;
+    }
+
     function aiPlannerBuildUnitCandidates(state, actorId, intelligence) {
       const actor = aiPlannerFindUnit(state, actorId);
       if (!actor || actor.currentHp <= 0) return [{ type: 'skip', actorId, targetInstanceId: null, cost: 0, name: 'skip' }];
@@ -5637,7 +5696,8 @@
         const r = c.type === 'attack' ? aiPlannerApplyAttack(copy, c.actorId, c.targetInstanceId) : c.type === 'skill' ? aiPlannerApplySkill(copy, c.actorId, c.skill, c.targetInstanceId, false, c.subTargetInstanceId) : {value:0};
         const delta = aiPlannerEvaluateState(copy, side) - aiPlannerEvaluateState(state, side);
         const strat=aiStrategyScoreAdjustment(side,c.skill?.mainEffect||null,Number(c.cost)||0,c.type,actor);
-        return { c, score: delta + (r.kills || 0) * 250 + strat + aiEvaluationError(side) };
+        const tactical=c.type==='skill'?aiPlannerTacticalBonus(copy,side,actor,c.skill,r,c.targetInstanceId,c.subTargetInstanceId):0;
+        return { c, score: delta + (r.kills || 0) * 250 + strat + tactical + aiEvaluationError(side) };
       }).sort((a,b) => b.score - a.score);
       const keep = Math.max(3,Math.min(8,3+Math.round(getAiTacticalIQ(side)*0.05)));
       return scored.slice(0, Math.min(keep, scored.length)).map(x => x.c);

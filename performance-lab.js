@@ -1,5 +1,5 @@
 /*
- * 都道府県カード戦争 v1.0.27 - カード性能検証ラボ
+ * 都道府県カード戦争 v1.0.29 - カード性能検証ラボ
  * Uses the existing battle engine in isolated, temporary headless battles.
  * Results are intentionally memory-only and never saved to IndexedDB/campaign state.
  */
@@ -195,16 +195,79 @@
     return labShuffle(eligible).slice(0, count);
   }
 
+  function labEffects(card) {
+    const out = [];
+    for (const skill of (card?.skills || [])) {
+      if (!skill) continue;
+      if (skill.mainEffect) out.push({ ...skill.mainEffect, timing: skill.timing, skillType: skill.type, selfCond: skill.selfCond });
+      if (skill.hasSubEffect && skill.subEffect) out.push({ ...skill.subEffect, timing: skill.timing, skillType: skill.type, selfCond: skill.selfCond });
+    }
+    return out;
+  }
+
+  function labRoleProfile(card) {
+    const skills = Array.isArray(card?.skills) ? card.skills : [];
+    const effects = labEffects(card);
+    const active = effects.filter(e => e.skillType === 'active');
+    const passive = effects.filter(e => e.skillType === 'passive');
+    const has = (list, types) => list.some(e => types.includes(String(e.type || '')));
+    const damage = has(active, ['dmg_fixed','dmg_fixed_pierce','dmg_atk_ratio','atk_ratio','atk_val']);
+    const control = has(effects, ['status_apply','skill_block','heal_block','damage_taken_ratio','mod_atk_ratio','mod_atk_val','mod_speed']);
+    const support = has(effects, ['heal_fixed','heal_max_hp_ratio','shield','mod_ap','clear_statuses','clear_debuffs','status_remove','mod_atk_ratio','mod_atk_val','mod_speed']);
+    const openingPassive = passive.some(e => ['battle_start','turn_start','deploy'].includes(e.timing));
+    const delayedDeploy = skills.some(sk => sk.type === 'passive' && sk.timing === 'deploy' && ['turn_gte','turn_lte'].includes(sk.selfCond?.type) && Number(sk.selfCond?.val) >= 2);
+    const hp = Number(card?.stats?.hp) || 0;
+    const atk = Number(card?.stats?.atk) || 0;
+    const priority = Number(card?.stats?.priority) || 0;
+    return { damage, control, support, openingPassive, delayedDeploy, hp, atk, priority,
+      damageScore: (damage ? 4 : 0) + Math.min(4, atk / 900), supportScore: (support ? 2.8 : 0) + (control ? 1.4 : 0),
+      speedScore: Math.min(2.5, priority / 45), openingScore: openingPassive ? 1.2 : 0 };
+  }
+
+  // Preserve random card distribution, but do not confuse random sampling with random deployment.
+  // Choose the best three active units for role coverage and synergy; keep a delayed-deploy
+  // specialist in reserve when possible so its arrival passive is not wasted at battle start.
+  function labArrangeRoster(roster, focalCard = null) {
+    if (!Array.isArray(roster) || roster.length <= 3) return roster || [];
+    const cards = [...roster];
+    const focalId = focalCard ? String(focalCard.id) : null;
+    const focal = focalCard ? cards.find(c => String(c.id) === focalId) : null;
+    const fp = focal ? labRoleProfile(focal) : null;
+    const targetShouldReserve = !!(fp?.delayedDeploy && cards.length > 3);
+    const combos = [];
+    for (let i=0;i<cards.length;i++) for(let j=i+1;j<cards.length;j++) for(let k=j+1;k<cards.length;k++) {
+      const active = [cards[i],cards[j],cards[k]];
+      if (focal && !targetShouldReserve && !active.some(c => String(c.id) === focalId)) continue;
+      if (targetShouldReserve && active.some(c => String(c.id) === focalId)) continue;
+      const profiles = active.map(labRoleProfile);
+      const attackers = profiles.filter(p => p.damage).length;
+      const supporters = profiles.filter(p => p.support || p.control).length;
+      const score = profiles.reduce((sum,p)=>sum+p.damageScore+p.supportScore*0.45+p.speedScore*0.45+p.openingScore,0)
+        + (attackers >= 1 ? 2.5 : -5) + (attackers >= 2 ? 2.0 : 0)
+        + (supporters >= 1 ? 1.5 : 0) + (supporters >= 2 ? 0.6 : 0)
+        + (attackers === 0 ? -12 : 0);
+      combos.push({active,score});
+    }
+    combos.sort((a,b)=>b.score-a.score);
+    let chosen = combos[0]?.active;
+    if (!chosen) chosen = cards.slice(0,3);
+    const activeIds = new Set(chosen.map(c=>String(c.id)));
+    const reserves = cards.filter(c=>!activeIds.has(String(c.id)));
+    // The tested card remains first in the ordered list for reporting, but deployment IDs are
+    // explicitly chosen from the first three/final two in labPlayBattle below.
+    return [...chosen, ...reserves];
+  }
+
   function labBuildPlayerRoster(targetCard, allUnits) {
     const stars = labStars(targetCard);
     if (stars === 5) {
       const fillers = allUnits.filter(card => labStars(card) === 4 && String(card.id) !== String(targetCard.id));
       if (fillers.length < 4) throw new Error('★5カードの検証には、作成カード一覧に★4キャラカードが4枚以上必要です。検証用にキャンペーンカードや架空カードは使用しません。');
-      return [targetCard, ...labPick(fillers, 4)];
+      return labArrangeRoster([targetCard, ...labPick(fillers, 4)], targetCard);
     }
     const sameRank = allUnits.filter(card => labStars(card) === stars);
     if (sameRank.length < 5) throw new Error(`★${stars}カードの検証には、作成カード一覧に★${stars}キャラカードが合計5枚以上必要です。★1・★2やキャンペーン中のカードは使用しません。`);
-    return [targetCard, ...labPick(sameRank, 4, [targetCard.id])];
+    return labArrangeRoster([targetCard, ...labPick(sameRank, 4, [targetCard.id])], targetCard);
   }
 
   function labBuildEnemyRoster(targetCard, allUnits) {
@@ -216,12 +279,12 @@
       // Prefer a different ★5 template; if there is only one authored ★5, a mirror match is the only valid registered-card option.
       const otherStar5 = star5.filter(card => String(card.id) !== String(targetCard.id));
       const enemyAce = labPick(otherStar5.length ? otherStar5 : star5, 1)[0];
-      return [enemyAce, ...labPick(star4, 4)];
+      return labArrangeRoster([enemyAce, ...labPick(star4, 4)], enemyAce);
     }
     const sameRank = allUnits.filter(card => labStars(card) === stars);
     if (sameRank.length < 5) throw new Error(`★${stars}カードの検証には、作成カード一覧に★${stars}キャラカードが合計5枚以上必要です。`);
     // The enemy team is sampled independently. It may include the tested template if the authored pool is small.
-    return labPick(sameRank, 5);
+    return labArrangeRoster(labPick(sameRank, 5));
   }
 
   function labFreshMetrics(targetCardId) {
@@ -940,14 +1003,14 @@
       if (star4.length < 4) throw new Error('一括評価で同一カードを両陣営に配置しないため、作成カード一覧に★4キャラカードが合計8枚以上必要です。');
       const fillers = labPickLeastTested(star4, statsById, 4, [...excluded, String(ace.id)]);
       if (fillers.length !== 4) throw new Error('★5一括評価の★4補充カードを重複なしで選べませんでした。編成を再抽選してください。');
-      return [ace, ...fillers];
+      return labArrangeRoster([ace, ...fillers], ace);
     }
 
     const roster = labPickLeastTested(candidates, statsById, 5, [...excluded]);
     if (roster.length !== 5) {
       throw new Error(`★${rank}一括評価で両陣営に重複なしで編成するには、同ランクの作成キャラカードが10枚以上必要です。現在は${candidates.length}枚です。`);
     }
-    return roster;
+    return labArrangeRoster(roster);
   }
 
   async function runPerformanceLabBatch() {
