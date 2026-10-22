@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.32 — roster-aware campaign AI economy and command planning */
+/* 都道府県カード戦争 v1.0.33 — AI economy recovery and gacha fallback */
 'use strict';
 
 let campaignState = null;
@@ -1463,7 +1463,9 @@ function prefAiCanBuyMarketUnit(region,instance,utility=null) {
 function prefAiHasViableUnitReinforcement(region) {
   if(!region||prefOwnedUnits(region.id).length>=5)return false;
   const funds=Number(region.funds)||0,units=prefOwnedUnits(region.id).length;
-  if(prefEligibleGachaUnitInstances().length && (funds>=PREF_GACHA.C.price+prefAiUnitReserveFloor(region) || units<3&&funds>=PREF_GACHA.C.price))return true;
+  // When the five-card battle roster is incomplete, an affordable C pull is a viable refill
+  // even if it consumes the normal reserve; otherwise the reserve rule can deadlock at 3-4 units.
+  if(prefEligibleGachaUnitInstances().length && (funds>=PREF_GACHA.C.price+prefAiUnitReserveFloor(region) || units<5&&funds>=PREF_GACHA.C.price))return true;
   return prefMarketListings('unit',false).some(inst=>{
     if(!prefAiCanBuyMarketUnit(region,inst))return false;
     return prefAiCanBuyMarketUnit(region,inst,prefAiMarketUtility(region,inst));
@@ -1477,7 +1479,7 @@ function prefAiChooseGachaTier(region,prioritizeQuality=false) {
   // B is the default refill pull (80% character outcomes); C is the low-cash fallback.
   if(eligibleA&&region.tier==='S'&&prioritizeQuality&&funds>=PREF_GACHA.A.price+floor&&funds>=300000000)return 'A';
   if(eligibleB&&funds>=PREF_GACHA.B.price+floor)return 'B';
-  if(funds>=PREF_GACHA.C.price+floor||prefOwnedUnits(region.id).length<3&&funds>=PREF_GACHA.C.price)return 'C';
+  if(funds>=PREF_GACHA.C.price+floor||prefOwnedUnits(region.id).length<5&&funds>=PREF_GACHA.C.price)return 'C';
   return null;
 }
 function prefAiBestGachaUpgradePotential(region) {
@@ -1540,13 +1542,23 @@ function prefAiMarketReasons(region,instance) {
 }
 function prefAiTryEconomy(region) {
   if(!region||region.isPlayer)return;
-  prefRefreshAIPlan(region,'市場・所持カードの確認');
-  const profile=prefAIProfileForRegion(region);
+  region._aiEconomyPhase='初期構築計画';
+  try { prefRefreshAIPlan(region,'市場・所持カードの確認'); }
+  catch(err) { console.error(`[Prefecture] AI plan refresh failed for ${region.id}; continuing economy planning`,err); }
+  region._aiEconomyPhase='AI能力・性格の読込';
+  let profile;
+  try { profile=prefAIProfileForRegion(region); }
+  catch(err) {
+    console.error(`[Prefecture] AI profile loading failed for ${region.id}; using conservative defaults`,err);
+    profile={primaryStrategy:'adaptive',secondaryStrategies:[],cardIQ:50,tacticalIQ:50,mainAttrPriority:[],effectPriority:[]};
+  }
   let marketUnitPurchases=0,gachaAttempts=0,unitCountAtStart=prefOwnedUnits(region.id).length;
   const maxMarketBuys=2;
 
   // First preference: buy a real market card when it fits the current deck and does not consume the reserve.
   // If fewer than five characters are owned, filling missing battle slots is valued above optional luxury buys.
+  region._aiEconomyPhase='不足枠の市場補充';
+  try {
   while(prefOwnedUnits(region.id).length<5&&marketUnitPurchases<maxMarketBuys){
     const currentUnits=prefOwnedUnits(region.id);
     const marketUnits=prefMarketListings('unit',false)
@@ -1565,21 +1577,31 @@ function prefAiTryEconomy(region) {
     prefRecordAIThought(region,'カード購入',`市場で「${card?.name||'キャラカード'}」を購入`,reasons,{cardName:card?.name,price,utility:best.utility,rosterBefore:currentUnits.length,rosterAfter:prefOwnedUnits(region.id).length});
     prefLog(`${region.prefecture}が所持キャラ${currentUnits.length}枚からの補強として、市場の「${card?.name||'キャラカード'}」を購入しました。`,'info');
     marketUnitPurchases++;
-    prefRefreshAIPlan(region,'カード購入・編成シナジー再評価',true);
+    try { prefRefreshAIPlan(region,'カード購入・編成シナジー再評価',true); }
+    catch(err) { console.error(`[Prefecture] AI plan refresh after market purchase failed for ${region.id}`,err); }
+  }
+  } catch(marketErr) {
+    console.error(`[Prefecture] AI market refill scoring failed for ${region.id}; continuing to gacha`,marketErr);
+    prefLog(`${region.prefecture}の市場補充評価に問題が発生したため、市場判断を切り上げてガチャ補充へ進みます。`,'warning');
   }
 
   // If the market cannot complete the roster, use gacha with a bounded budget and repeat while a slot is missing.
   // B-rank gacha yields characters 80% of the time; C is the cheaper fallback (50%).
+  region._aiEconomyPhase='不足枠のガチャ補充';
   let attemptsLimit=Math.min(4,Math.max(1,5-prefOwnedUnits(region.id).length+2));
   while(prefOwnedUnits(region.id).length<5&&gachaAttempts<attemptsLimit){
     const available=prefEligibleGachaUnitInstances();if(!available.length)break;
     const key=prefAiChooseGachaTier(region,false);if(!key)break;
     const g=PREF_GACHA[key];const beforeCount=prefOwnedUnits(region.id).length;
     const cost=g.price;prefBook(region.id,-cost,'gacha');gachaAttempts++;
+    region._aiPendingGachaDebit={amount:cost,stage:'不足枠補充'};
     const selected=prefResolveGachaTier(key);
+    if(!selected){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
     if(selected.kind==='unit'&&selected.instance){
       const inst=selected.instance;const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
-      prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});
+      const acquired=prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});
+      if(acquired===false){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
+      delete region._aiPendingGachaDebit;
       const afterCount=prefOwnedUnits(region.id).length;
       prefRecordAIThought(region,'ガチャ',`ガチャで「${card?.name||'キャラカード'}」を獲得`,[
         `所持キャラ${beforeCount}/5枚の不足を埋めるため、補充を優先`,
@@ -1588,33 +1610,45 @@ function prefAiTryEconomy(region) {
         `カード選びIQ${profile.cardIQ}/100`
       ],{cardName:card?.name,rank:prefRankStars(card),gacha:key,rosterBefore:beforeCount,rosterAfter:afterCount});
       prefLog(`${region.prefecture}が${g.label}で「${card?.name||'キャラカード'}」を獲得し、所持キャラを${afterCount}/5枚に補充しました。`,'info');
-      prefRefreshAIPlan(region,'ガチャによるキャラ獲得',true);
-    } else {
+      try { prefRefreshAIPlan(region,'ガチャによるキャラ獲得',true); }
+      catch(err) { console.error(`[Prefecture] AI plan refresh after gacha failed for ${region.id}`,err); }
+    } else if(selected.kind==='magic') {
       const templates=prefCardTemplates().filter(c=>c.cardType==='magic');
-      if(templates.length){
-        const t=prefRandom(templates),inst=prefCreateInstance(t.id,'pending',null,{source:'ai-gacha'});
-        if(inst){
-          if(prefOwnedMagics(region.id).some(x=>String(x.templateId)===String(t.id)))prefListInstance(inst,region.id,'duplicate-gacha');
-          else prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});
-        }
+      if(!templates.length){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
+      const t=prefRandom(templates),inst=t&&prefCreateInstance(t.id,'pending',null,{source:'ai-gacha'});
+      if(!inst){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
+      if(prefOwnedMagics(region.id).some(x=>String(x.templateId)===String(t.id)))prefListInstance(inst,region.id,'duplicate-gacha');
+      else {
+        const acquired=prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});
+        if(acquired===false){prefBook(region.id,cost,'gacha-refund');prefListInstance(inst,region.id,'ai-gacha-acquisition-failed');delete region._aiPendingGachaDebit;break;}
       }
+      delete region._aiPendingGachaDebit;
       prefRecordAIThought(region,'ガチャ','キャラ以外の結果を受領',[
         `所持キャラ${beforeCount}/5枚の補充を試行`,`${g.label}はマジック排出だったためキャラ枚数は増えず`,
         `まだ補充枠がある場合のみ次の抽選を検討`
       ],{gacha:key,rosterBefore:beforeCount,rosterAfter:prefOwnedUnits(region.id).length});
+    } else {
+      prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;
     }
   }
 
   // At five characters, evaluate replacements instead of buying blindly. A high complement value can trigger
   // deterministic market reinforcement; one affordable gacha attempt is allowed only when its pool has
   // a meaningful chance of improving the weakest card or closing a tactical hole.
+  region._aiEconomyPhase='5枚揃った後の市場・ガチャ改善';
   let units=prefOwnedUnits(region.id);
   if(units.length>=5&&unitCountAtStart>=5){
-    const marketUnits=prefMarketListings('unit',false)
-      .filter(inst=>prefAiCanBuyMarketUnit(region,inst))
-      .map(inst=>({inst,utility:prefAiMarketUtility(region,inst)}))
-      .filter(x=>prefAiMarketUpgradeQualifies(region,x.inst,x.utility))
-      .sort((a,b)=>b.utility-a.utility);
+    let marketUnits=[];
+    try {
+      marketUnits=prefMarketListings('unit',false)
+        .filter(inst=>prefAiCanBuyMarketUnit(region,inst))
+        .map(inst=>({inst,utility:prefAiMarketUtility(region,inst)}))
+        .filter(x=>prefAiMarketUpgradeQualifies(region,x.inst,x.utility))
+        .sort((a,b)=>b.utility-a.utility);
+    } catch(err) {
+      console.error(`[Prefecture] AI market upgrade scoring failed for ${region.id}; continuing gacha evaluation`,err);
+      prefLog(`${region.prefecture}の市場でシナジー補強を評価できなかったため、ガチャ判断は継続します。`,'warning');
+    }
     let boughtUpgrade=false;
     for(const row of marketUnits){
       const inst=row.inst,card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
@@ -1636,44 +1670,60 @@ function prefAiTryEconomy(region) {
     }
 
     if(!boughtUpgrade){
-      const potential=prefAiBestGachaUpgradePotential(region);
+      let potential=-Infinity;
+      try { potential=prefAiBestGachaUpgradePotential(region); }
+      catch(err) { console.error(`[Prefecture] AI gacha upgrade scoring failed for ${region.id}`,err); }
       const eligible=prefEligibleGachaUnitInstances();
       const key=prefAiChooseGachaTier(region,potential>=8);
       const utilityGate=profile.primaryStrategy==='collector'?2.0:profile.cardIQ>=75?4.0:6.0;
       if(eligible.length&&potential>=utilityGate&&key){
         const g=PREF_GACHA[key],cost=g.price,before=units.length;prefBook(region.id,-cost,'gacha');
+        region._aiPendingGachaDebit={amount:cost,stage:'シナジー補強'};
         const selected=prefResolveGachaTier(key);
-        if(selected.kind==='unit'&&selected.instance){
+        if(!selected){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;}
+        else if(selected.kind==='unit'&&selected.instance){
           const inst=selected.instance,card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
           const replacement=prefAiReplacementChoice(region,units,inst);
           if(replacement&&replacement!==inst.id){
             const old=campaignState.instances[replacement];if(old)prefListInstance(old,region.id,'ai-gacha-synergy-upgrade');
-            prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha-upgrade'});
-            prefRecordAIThought(region,'ガチャ','シナジー改善候補を抽選',[
-              `現デッキの期待補強値${potential.toFixed(1)}が基準${utilityGate.toFixed(1)}以上`,
-              `${g.label}を${prefFormatMoney(cost)}で利用し、獲得カードと最弱枠を比較`,
-              `採用できるカードが出たため、${prefCardForInstance(replacement)?.name||'既存カード'}と交換`
-            ],{cardName:card?.name,rank:prefRankStars(card),gacha:key,potential,replaced:prefCardForInstance(replacement)?.name||replacement});
-            prefLog(`${region.prefecture}がデッキ補強を狙ってガチャを利用し、シナジー候補「${card?.name||'キャラカード'}」を採用しました。`,'info');
-            prefRefreshAIPlan(region,'ガチャでシナジー補強',true);
+            const acquired=prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha-upgrade'});
+            if(acquired===false){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;}
+            else {
+              delete region._aiPendingGachaDebit;
+              prefRecordAIThought(region,'ガチャ','シナジー改善候補を抽選',[
+                `現デッキの期待補強値${potential.toFixed(1)}が基準${utilityGate.toFixed(1)}以上`,
+                `${g.label}を${prefFormatMoney(cost)}で利用し、獲得カードと最弱枠を比較`,
+                `採用できるカードが出たため、${prefCardForInstance(replacement)?.name||'既存カード'}と交換`
+              ],{cardName:card?.name,rank:prefRankStars(card),gacha:key,potential,replaced:prefCardForInstance(replacement)?.name||replacement});
+              prefLog(`${region.prefecture}がデッキ補強を狙ってガチャを利用し、シナジー候補「${card?.name||'キャラカード'}」を採用しました。`,'info');
+              try { prefRefreshAIPlan(region,'ガチャでシナジー補強',true); }
+              catch(err) { console.error(`[Prefecture] AI plan refresh after synergy gacha failed for ${region.id}`,err); }
+            }
           }else{
-            // A non-upgrade draw is not allowed to displace a stronger card; return it to the market without charge loss recovery.
+            // A non-upgrade draw is not allowed to displace a stronger card; do not charge for a rejected draw.
             prefListInstance(inst,region.id,'ai-rejected-gacha-upgrade');
-            prefBook(region.id,cost,'gacha-refund');
+            prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;
           }
-        }else{
-          // A magic result can still be useful, but should not make the AI persistently gamble on character replacement.
+        }else if(selected.kind==='magic'){
           const templates=prefCardTemplates().filter(c=>c.cardType==='magic');
-          if(templates.length){const t=prefRandom(templates),inst=prefCreateInstance(t.id,'pending',null,{source:'ai-gacha-upgrade'});if(inst){if(prefOwnedMagics(region.id).some(x=>String(x.templateId)===String(t.id)))prefListInstance(inst,region.id,'duplicate-gacha');else prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha-upgrade'});}}
+          if(templates.length){
+            const t=prefRandom(templates),inst=t&&prefCreateInstance(t.id,'pending',null,{source:'ai-gacha-upgrade'});
+            if(inst){
+              if(prefOwnedMagics(region.id).some(x=>String(x.templateId)===String(t.id)))prefListInstance(inst,region.id,'duplicate-gacha');
+              else prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha-upgrade'});
+              delete region._aiPendingGachaDebit;
+            }else{prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;}
+          }else{prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;}
           prefRecordAIThought(region,'ガチャ','シナジー補強を狙ったがマジック排出',[
             `現デッキの補強期待値${potential.toFixed(1)}を確認して抽選`,`${g.label}からマジックが排出されたため、キャラ編成は維持`
           ],{gacha:key,potential});
-        }
+        }else{prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;}
       }
     }
   }
 
   // Magic buying is secondary to the five-character battle roster, but still uses synergy and a cash reserve.
+  region._aiEconomyPhase='マジック市場の補強';
   units=prefOwnedUnits(region.id);
   const magics=prefOwnedMagics(region.id);
   if(units.length>=5&&magics.length<5){
@@ -1691,6 +1741,7 @@ function prefAiTryEconomy(region) {
       prefRefreshAIPlan(region,'マジックカードを購入',true);
     }
   }
+  region._aiEconomyPhase='構築計画の最終更新';
   prefRefreshAIPlan(region,'カード獲得・市場の変化');
   const countEnd=prefOwnedUnits(region.id).length;
   if(countEnd<5){
@@ -1699,6 +1750,7 @@ function prefAiTryEconomy(region) {
       prefEligibleGachaUnitInstances().length?'ガチャに対象キャラが残っているため、次のターンも補充を優先':'ガチャ対象キャラが残っていないため、市場への出品を待つ'
     ],{rosterStart:unitCountAtStart,rosterEnd:countEnd});
   }
+  delete region._aiEconomyPhase;
 }
 function prefBuildTurnResolutionQueue(actions,pairs,unmatched,investigationsAlreadyResolved=false) {
   const pairByRegion=new Map();
@@ -1815,6 +1867,73 @@ function prefAutoBuyListedMagics(region){
   }
   return false;
 }
+function prefAiEmergencyGachaRefill(region) {
+  // Recovery path used only when the full AI economy planner throws. It deliberately avoids
+  // market scoring and AI-plan helpers so a failure in those systems cannot suppress basic refill.
+  if(!campaignState||!region||region.isPlayer)return 0;
+  let attempts=0,acquired=0;
+  while(prefOwnedUnits(region.id).length<5&&attempts<4){
+    const eligible=prefEligibleGachaUnitInstances();
+    if(!eligible.length)break;
+    const units=prefOwnedUnits(region.id).length;
+    const funds=Math.max(0,Number(region.funds)||0);
+    const tier=String(region.tier||'E');
+    const allowedA=['S','A','B'].includes(tier);
+    const allowedB=['S','A','B','C','D'].includes(tier);
+    // Filling a battle roster takes priority over the normal cash reserve; still use the
+    // highest affordable legal tier that leaves a small reserve where possible.
+    let key=null;
+    if(allowedA&&tier==='S'&&funds>=PREF_GACHA.A.price+10000000)key='A';
+    else if(allowedB&&funds>=PREF_GACHA.B.price+2000000)key='B';
+    else if(funds>=PREF_GACHA.C.price)key='C';
+    if(!key)break;
+    const cost=PREF_GACHA[key].price;
+    let selected=null;
+    try { selected=prefResolveGachaTier(key); }
+    catch(err) {
+      console.error(`[Prefecture] Emergency gacha draw resolution failed for ${region.id}`,err);
+      break;
+    }
+    if(!selected||!['unit','magic'].includes(selected.kind))break;
+    prefBook(region.id,-cost,'gacha');
+    region._aiPendingGachaDebit={amount:cost,stage:'復旧ガチャ'};
+    attempts++;
+    if(selected.kind==='unit'&&selected.instance){
+      const inst=selected.instance;
+      const got=prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha-recovery'});
+      if(got===false){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
+      delete region._aiPendingGachaDebit;
+      acquired++;
+      const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
+      prefRecordAIThought(region,'ガチャ',`補充エラーから復旧し「${card?.name||'キャラカード'}」を獲得`,[
+        '通常の市場・ガチャ判断で例外が発生したため、補充専用の安全経路を使用',
+        `所持キャラ${units}/5枚から補充を再開`,
+        `${PREF_GACHA[key].label}を${prefFormatMoney(cost)}で利用`,
+        `補充後は所持キャラ${prefOwnedUnits(region.id).length}/5枚`
+      ],{cardName:card?.name,rank:prefRankStars(card),gacha:key,recovery:true,rosterBefore:units,rosterAfter:prefOwnedUnits(region.id).length});
+      prefLog(`${region.prefecture}が補充判断の復旧処理で${PREF_GACHA[key].label}を利用し、キャラカードを獲得しました。`,'warning');
+    } else {
+      const templates=prefCardTemplates().filter(c=>c.cardType==='magic');
+      if(!templates.length){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
+      const template=prefRandom(templates);
+      const inst=template&&prefCreateInstance(template.id,'pending',null,{source:'ai-gacha-recovery'});
+      if(!inst){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
+      if(prefOwnedMagics(region.id).some(x=>String(x.templateId)===String(template.id)))prefListInstance(inst,region.id,'duplicate-gacha');
+      else {
+        const got=prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha-recovery'});
+        if(got===false)prefListInstance(inst,region.id,'gacha-recovery-overflow');
+      }
+      delete region._aiPendingGachaDebit;
+      prefRecordAIThought(region,'ガチャ','復旧用ガチャでマジックが排出',[
+        '通常の経済判断が失敗したため、キャラ補充を継続する安全経路で抽選',
+        `${PREF_GACHA[key].label}からマジックが排出され、キャラ枚数は増えず`,
+        '所持枠・候補・資金が許す限り追加補充を検討'
+      ],{gacha:key,recovery:true,rosterBefore:units,rosterAfter:prefOwnedUnits(region.id).length});
+    }
+  }
+  return acquired;
+}
+
 function prefFallbackAiCommand(region) {
   const otherIds=prefTurnOrderRegions().filter(r=>r.id!==region?.id).map(r=>r.id);
   const target=otherIds.length?prefRandom(otherIds):null;
@@ -1827,8 +1946,23 @@ function prefGetAiTurnAction(region) {
   try {
     prefAiTryEconomy(region);
   } catch(err) {
-    console.error(`[Prefecture] AI economy failed for ${region.id}; continuing this turn`,err);
-    prefLog(`${region.prefecture}の市場・ガチャ判断でエラーが発生したため、購入処理をスキップしました。`,'warning');
+    const failedPhase=String(region._aiEconomyPhase||'処理開始前');
+    console.error(`[Prefecture] AI economy failed for ${region.id} during ${failedPhase}; attempting isolated gacha refill`,err);
+    if(region._aiPendingGachaDebit&&Number(region._aiPendingGachaDebit.amount)>0){
+      const debit=Number(region._aiPendingGachaDebit.amount);
+      prefBook(region.id,debit,'gacha-refund');
+      delete region._aiPendingGachaDebit;
+      prefLog(`${region.prefecture}のガチャ処理が結果の確定前に中断されたため、未確定の抽選費用を返金しました。`,'warning');
+    }
+    prefLog(`${region.prefecture}の市場・ガチャ判断で「${failedPhase}」中にエラーが発生しました。通常の補充判断を切り離し、ガチャ補充を再試行します。`,'warning');
+    try {
+      const recovered=prefAiEmergencyGachaRefill(region);
+      if(recovered>0)prefRefreshAIPlan(region,'エラー後のガチャ補充',true);
+    } catch(recoveryErr) {
+      console.error(`[Prefecture] AI emergency gacha refill failed for ${region.id}`,recoveryErr);
+      if(region._aiPendingGachaDebit&&Number(region._aiPendingGachaDebit.amount)>0){prefBook(region.id,Number(region._aiPendingGachaDebit.amount),'gacha-refund');delete region._aiPendingGachaDebit;}
+      prefLog(`${region.prefecture}のガチャ復旧処理にもエラーが発生しました。抽選未確定の費用は返金し、詳細をブラウザの開発者コンソールに記録しました。`,'warning');
+    } finally { delete region._aiEconomyPhase; }
   }
   let action=null;
   try { action=prefDecideAiCommand(region); }
