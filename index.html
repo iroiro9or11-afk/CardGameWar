@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.30</title>
+  <title>都道府県カード戦争 v1.0.31</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -307,7 +307,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.30</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.31</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -5100,6 +5100,29 @@
       return state.units.find(u => u.instanceId === id) || null;
     }
 
+    // A roster member's baseline combat value must be part of the board score. Without
+    // this, losing a high-ATK/high-speed character could look almost identical to losing
+    // a weak one, so a planner could sacrifice its own best unit for a superficially good
+    // numeric effect. This is a conservative value estimate, not card-market value.
+    function aiPlannerUnitStrategicValue(unit) {
+      if (!unit || unit.__playerTarget) return 0;
+      const hp = Math.max(0, Number(unit.maxHp) || 0);
+      const atk = Math.max(0, Number(unit.atk) || 0);
+      const speed = Math.max(0, Number(unit.priority) || 0);
+      let skillValue = 0;
+      for (const skill of (Array.isArray(unit.skills) ? unit.skills : [])) {
+        const effect = skill?.mainEffect || {};
+        const type = String(effect.type || '');
+        let value = skill?.type === 'passive' ? 85 : 45;
+        if (/^dmg_/.test(type)) value += 45;
+        else if (/^heal_/.test(type) || ['shield','mod_ap','skill_block','heal_block','status_apply','mod_atk_ratio','mod_atk_val','mod_speed'].includes(type)) value += 28;
+        if (skill?.hasSubEffect && skill?.subEffect) value += 20;
+        if (skill?.type === 'passive' && skill?.timing === 'battle_start') value += 18;
+        skillValue += value;
+      }
+      return Math.max(0, Math.min(2200, hp * 0.08 + atk * 0.7 + speed * 2.2 + skillValue));
+    }
+
     function aiPlannerEffectiveAtk(unit) {
       let atk = unit.atk;
       (unit.buffs || []).forEach(b => {
@@ -5290,7 +5313,8 @@
         const key = targetSide === 'player' ? 'playerAp' : 'enemyAp';
         const before = state[key];
         state[key] = Math.max(0, Math.min(100, state[key] + delta));
-        return ok({ value: (state[key] - before) * 2, kills: 0, damage: 0, healing: 0 });
+        const resourceDelta = state[key] - before;
+        return ok({ value: resourceDelta * 2 * (targetSide === actor.side ? 1 : -1), kills: 0, damage: 0, healing: 0 });
       }
       if (!target || target.__playerTarget) return fail({ value: 0, kills: 0, damage: 0, healing: 0 });
 
@@ -5302,12 +5326,19 @@
         const afterCut = effect.type === 'dmg_fixed_pierce' ? Math.max(0, Math.round(raw)) : aiPlannerDamageAfterCut(target, raw);
         const actual = aiPlannerAbsorbShield(target, afterCut, effect.type === 'dmg_fixed_pierce');
         target.currentHp = Math.max(0, target.currentHp - actual);
-        return ok({
-          value: actual * 1.15 + (beforeHp > 0 && target.currentHp <= 0 ? 1300 : 0),
-          kills: beforeHp > 0 && target.currentHp <= 0 ? 1 : 0,
-          damage: actual,
-          healing: 0
-        });
+        const killed = beforeHp > 0 && target.currentHp <= 0;
+        const hostileTarget = target.side !== actor.side;
+        const strategicValue = aiPlannerUnitStrategicValue(target);
+        const hitFraction = Math.min(1, actual / Math.max(1, beforeHp));
+        const offensiveValue = actual * 1.15 + (killed ? 1300 + strategicValue * 0.35 : 0);
+        // Damage to an ally is not a positive action just because the raw number is large.
+        // Account for the portion of a teammate's remaining combat value being destroyed,
+        // and make sacrificing a high-value character much worse than injuring a weak one.
+        const friendlyFireRisk = strategicValue * hitFraction * 0.45;
+        const value = hostileTarget
+          ? offensiveValue
+          : -(actual * 1.8 + friendlyFireRisk + (killed ? 2200 + strategicValue * 0.65 : 0));
+        return ok({ value, kills: killed ? 1 : 0, damage: actual, healing: 0 });
       }
       if (effect.type === 'shield') {
         const amount = Math.max(0, Math.round(Number(effect.val) || 0));
@@ -5321,7 +5352,7 @@
         const heal = effect.type === 'heal_fixed' ? Number(effect.val) || 0 : Math.round(target.maxHp * ((Number(effect.val) || 0) / 100));
         const actual = Math.max(0, Math.min(target.maxHp, target.currentHp + heal) - target.currentHp);
         target.currentHp += actual;
-        return ok({ value: actual * 0.95, kills: 0, damage: 0, healing: actual });
+        return ok({ value: actual * (target.side === actor.side ? 0.95 : -1.15), kills: 0, damage: 0, healing: actual });
       }
       if (effect.type === 'damage_taken_ratio' || effect.type === 'damage_cut_ratio' || effect.type === 'mod_atk_ratio' || effect.type === 'mod_atk_val' || effect.type === 'mod_speed' || effect.type === 'mod_max_hp_val') {
         aiPlannerAddTimed(target, effect);
@@ -5332,10 +5363,18 @@
           const delta = aiPlannerRefreshEffectiveMaxHp(target, val >= 0);
           const killed = beforeCurrent > 0 && target.currentHp <= 0;
           const weight = val >= 0 ? 8 : 11;
-          return ok({ value: Math.abs(val) * weight * (target.side === actor.side ? 1 : 0.85) + (killed ? 1400 : 0), kills: killed ? 1 : 0, damage: Math.max(0, beforeCurrent-target.currentHp), healing: Math.max(0,target.currentHp-beforeCurrent), maxHpChange: target.maxHp-beforeMax });
+          const friendly = target.side === actor.side;
+          const beneficial = friendly ? val > 0 : val < 0;
+          const value = Math.abs(val) * weight * (beneficial ? 1 : -1) + (killed ? (beneficial ? 1400 : -2400) : 0);
+          return ok({ value, kills: killed ? 1 : 0, damage: Math.max(0, beforeCurrent-target.currentHp), healing: Math.max(0,target.currentHp-beforeCurrent), maxHpChange: target.maxHp-beforeMax });
         }
         const weight = (effect.type === 'damage_cut_ratio' || effect.type === 'damage_taken_ratio') ? 18 : effect.type === 'mod_speed' ? 10 : 7;
-        return ok({ value: Math.abs(val) * weight * (target.side === actor.side ? 1 : 0.8), kills: 0, damage: 0, healing: 0 });
+        const friendly = target.side === actor.side;
+        let beneficial;
+        if (effect.type === 'damage_cut_ratio') beneficial = friendly ? val > 0 : val < 0;
+        else if (effect.type === 'damage_taken_ratio') beneficial = friendly ? val < 0 : val > 0;
+        else beneficial = friendly ? val > 0 : val < 0;
+        return ok({ value: Math.abs(val) * weight * (beneficial ? 1 : -1), kills: 0, damage: 0, healing: 0 });
       }
       if (effect.type === 'clear_random_buffs') {
         const before = target.currentHp;
@@ -5354,27 +5393,30 @@
         const before = target.currentHp;
         target.buffs = (target.buffs || []).filter(b => b.source && b.source !== 'buff');
         const delta = aiPlannerRefreshEffectiveMaxHp(target, false);
-        return ok({ value: target.side !== actor.side ? 70 : 30, kills: before > 0 && target.currentHp <= 0 ? 1 : 0, damage: Math.max(0,before-target.currentHp), healing: 0, maxHpChange: delta.newMax-delta.oldMax });
+        return ok({ value: target.side !== actor.side ? 70 : -55, kills: before > 0 && target.currentHp <= 0 ? 1 : 0, damage: Math.max(0,before-target.currentHp), healing: 0, maxHpChange: delta.newMax-delta.oldMax });
       }
       if (effect.type === 'clear_debuffs') {
         target.debuffs = [];
         const delta = aiPlannerRefreshEffectiveMaxHp(target, false);
-        return ok({ value: target.side === actor.side ? 65 : 20, kills: 0, damage: 0, healing: 0, maxHpChange: delta.newMax-delta.oldMax });
+        return ok({ value: target.side === actor.side ? 65 : -65, kills: 0, damage: 0, healing: 0, maxHpChange: delta.newMax-delta.oldMax });
       }
       if (effect.type === 'status_apply') {
         target.statuses = target.statuses || [];
         const status = effect.status || 'poison';
         if (target.statuses.some(x => x.type === status && durationActive(x.duration))) return fail({ value: 0, kills: 0, damage: 0, healing: 0 });
         target.statuses.push({ type: status, duration: normalizeDuration(effect.duration) });
-        return ok({ value: (status === 'poison' || status === 'burn' ? 50 : status === 'freeze' || status === 'paralysis' ? 85 : 35) * (target.side === actor.side ? -0.5 : 1), kills: 0, damage: 0, healing: 0 });
+        const positiveStatus = ['stealth','taunt'].includes(status);
+        const beneficial = (target.side === actor.side) === positiveStatus;
+        const magnitude = status === 'poison' || status === 'burn' ? 50 : status === 'freeze' || status === 'paralysis' ? 85 : 35;
+        return ok({ value: magnitude * (beneficial ? 1 : -1), kills: 0, damage: 0, healing: 0 });
       }
       if (effect.type === 'status_remove') {
         target.statuses = (target.statuses || []).filter(x => x.type !== (effect.status || 'poison'));
-        return ok({ value: target.side === actor.side ? 45 : 15, kills: 0, damage: 0, healing: 0 });
+        return ok({ value: target.side === actor.side ? 45 : -45, kills: 0, damage: 0, healing: 0 });
       }
       if (effect.type === 'clear_statuses') {
         target.statuses = [];
-        return ok({ value: target.side === actor.side ? 65 : 20, kills: 0, damage: 0, healing: 0 });
+        return ok({ value: target.side === actor.side ? 65 : -65, kills: 0, damage: 0, healing: 0 });
       }
       if (effect.type === 'heal_block' || effect.type === 'skill_block') {
         target.debuffs = target.debuffs || [];
@@ -5445,8 +5487,9 @@
       let score = 0;
       own.forEach(u => {
         const ratio = u.maxHp > 0 ? u.currentHp / u.maxHp : 0;
-        if (u.currentHp > 0) score += 220 + ratio * 520;
-        else score -= 1750;
+        const strategicValue = aiPlannerUnitStrategicValue(u);
+        if (u.currentHp > 0) score += 220 + ratio * 520 + strategicValue * 0.25;
+        else score -= 1750 + strategicValue * 0.55;
         score += (aiPlannerEffectiveAtk(u) - u.atk) * 0.18;
         score += (aiPlannerEffectiveSpeed(u) - u.priority) * 0.75;
         [...(u.buffs || [])].forEach(b => {
@@ -5462,9 +5505,10 @@
       });
       enemy.forEach(u => {
         const missing = u.maxHp > 0 ? 1 - u.currentHp / u.maxHp : 0;
+        const strategicValue = aiPlannerUnitStrategicValue(u);
         score += missing * 780;
-        if (u.currentHp <= 0) score += 1750;
-        else if (u.currentHp / u.maxHp <= 0.25) score += 220;
+        if (u.currentHp <= 0) score += 1750 + strategicValue * 0.55;
+        else { score -= strategicValue * 0.25; if (u.currentHp / u.maxHp <= 0.25) score += 220; }
         if ((u.debuffs || []).some(b => b.type === 'skill_block')) score += 75;
         if ((u.debuffs || []).some(b => b.type === 'heal_block')) score += 30;
         (u.debuffs || []).forEach(b => {
@@ -5757,6 +5801,36 @@
       return scored.slice(0, Math.min(keep, scored.length)).map(x => x.c);
     }
 
+    // Reject an obviously suicidal magic candidate before beam pruning. This is a
+    // deterministic safety rule for lethal damage to an ally: an external, separately
+    // targeted sub-effect may justify a sacrifice, but an effect that only kills its own
+    // side (or then continues on the same dead target) is never a sensible use of AP.
+    function aiPlannerBlocksLethalFriendlyMagic(state, side, card, targetId = null) {
+      const effect = card?.effect || {};
+      const main = effect.mainEffect || {};
+      const directDamage = ['dmg_fixed','dmg_fixed_pierce'].includes(String(main.type || ''));
+      const lethalMaxHp = main.type === 'mod_max_hp_val' && Number(main.val) <= -1;
+      if (!directDamage && !lethalMaxHp) return false;
+      const targetType = String(effect.targetType || '');
+      if (!['select_ally_1','random_ally_1'].includes(targetType)) return false;
+      const sub = effect.hasSubEffect ? effect.subEffect : null;
+      const subType = String(sub?.targetType || 'same_main_target');
+      const hasSeparateSubTarget = !!sub && subType !== 'same_main_target';
+      if (hasSeparateSubTarget) return false; // planner still evaluates the real payoff.
+
+      const targets = targetType === 'select_ally_1'
+        ? [aiPlannerFindUnit(state, targetId)].filter(Boolean)
+        : aiPlannerTargetPool(state, 'random_ally_1', {side}).filter(t => aiPlannerTargetCondition(t, effect.targetCond));
+      return targets.some(target => {
+        if (target.side !== side || target.currentHp <= 0) return false;
+        if (lethalMaxHp) return Number(main.val) <= -Math.max(1, Number(target.maxHp) || 0);
+        const raw = Math.max(0, Number(main.val) || 0);
+        const damage = main.type === 'dmg_fixed_pierce' ? raw : aiPlannerDamageAfterCut(target, raw);
+        const shield = (target.shields || []).reduce((sum, x) => sum + Math.max(0, Number(x.remaining ?? x.amount) || 0), 0);
+        return Math.max(0, damage - shield) >= Number(target.currentHp || 0);
+      });
+    }
+
     function aiPlannerBuildMagicCandidates(state, side, intelligence) {
       const hand = side === 'player' ? (battleState.magicHand || []) : (battleState.enemyMagicHand || []);
       const used = side === 'player' ? battleState.usedMagicCardIds : battleState.enemyUsedMagicCardIds;
@@ -5779,7 +5853,8 @@
           aiPlannerManualTargetCandidates(state, eff.subEffect.targetType, eff.subEffect.targetCond, actor).forEach(t => candidates.push({type:'magic',card,targetInstanceId:null,subTargetInstanceId:t.instanceId,cost:Number(eff.cost||0)}));
         } else candidates.push({type:'magic', card, targetInstanceId:null, subTargetInstanceId:null, cost:Number(eff.cost||0)});
       });
-      const scored = candidates.map(c => {
+      const safeCandidates = candidates.filter(c => !c.card || !aiPlannerBlocksLethalFriendlyMagic(state, side, c.card, c.targetInstanceId));
+      const scored = safeCandidates.map(c => {
         const copy = aiPlannerCloneState(state);
         let delta = 0;
         if (c.card) {
@@ -5926,6 +6001,40 @@
       return score+aiEvaluationError(side);
     }
 
+    function scoreAiTargetForSide(target, skill, unit) {
+      if (!target || !unit) return -9999;
+      const effect = skill?.mainEffect || {};
+      const type = String(effect.type || '');
+      const value = Number(effect.val) || 0;
+      const friendly = target.side === unit.side;
+      const base = scoreAiTarget(target, skill, unit);
+      let beneficial;
+      if (['dmg_fixed','dmg_fixed_pierce','dmg_atk_ratio'].includes(type)) {
+        if (!friendly) return base;
+        const raw = type === 'dmg_atk_ratio' ? Math.round(aiPlannerEffectiveAtk(unit) * value / 100) : value;
+        const lethal = raw >= Number(target.currentHp || 0);
+        return -Math.max(100, Math.abs(base)) - (lethal ? 5000 : 300);
+      }
+      if (type === 'heal_fixed' || type === 'heal_max_hp_ratio' || type === 'shield' || type === 'clear_debuffs' || type === 'clear_random_debuffs' || type === 'status_remove' || type === 'clear_statuses') {
+        beneficial = friendly;
+      } else if (type === 'clear_buffs' || type === 'clear_random_buffs' || type === 'skill_block' || type === 'heal_block') {
+        beneficial = !friendly;
+      } else if (type === 'status_apply') {
+        const status = String(effect.status || 'poison');
+        const positiveForAlly = ['stealth','taunt'].includes(status);
+        beneficial = friendly === positiveForAlly;
+      } else if (type === 'damage_cut_ratio') {
+        beneficial = friendly ? value > 0 : value < 0;
+      } else if (type === 'damage_taken_ratio') {
+        beneficial = friendly ? value < 0 : value > 0;
+      } else if (['mod_atk_ratio','mod_atk_val','mod_speed','mod_max_hp_val'].includes(type)) {
+        beneficial = friendly ? value > 0 : value < 0;
+      } else {
+        return base;
+      }
+      return beneficial ? Math.max(1, base) : -Math.max(100, Math.abs(base));
+    }
+
     function chooseAiActions(side) {
       const units = getActiveUnits(side);
       const aliveEnemies = side === 'player' ? getActiveUnits('enemy') : getActiveUnits('player');
@@ -6002,6 +6111,7 @@
       if (!candidates.length) return -9999;
       let best=-9999;
       candidates.forEach(c=>{
+        if (aiPlannerBlocksLethalFriendlyMagic(state, side, card, c.targetInstanceId || null)) return;
         const sim=aiPlannerCloneState(state);
         const r=aiPlannerApplySkill(sim,actorId,pseudoSkill,c.targetInstanceId,true,c.subTargetInstanceId);
         if (r.value < -9000) return;
@@ -6061,26 +6171,16 @@
       const usable = cards.filter(c => ap >= Number(c.effect?.cost || 0) && magicActivationConditionMet(c.effect, side, ap) && aiMagicHasRequiredTargets(c, actor));
       if (!usable.length) return;
       const intelligence = getAiIntelligenceForSide(side);const iq=getAiTacticalIQ(side);
-      const ranked = usable.map(card => {
-        let score=scoreAiMagic(card,side);
-        if(iq<35){
-          const main=card.effect?.mainEffect||{};const type=String(main.type||'');const val=Number(main.val)||0;const cost=Number(card.effect?.cost)||0;
-          // Deliberately coarse estimate for very low tactical IQ: raw effect magnitude and cost dominate; complex conditions are discounted.
-          score=(type.startsWith('dmg_')?Math.max(0,val)*0.45:type.startsWith('heal_')?Math.max(0,val)*0.30:type==='mod_ap'?val*0.7:['shield','damage_cut_ratio','damage_taken_ratio'].includes(type)?Math.max(0,Math.abs(val))*0.25:Math.max(0,val)*0.20)-cost*0.55;
-          if(card.effect?.selfCond&&card.effect.selfCond.type&&card.effect.selfCond.type!=='none')score-=4;
-          if(card.effect?.hasSubEffect)score*=0.8;
-          score+=aiStrategyScoreAdjustment(side,main,cost,'magic')+aiEvaluationError(side);
-        }
-        return {card,score};
-      }).sort((a,b)=>b.score-a.score);
+      const ranked = usable.map(card => ({card, score:scoreAiMagic(card,side)})).sort((a,b)=>b.score-a.score);
       let chosen = null;
-      if(ranked.length&&(ranked[0].score>(iq<35?-2:0)))chosen=aiPickWithinThree(ranked,'score')?.card||ranked[0].card;
+      // Never spend a turn/AP on a plainly harmful magic merely because its printed number is large.
+      if(ranked.length && ranked[0].score > 0) chosen=aiPickWithinThree(ranked,'score')?.card||ranked[0].card;
       if (!chosen) return;
       if(side==='enemy')battleState.reservedEnemyMagic=chosen;else battleState.reservedMagic=chosen;
       if (isManualTargetType(chosen.effect?.targetType)) {
         const pool = getAiMagicTargetCandidates(chosen.effect.targetType, chosen.effect.targetCond, actor);
         if (pool.length) {
-          pool.sort((a,b)=>scoreAiTarget(b,{mainEffect:chosen.effect.mainEffect},actor)-scoreAiTarget(a,{mainEffect:chosen.effect.mainEffect},actor));
+          pool.sort((a,b)=>scoreAiTargetForSide(b,{mainEffect:chosen.effect.mainEffect},actor)-scoreAiTargetForSide(a,{mainEffect:chosen.effect.mainEffect},actor));
           if(side==='enemy')battleState.reservedEnemyMagicTargetInstanceId=pool[0].instanceId;else battleState.reservedMagicTargetInstanceId=pool[0].instanceId;
         }
       }
@@ -6090,21 +6190,19 @@
       } else if (sub && isManualTargetType(sub.targetType)) {
         const subPool = getAiMagicTargetCandidates(sub.targetType, sub.targetCond || {type:'none'}, actor);
         if (subPool.length) {
-          subPool.sort((a,b)=>scoreAiTarget(b,{mainEffect:sub},actor)-scoreAiTarget(a,{mainEffect:sub},actor));
+          subPool.sort((a,b)=>scoreAiTargetForSide(b,{mainEffect:sub},actor)-scoreAiTargetForSide(a,{mainEffect:sub},actor));
           if(side==='enemy')battleState.reservedEnemyMagicSubTargetInstanceId=subPool[0].instanceId;else battleState.reservedMagicSubTargetInstanceId=subPool[0].instanceId;
         }
       }
     }
 
     function chooseAiTurnPlan(side) {
-      const intelligence = getAiIntelligenceForSide(side);const iq=getAiTacticalIQ(side);
-      if (iq >= 56) {
-        const result = aiPlannerSearch(side, intelligence);
-        applyAiPlanToBattle(side, result.plan);
-      } else {
-        chooseAiActions(side);
-        chooseAiMagic(side);
-      }
+      // Even low-IQ rivals use the shared planner. IQ changes its search width and
+      // evaluation noise, but does not switch to the old greedy path that could choose
+      // plainly suicidal magic or ignore the value of preserving an important ally.
+      const intelligence = getAiIntelligenceForSide(side);
+      const result = aiPlannerSearch(side, intelligence);
+      applyAiPlanToBattle(side, result.plan);
       recordCampaignAiTurnPlan(side);
     }
 
@@ -6259,7 +6357,7 @@
       const magicMainTargetId = isPlayerActor ? battleState.reservedMagicTargetInstanceId : battleState.reservedEnemyMagicTargetInstanceId;
       const magicSubTargetId = isPlayerActor ? battleState.reservedMagicSubTargetInstanceId : battleState.reservedEnemyMagicSubTargetInstanceId;
       const eff = card.effect || {};
-      const mainTargetsPreview = card.effect ? resolveTargets(eff.targetType, eff.targetCond, actor, isPlayerActor, magicMainTargetId || null, true) : [];
+      const mainTargetsPreview = card.effect ? resolveTargetsWithFallback(eff.targetType, eff.targetCond, actor, isPlayerActor, magicMainTargetId || null, true) : [];
       if (card.effect && !mainTargetsPreview.length && !['player_self','player_opp','self'].includes(eff.targetType)) {
         logBattle(`⚠️ ${isPlayerActor ? 'プレイヤー' : '敵'}はマジック【${card.name}】の有効な対象がいないため不発（AP消費なし）。`);
         return;
@@ -6288,7 +6386,7 @@
         if (mainEffectSucceeded && eff.hasSubEffect && eff.subEffect) {
           const subChance=getSubEffectChance(eff, actor); if(Math.random()*100>=subChance){effectLines.push(`追加効果不発（発動確率${subChance}%）`); } else {
           const subType=eff.subEffect.targetType||'same_main_target';
-          const subTargets = subType==='same_main_target' ? mainTargets.filter(t => matchesTargetCondition(t, eff.subEffect.targetCond || {type:'none'})) : resolveTargets(subType, eff.subEffect.targetCond || {type:'none'}, actor, isPlayerActor, magicSubTargetId || null, true);
+          const subTargets = subType==='same_main_target' ? mainTargets.filter(t => matchesTargetCondition(t, eff.subEffect.targetCond || {type:'none'})) : resolveTargetsWithFallback(subType, eff.subEffect.targetCond || {type:'none'}, actor, isPlayerActor, magicSubTargetId || null, true);
           subTargets.forEach(t => {
             targetNames.push(t?.name || (t?.__playerTarget ? 'プレイヤー' : '対象'));
             if (t && !t.__playerTarget) { if(!targetHpBeforeMap.has(t.instanceId))targetHpBeforeMap.set(t.instanceId,{current:t.currentHp,max:t.maxHp}); if(!targetEntities.some(x=>x.instanceId===t.instanceId))targetEntities.push(t); }
@@ -6388,7 +6486,7 @@
         await showActionPopup(unit, sk.name, {cardType:'unit',name:unit.name,image:getCardImage(unit)||unit.image,hp:unit.maxHp,atk:getEffectiveAtk(unit),prio:getEffectiveSpeed(unit)}, {target:'AP不足',effect:`必要AP ${cost}`,result:'不発（AP消費なし）',description:sk.desc || sk.description || buildAutoSkillDescriptionFromData(sk)});
         return;
       }
-      const mainTargetsPreview = resolveTargets(sk.targetType, sk.targetCond, unit, isPlayer, act.targetInstanceId);
+      const mainTargetsPreview = resolveTargetsWithFallback(sk.targetType, sk.targetCond, unit, isPlayer, act.targetInstanceId);
       if (!mainTargetsPreview.length && !['self','player_self','player_opp'].includes(sk.targetType)) {
         logBattle(`⚠️ ${unit.name} のスキル【${sk.name}】は有効な対象がいないため不発（AP消費なし）。`);
         await showActionPopup(unit, sk.name, sk, {target:'有効な対象なし',effect:'対象条件を満たす対象がいません',result:'不発（AP消費なし）',description: sk.desc || sk.description || buildAutoSkillDescriptionFromData(sk)});
@@ -6407,7 +6505,7 @@
       });
       if(mainEffectSucceeded&&sk.hasSubEffect&&sk.subEffect){
         const subTargetType=sk.subEffect.targetType||'same_main_target', subTargetCond=sk.subEffect.targetCond||{type:'none'};
-        const subTargets=subTargetType==='same_main_target'?mainTargets.filter(t=>matchesTargetCondition(t,subTargetCond)):resolveTargets(subTargetType,subTargetCond,unit,isPlayer,act.subTargetInstanceId||null);
+        const subTargets=subTargetType==='same_main_target'?mainTargets.filter(t=>matchesTargetCondition(t,subTargetCond)):resolveTargetsWithFallback(subTargetType,subTargetCond,unit,isPlayer,act.subTargetInstanceId||null);
         subTargets.forEach(t=>{
           if(t && !t.__playerTarget && !targetHpBeforeMap.has(t.instanceId)) targetHpBeforeMap.set(t.instanceId, { current: t.currentHp, max: t.maxHp });
           targetNames.push(t.name||'プレイヤー'); if(t && !t.__playerTarget) targetEntities.push(t); const r=applyEffect(sk.subEffect,t,isPlayer,false,unit);if(r){effectLines.push(r.effect);resultLines.push(r.result);}
@@ -6458,6 +6556,34 @@
       if(!eligible.length)return [];
       return [eligible[Math.floor(Math.random()*eligible.length)]];
     }
+    function resolveTargetsWithFallback(targetType, targetCond, actor, isPlayer, selectedTargetInstanceId = null, isMagic = false) {
+      const resolved = resolveTargets(targetType, targetCond, actor, isPlayer, selectedTargetInstanceId, isMagic);
+      if (resolved.length || !isManualTargetType(targetType) || selectedTargetInstanceId == null || selectedTargetInstanceId === '') return resolved;
+      // Do not override a live, still-fielded target when it merely fails a target condition.
+      const selected = [...(battleState?.playerUnits || []), ...(battleState?.enemyUnits || [])]
+        .find(unit => String(unit?.instanceId) === String(selectedTargetInstanceId));
+      if (selected && Number(selected.currentHp) > 0 && selected.isActive
+        && !(targetType === 'select_enemy_1' && actor && selected.side !== actor.side && unitHasStatus(selected, 'stealth'))) return resolved;
+
+      let fallbackPool = (getTargetPool(targetType, actor) || [])
+        .filter(unit => Number(unit?.currentHp) > 0 && unit.isActive);
+      if (!fallbackPool.length) return [];
+      // Prefer units that still satisfy the original targeting condition. If none remain,
+      // the effect still resolves against a random living member of the same side.
+      const conditionMatched = fallbackPool.filter(unit => matchesTargetCondition(unit, targetCond || {type:'none'}));
+      if (conditionMatched.length) fallbackPool = conditionMatched;
+      const visible = fallbackPool.filter(unit => !(actor && unit.side !== actor.side && unitHasStatus(unit, 'stealth')));
+      if (visible.length) fallbackPool = visible;
+      if (!fallbackPool.length) return [];
+      if (targetType === 'select_enemy_1') {
+        const taunts = fallbackPool.filter(unit => unit.side !== actor?.side && unitHasStatus(unit, 'taunt'));
+        if (taunts.length) fallbackPool = taunts;
+      }
+      const picked = fallbackPool[Math.floor(Math.random() * fallbackPool.length)];
+      logBattle(`🎯 指定対象が行動前に戦闘不能または対象外になったため、${targetType === 'select_enemy_1' ? '敵' : '味方'}からランダムに対象を変更しました（${picked.name || '対象'}）。`);
+      return resolveSingleTargetRuntime(fallbackPool, targetType, actor, picked);
+    }
+
     function resolveTargets(targetType, targetCond, actor, isPlayer, selectedTargetInstanceId = null, isMagic = false) {
       if (targetType === 'player_self') return [{ __playerTarget: 'self', side:isPlayer?'player':'enemy', __playerSide: isPlayer ? 'player' : 'enemy' }];
       if (targetType === 'player_opp') return [{ __playerTarget: 'opp', side:isPlayer?'enemy':'player', __playerSide: isPlayer ? 'enemy' : 'player' }];
@@ -6465,7 +6591,7 @@
       let pool = getTargetPool(targetType, actor).filter(t => matchesTargetCondition(t, targetCond));
       if (pool.length === 0) return [];
       if (['select_enemy_1','select_ally_1'].includes(targetType)) {
-        const selected = pool.find(t => t.instanceId === selectedTargetInstanceId);
+        const selected = pool.find(t => String(t.instanceId) === String(selectedTargetInstanceId));
         if (!selected) return isMagic ? resolveSingleTargetRuntime(pool,targetType,actor,null) : [];
         return resolveSingleTargetRuntime(pool,targetType,actor,selected);
       }
@@ -6837,6 +6963,8 @@
             if (Math.random() * 100 >= passiveChance) { logBattle(`🌀 ${u.name} のパッシブ【${sk.name}】不発（発動確率${passiveChance}%）`); return; }
             logBattle(`🌀 ${u.name} のパッシブ【${sk.name}】発動！`);
             const isPlayer=u.side==='player';
+            const passiveDeferredStart = deferredPassivePopupJobs.length;
+            passivePopupDeferralDepth++;
             const previousTiming = battleState._statusApplicationTiming;
             battleState._statusApplicationTiming = timing;
             const effectLines=[]; let firstTarget=null; let mainEffectSucceeded=false; const passiveTargets=[]; const passiveTargetBefore=new Map();
@@ -6850,7 +6978,13 @@
                 subTargets.forEach(t=>{if(t&&!t.__playerTarget){if(!passiveTargetBefore.has(t.instanceId))passiveTargetBefore.set(t.instanceId,{current:t.currentHp,max:t.maxHp});if(!passiveTargets.some(x=>x.instanceId===t.instanceId))passiveTargets.push(t);} const r=applyEffect(sk.subEffect,t,isPlayer,false,u); if(r)effectLines.push(r.result||r.effect||r); }); }
               }
             } finally { battleState._statusApplicationTiming = previousTiming; }
+            // Child reactions are generated while applying this passive. Hold them briefly,
+            // queue this passive's own popup first, then append its descendants in causal order.
+            const childPassivePopupJobs = deferredPassivePopupJobs.splice(passiveDeferredStart);
             queuePassivePopup(() => showActionPopup(u, sk.name, {cardType:'unit',name:u.name,image:getCardImage(u)||u.image,hp:u.maxHp,atk:getEffectiveAtk(u),prio:getEffectiveSpeed(u)}, {target:passiveTargets.map(x=>x.name).join(' / ')||'対象なし',effect:effectLines.join('\n')||'効果なし',result:effectLines.join('\n')||'発動',targetEntity:firstTarget||null,targetDetails:passiveTargets.map(entity=>({entity,hpBefore:passiveTargetBefore.get(entity.instanceId)||{current:entity.currentHp,max:entity.maxHp},hpAfter:{current:entity.currentHp,max:entity.maxHp}})),description:sk.desc||sk.description||buildAutoSkillDescriptionFromData(sk),actorHpBefore:{current:u.currentHp,max:u.maxHp},actorHpAfter:{current:u.currentHp,max:u.maxHp}}));
+            if (childPassivePopupJobs.length) deferredPassivePopupJobs.push(...childPassivePopupJobs);
+            passivePopupDeferralDepth = Math.max(0, passivePopupDeferralDepth - 1);
+            if (passivePopupDeferralDepth === 0) flushDeferredPassivePopups();
           }
         });
       });
