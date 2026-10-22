@@ -1,5 +1,5 @@
 /*
- * 都道府県カード戦争 v1.0.29 - カード性能検証ラボ
+ * 都道府県カード戦争 v1.0.30 - カード性能検証ラボ
  * Uses the existing battle engine in isolated, temporary headless battles.
  * Results are intentionally memory-only and never saved to IndexedDB/campaign state.
  */
@@ -215,12 +215,15 @@
     const control = has(effects, ['status_apply','skill_block','heal_block','damage_taken_ratio','mod_atk_ratio','mod_atk_val','mod_speed']);
     const support = has(effects, ['heal_fixed','heal_max_hp_ratio','shield','mod_ap','clear_statuses','clear_debuffs','status_remove','mod_atk_ratio','mod_atk_val','mod_speed']);
     const openingPassive = passive.some(e => ['battle_start','turn_start','deploy'].includes(e.timing));
-    const delayedDeploy = skills.some(sk => sk.type === 'passive' && sk.timing === 'deploy' && ['turn_gte','turn_lte'].includes(sk.selfCond?.type) && Number(sk.selfCond?.val) >= 2);
+    const delayedDeploy = skills.some(sk => sk.type === 'passive' && sk.timing === 'deploy' && sk.selfCond?.type === 'turn_gte' && Number(sk.selfCond?.val) >= 2);
     const hp = Number(card?.stats?.hp) || 0;
     const atk = Number(card?.stats?.atk) || 0;
     const priority = Number(card?.stats?.priority) || 0;
-    return { damage, control, support, openingPassive, delayedDeploy, hp, atk, priority,
-      damageScore: (damage ? 4 : 0) + Math.min(4, atk / 900), supportScore: (support ? 2.8 : 0) + (control ? 1.4 : 0),
+    // Every living character can use a normal attack. Do not label a high-ATK
+    // card as a non-attacker merely because its authored active skill is support/control.
+    const damagePotential = damage || atk >= 700;
+    return { damage: damagePotential, hasDamageSkill: damage, control, support, openingPassive, delayedDeploy, hp, atk, priority,
+      damageScore: (damagePotential ? 4 : 0) + Math.min(4, atk / 900), supportScore: (support ? 2.8 : 0) + (control ? 1.4 : 0),
       speedScore: Math.min(2.5, priority / 45), openingScore: openingPassive ? 1.2 : 0 };
   }
 
