@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.33 — AI economy recovery and gacha fallback */
+/* 都道府県カード戦争 v1.0.34 — card data export for analysis */
 'use strict';
 
 let campaignState = null;

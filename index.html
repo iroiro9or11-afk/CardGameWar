@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.33</title>
+  <title>都道府県カード戦争 v1.0.34</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -307,7 +307,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.33</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.34</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -596,7 +596,7 @@
 
     <!-- カード一覧画面 -->
     <section id="view-deck" class="view-section hidden">
-      <div class="flex justify-between items-center gap-2 mb-4">
+      <div class="flex flex-wrap justify-between items-center gap-2 mb-4">
         <div class="flex flex-wrap gap-3 items-center">
           <h2 class="text-lg font-bold text-amber-400 border-l-4 border-amber-400 pl-2">登録カード一覧</h2>
           <div class="flex gap-2">
@@ -604,9 +604,13 @@
             <button id="deck-tab-magic" onclick="filterDeckType('magic')" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-xs font-bold rounded">マジック</button>
           </div>
         </div>
-        <button type="button" class="card-browser-settings-trigger shrink-0 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg text-[10px] sm:text-xs font-black" onclick="openCardBrowserSettings('deck-list', this)">⚙ 並べ替え・絞り込み</button>
+        <div class="flex flex-wrap justify-end gap-2 shrink-0">
+          <button id="export-custom-card-data-btn" type="button" class="px-3 py-2 bg-cyan-700 hover:bg-cyan-600 border border-cyan-500/50 rounded-lg text-[10px] sm:text-xs font-black" onclick="exportCustomCardDataForAnalysis()">📦 検証用カードデータを書き出し</button>
+          <button type="button" class="card-browser-settings-trigger px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg text-[10px] sm:text-xs font-black" onclick="openCardBrowserSettings('deck-list', this)">⚙ 並べ替え・絞り込み</button>
+        </div>
       </div>
-      <div class="mb-3"><input id="deck-card-search" type="search" oninput="renderDeckList()" placeholder="カード名で検索（部分一致）" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500"></div>
+      <div class="mb-2"><input id="deck-card-search" type="search" oninput="renderDeckList()" placeholder="カード名で検索（部分一致）" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500"></div>
+      <p class="text-[10px] leading-relaxed text-slate-400 mb-3">検証用のJSONファイルを保存します。自作したキャラ・マジックカードの効果データを含み、画像・標準カード・ゲーム中に生成されたコピーは含みません。ゲーム本体ZIPと一緒にChatGPTへアップロードしてください。</p>
       <div id="deck-card-list" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2"></div>
     </section>
 
@@ -2834,6 +2838,117 @@
       window.addEventListener('scroll', positionCardBrowserSettingsPopup, true);
     }
     setupCardBrowserSettingsPopover();
+
+    // ChatGPT等でカードの性能・効果処理を検証するための画像なしデータ書き出し。
+    // IndexedDBのカード本体を直接読み、初期組み込みカードとキャンペーン中の実行時コピーは除外する。
+    function prefStripCardImagesForExport(value, seen = new WeakSet()) {
+      if (typeof value === 'string') {
+        // 万一、画像データURL等が別のフィールドに入っていても書き出さない。
+        if (/^(?:data:image\/|blob:)/i.test(value)) return undefined;
+        return value;
+      }
+      if (value === null || value === undefined || typeof value !== 'object') return value;
+      if (typeof Blob !== 'undefined' && value instanceof Blob) return undefined;
+      if (typeof ImageBitmap !== 'undefined' && value instanceof ImageBitmap) return undefined;
+      if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return undefined;
+      if (seen.has(value)) return undefined;
+      seen.add(value);
+      if (Array.isArray(value)) {
+        const result = value.map(item => {
+          const clean = prefStripCardImagesForExport(item, seen);
+          return clean === undefined ? null : clean;
+        });
+        seen.delete(value);
+        return result;
+      }
+      const result = {};
+      const imageOnlyKeys = new Set([
+        'image', 'img', 'imageurl', 'imagedata', 'imageblob', 'thumbnail',
+        'thumbnailurl', 'portrait', 'picture', 'photo', 'avatar', 'avatarurl',
+        'icondata', 'imagebase64', 'base64image'
+      ]);
+      for (const [key, item] of Object.entries(value)) {
+        const normalizedKey = String(key).toLowerCase().replace(/[_\-\s]/g, '');
+        if (imageOnlyKeys.has(normalizedKey) || normalizedKey.includes('image') || normalizedKey.includes('thumbnail') || normalizedKey === 'img') continue;
+        const clean = prefStripCardImagesForExport(item, seen);
+        if (clean !== undefined) result[key] = clean;
+      }
+      seen.delete(value);
+      return result;
+    }
+
+    async function exportCustomCardDataForAnalysis() {
+      const button = document.getElementById('export-custom-card-data-btn');
+      const originalLabel = button?.textContent || '📦 検証用カードデータを書き出し';
+      if (button) { button.disabled = true; button.textContent = '書き出し中…'; button.classList.add('opacity-60'); }
+      try {
+        // DB初期化完了前のクリックにも対応し、最新の保存内容を読み直す。
+        if (!window.__cardBattleAppReady) await cardBattleAppReadyPromise;
+        if (!window.__cardBattleAppReady || !db) {
+          throw new Error(window.__cardBattleAppInitError || 'カードデータベースを初期化できませんでした。');
+        }
+        const savedCards = await getAllFromStore('cards');
+        const customCards = savedCards.filter(card => {
+          const type = card?.cardType || 'unit';
+          if (type !== 'unit' && type !== 'magic') return false;
+          if (card?.campaignInstance) return false;
+          if (String(card?.systemKey || '').startsWith('builtin:')) return false;
+          return true;
+        }).map(card => {
+          const clean = prefStripCardImagesForExport(card) || {};
+          // cardType省略の旧データは実ゲームと同じくキャラ扱いと明示する。
+          clean.cardType = card.cardType || 'unit';
+          return clean;
+        });
+
+        if (!customCards.length) {
+          alert('書き出せる自作カードがありません。カード作成画面でカードを保存してから、もう一度お試しください。');
+          return;
+        }
+        const unitCount = customCards.filter(card => card.cardType === 'unit').length;
+        const magicCount = customCards.filter(card => card.cardType === 'magic').length;
+        const exportedAt = new Date();
+        const dateStamp = `${exportedAt.getFullYear()}${String(exportedAt.getMonth()+1).padStart(2,'0')}${String(exportedAt.getDate()).padStart(2,'0')}`;
+        const payload = {
+          format: 'prefecture-card-war-card-data',
+          formatVersion: 1,
+          gameVersion: '1.0.34',
+          exportedAt: exportedAt.toISOString(),
+          intendedUse: 'このJSONと同じバージョンのゲームZIPを参照し、カードの性能・スキル・効果条件・組み合わせを検証する',
+          imagesIncluded: false,
+          exportedCardCount: customCards.length,
+          counts: { characterCards: unitCount, magicCards: magicCount },
+          exclusions: [
+            '画像データ（image/img/imageUrl等）',
+            'ゲームに標準搭載された組み込みカード（systemKeyがbuiltin:で始まるカード）',
+            'ゲーム進行中に生成されたコピー（campaignInstanceが真のカード）'
+          ],
+          dataNotes: [
+            'カードのID、レアリティ、価値、ステータス、スキル、発動条件、対象、メイン効果、追加効果、パッシブ設定等の保存フィールドを保持する。',
+            '画像関連フィールドのみ除外しており、カード効果のフィールドは分析のため保持する。',
+            'このファイルは分析用の読み取り専用エクスポートで、ゲームへの再インポート機能を意味しない。'
+          ],
+          cards: customCards
+        };
+        const json = JSON.stringify(payload, null, 2);
+        const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+        const objectUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = `prefecture-card-war-card-data-v1.0.34-${dateStamp}.json`;
+        anchor.style.display = 'none';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 15000);
+        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.34 ZIP と一緒にChatGPTへアップロードしてください。`);
+      } catch (error) {
+        console.error('[CardDataExport] カードデータの書き出しに失敗しました', error);
+        alert(`カードデータの書き出しに失敗しました。\n${String(error?.message || error)}`);
+      } finally {
+        if (button) { button.disabled = false; button.textContent = originalLabel; button.classList.remove('opacity-60'); }
+      }
+    }
 
     function renderDeckList() {
       const list = document.getElementById("deck-card-list"); list.innerHTML = "";
