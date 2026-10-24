@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.37 — strategic combat lookahead, role-aware tactics, and speed-ordered passive batches */
+/* 都道府県カード戦争 v1.0.39 — diminishing returns for permanent buffs and frontline-aware loadout scoring */
 'use strict';
 
 let campaignState = null;
@@ -208,6 +208,31 @@ function prefCardProfile(card) {
     if(t==='mod_max_hp_val'&&val<0)tags.add('status_debuff');
   };
   nodes.forEach(tagNode);
+  // Classify tactical properties from the actual skill timing, targets and effects.
+  // Merely having ATK stats does not make a defender an attacker; role and kit are separate.
+  let selfTaunt=false,selfMitigation=false,counterAttack=false,debuffCleanser=false,permanentSelfBuff=false;
+  for(const skill of skills){
+    const effects=[{effect:skill?.mainEffect,targetType:skill?.targetType},...(skill?.hasSubEffect&&skill?.subEffect?[{effect:skill.subEffect,targetType:skill.subEffect.targetType||'same_main_target'}]:[])];
+    for(const entry of effects){
+      const e=entry.effect||{},type=String(e.type||''),status=String(e.status||'');
+      const selfTarget=entry.targetType==='self'||(entry.targetType==='same_main_target'&&skill?.targetType==='self');
+      if(type==='status_apply'&&selfTarget&&['taunt','provoke'].includes(status))selfTaunt=true;
+      if(selfTarget&&((type==='damage_taken_ratio'&&Number(e.val)<0)||(type==='damage_cut_ratio'&&Number(e.val)>0)))selfMitigation=true;
+      if(['clear_debuffs','clear_statuses','status_remove','clear_random_debuffs'].includes(type))debuffCleanser=true;
+      if(skill?.type==='active'&&Number(e.duration)===-1&&selfTarget&&['mod_atk_ratio','mod_atk_val','mod_speed'].includes(type)&&Number(e.val)>0)permanentSelfBuff=true;
+      if(skill?.type==='passive'&&['damage_taken','before_damage','when_damaged'].includes(String(skill.timing||''))&&/^dmg_/.test(type)&&!selfTarget)counterAttack=true;
+    }
+  }
+  if(selfTaunt)tags.add('taunt_protection');
+  if(selfMitigation)tags.add('self_damage_mitigation');
+  if(counterAttack)tags.add('counter_attack');
+  if(debuffCleanser)tags.add('debuff_cleanser');
+  if(permanentSelfBuff)tags.add('permanent_self_buff');
+  const role=String(card.role||'');
+  if(role==='defender')tags.add('defender_role');
+  if(role==='controller')tags.add('controller_role');
+  if(role==='attacker')tags.add('attacker_role');
+  if(role==='defender'&&selfTaunt&&(selfMitigation||counterAttack))tags.add('frontline_defender');
   if(skills.some(s=>s.type==='passive'))tags.add('passive_chain');
   const apThresholdPassiveValue=prefCardApThresholdPassiveValue(card);
   if(apThresholdPassiveValue>=3)tags.add('ap_threshold_passive');
@@ -227,7 +252,7 @@ function prefCardProfile(card) {
   const atk=Number(card.stats?.atk||0),hp=Number(card.stats?.hp||0),rank=prefRankStars(card);
   if(rank>=4)tags.add('high_rank');if(atk>0)tags.add('attack_role');if(hp>0&&card.cardType!=='magic')tags.add('unit');
   const subs=Array.isArray(card.subAttrs)?card.subAttrs.map(x=>typeof x==='string'?x:(x?.name||x?.id||x?.value||'')).filter(Boolean):[];
-  return {tags,mainAttr:String(card.mainAttr||''),subAttrs:subs,supportsAttrs:[...supportsAttrs],activeCosts:costs,maxCost:Math.max(0,...costs),skillCount:skills.length+(card.effect?1:0),passiveCount:skills.filter(s=>s.type==='passive').length,atk,hp,rank,role:String(card.role||''),apThresholdPassiveValue};
+  return {tags,mainAttr:String(card.mainAttr||''),subAttrs:subs,supportsAttrs:[...supportsAttrs],activeCosts:costs,maxCost:Math.max(0,...costs),skillCount:skills.length+(card.effect?1:0),passiveCount:skills.filter(s=>s.type==='passive').length,atk,hp,rank,role,apThresholdPassiveValue};
 }
 function prefCardPreferenceScore(region,card) {
   const profile=prefAIProfileForRegion(region);const cp=prefCardProfile(card);let score=0;
@@ -250,6 +275,10 @@ function prefPairSynergyRaw(cardA,cardB,profile) {
   if((a.tags.has('extra_effect')&&b.tags.has('status_debuff'))||(b.tags.has('extra_effect')&&a.tags.has('status_debuff')))pair+=4.0;
   if((a.tags.has('extra_effect')&&b.tags.has('passive_chain'))||(b.tags.has('extra_effect')&&a.tags.has('passive_chain')))pair+=4.0;
   if(a.tags.has('shield_defense')&&b.tags.has('ap_supply')||b.tags.has('shield_defense')&&a.tags.has('ap_supply'))pair+=1.8;
+  // A defender with taunt + mitigation/counter is especially valuable beside a real attacker.
+  if(a.tags.has('frontline_defender')&&b.role==='attacker'||b.tags.has('frontline_defender')&&a.role==='attacker')pair+=7.0;
+  else if(a.role==='defender'&&b.role==='attacker'||b.role==='defender'&&a.role==='attacker')pair+=2.8;
+  if((a.tags.has('debuff_cleanser')&&b.tags.has('permanent_self_buff'))||(b.tags.has('debuff_cleanser')&&a.tags.has('permanent_self_buff')))pair+=2.6;
   if(a.supportsAttrs.some(attr=>attr===b.mainAttr||b.subAttrs.includes(attr))||b.supportsAttrs.some(attr=>attr===a.mainAttr||a.subAttrs.includes(attr)))pair+=5.0;
   if(a.mainAttr&&a.mainAttr===b.mainAttr&&profile?.primaryStrategy==='attribute')pair+=2.4;
   if(a.subAttrs.some(x=>b.subAttrs.includes(x))&&profile?.primaryStrategy==='attribute')pair+=0.8;
@@ -2235,8 +2264,10 @@ function prefEstimateBuildScenarios(region,activeCards,reserveCards,magicCards) 
   const activeProfiles=active.map(prefCardProfile);
   const highCost=activeProfiles.filter(x=>x.maxCost>=25||x.tags.has('heavy_cost')).length;
   const apSupply=counts.ap_supply||0;
-  const attackers=activeProfiles.filter(x=>x.tags.has('damage')||x.tags.has('attack_role')).length;
-  const sustain=(counts.healing||0)+(counts.shield_defense||0);
+  const attackers=activeProfiles.filter(x=>x.role==='attacker'||(!x.role&&x.tags.has('damage'))).length;
+  const frontlineDefenders=activeProfiles.filter(x=>x.tags.has('frontline_defender')).length;
+  const roleDefenders=activeProfiles.filter(x=>x.role==='defender').length;
+  const sustain=(counts.healing||0)+(counts.shield_defense||0)+(frontlineDefenders*1.2);
   const hasStatusDebuff=allTags.has('status_debuff'),hasStatusCondition=allTags.has('status_condition');
   const mainAttrCount=active.filter(x=>String(x.mainAttr||'')===String(active[0]?.mainAttr||'')).length;
   const attrFocus=profile.primaryStrategy==='attribute'||profile.secondaryStrategies.includes('attribute');
@@ -2249,6 +2280,8 @@ function prefEstimateBuildScenarios(region,activeCards,reserveCards,magicCards) 
   // Situation B: a longer battle where the main attacker must survive and keep acting.
   let sustainScore=sustain*1.65+activeProfiles.reduce((sum,x)=>sum+Math.min(1.4,Math.max(0,x.hp)/9000),0);
   if(attackers>=2&&sustain===0)sustainScore-=2.2;
+  if(attackers>0&&roleDefenders===0)sustainScore-=0.8;
+  if(attackers>0&&frontlineDefenders>0)sustainScore+=1.4;
   if(highCost>0&&apSupply===0)sustainScore-=0.6;
   if(active.length<3)sustainScore-=Math.max(0,3-active.length)*2;
 
@@ -2263,6 +2296,7 @@ function prefEstimateBuildScenarios(region,activeCards,reserveCards,magicCards) 
   const hasDamage=attackers>0,hasSupport=sustain>0||apSupply>0;
   if(hasDamage&&hasSupport)chain+=0.8;
   if(hasDamage&&!hasSupport)chain-=0.7;
+  if(hasDamage&&frontlineDefenders>0)chain+=1.2;
 
   // Secondary strategy shapes the relative importance of the three expected situations.
   let weights=[1,1,1];
@@ -2314,12 +2348,19 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     const activeCards=selected.map(x=>x.card);const activeIds=selected.map(x=>x.inst.id);const reserve=cards.filter(x=>!activeIds.includes(x.inst.id));
     let score=0;const allActiveTags=new Set();
     activeCards.forEach(card=>{score+=prefCardIntrinsicScore(region,card)+prefCardStrategyScore(region,card)+prefCardPreferenceScore(region,card)+prefAIPlanFitScore(region,card);prefCardProfile(card).tags.forEach(t=>allActiveTags.add(t));});
-    const activeRoles=activeCards.map(c=>String(c.role||'')).filter(Boolean);
+    const activeProfiles=activeCards.map(prefCardProfile);
+    const reserveProfiles=reserve.map(x=>prefCardProfile(x.card));
+    const activeRoles=activeProfiles.map(x=>x.role).filter(Boolean);
     const hasAttacker=activeRoles.includes('attacker'),hasController=activeRoles.includes('controller'),hasDefender=activeRoles.includes('defender');
-    // Roles are guidance, not a forced trinity: three attackers remain a valid composition.
-    if(hasAttacker&&hasDefender)score+=1.8;
+    const hasFrontlineDefender=activeProfiles.some(x=>x.tags.has('frontline_defender'));
+    const reserveHasFrontlineDefender=reserveProfiles.some(x=>x.tags.has('frontline_defender'));
+    // Roles remain flexible: three attackers can win. But a defender with real taunt, mitigation
+    // and counter damage is not generic filler; if available, its front-line contribution counts.
+    if(hasAttacker&&hasDefender)score+=3.8;
     if(hasAttacker&&hasController)score+=1.2;
     if(hasDefender&&hasController&&!hasAttacker)score-=0.6;
+    if(hasAttacker&&hasFrontlineDefender)score+=7.5;
+    else if(hasAttacker&&reserveHasFrontlineDefender)score-=8.5;
     // AP-threshold passives often need a high bank. Prefer keeping an expensive caster in reserve
     // when active use would compete with that passive; harmless/free-skill passives are not tagged.
     const apBankRisk=activeCards.reduce((sum,c)=>sum+prefCardProfile(c).apThresholdPassiveValue,0);
@@ -2348,7 +2389,7 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
   if(shortlist.length>1){const top=shortlist[0].score;const near=shortlist.filter(x=>top-x.score<=3);if(near.length>1)best=near[Math.floor(Math.random()*near.length)];}
   const active=best?.active||units.slice(0,3).map(x=>x.id);const reserve=units.map(x=>x.id).filter(id=>!active.includes(id)).slice(0,2);
   const reservedApThresholdCards=reserve.filter(id=>prefCardProfile(cardById(id)).apThresholdPassiveValue>=3).map(id=>cardById(id)?.name||'AP条件パッシブ持ち');
-  const reasons=[`カード選びの賢さ${profile.cardIQ}/100で構築候補を評価`,`主戦術「${(PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)||{}).label||'対応型'}」と副戦術を反映`,`AP効率・役割補完・パッシブ・条件・属性・マジックとの組み合わせを評価`,`自己永続強化・数ターン先の行動価値と役割間の保護連携を評価`,`AP条件パッシブは有用性と必要APを見て、APを温存しやすい控え配置も評価`,...(reservedApThresholdCards.length?[`AP条件パッシブを持つ控え候補：${reservedApThresholdCards.join('、')}`]:[]),`候補${candidateSets.length}案を効果解析で評価し、上位${shortlist.length}案を3つの想定戦況（速攻・長期戦・連携成立）で平均比較`];
+  const reasons=[`カード選びの賢さ${profile.cardIQ}/100で構築候補を評価`,`主戦術「${(PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)||{}).label||'対応型'}」と副戦術を反映`,`AP効率・役割補完・パッシブ・条件・属性・マジックとの組み合わせを評価`,`自己永続強化は重複の限界価値を逓減し、数ターン先の行動価値と役割間の保護連携を評価`,`挑発・被ダメージ軽減・被弾時カウンターを持つディフェンダーは、アタッカーの初動保護役として評価`,`AP条件パッシブは有用性と必要APを見て、APを温存しやすい控え配置も評価`,...(reservedApThresholdCards.length?[`AP条件パッシブを持つ控え候補：${reservedApThresholdCards.join('、')}`]:[]),`候補${candidateSets.length}案を効果解析で評価し、上位${shortlist.length}案を3つの想定戦況（速攻・長期戦・連携成立）で平均比較`];
   if(opponentIntel?.confidence>0.15)reasons.push(`調査・対戦記憶の情報を対策に使用（信頼度${Math.round(opponentIntel.confidence*100)}%）`);
   prefRecordAIThought(region,'編成構築','出撃メンバーを選出',reasons,{activeNames:best?.activeNames||active.map(id=>cardById(id)?.name||'キャラ'),reserveNames:reserve.map(id=>cardById(id)?.name||'キャラ'),apThresholdReserveNames:reservedApThresholdCards,score:best?.score,alternatives:shortlist.map(x=>({names:x.activeNames,score:Math.round(x.score*10)/10,scenarioMean:Math.round((x.scenarioMean||0)*10)/10,scenarios:x.scenarios,attributes:x.attrs})),opponentId:opponentId||null,opponentIntelConfidence:opponentIntel?.confidence||0});
   return prefNormalizeLoadoutSelection(active.slice(0,3),reserve.slice(0,2),units);

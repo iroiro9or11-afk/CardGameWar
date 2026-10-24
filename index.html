@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.37</title>
+  <title>都道府県カード戦争 v1.0.39</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -307,7 +307,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.37</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.39</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -2977,7 +2977,7 @@
         const payload = {
           format: 'prefecture-card-war-card-data',
           formatVersion: 1,
-          gameVersion: '1.0.37',
+          gameVersion: '1.0.39',
           exportedAt: exportedAt.toISOString(),
           intendedUse: 'このJSONと同じバージョンのゲームZIPを参照し、カードの性能・スキル・効果条件・組み合わせを検証する',
           imagesIncluded: false,
@@ -3000,13 +3000,13 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.37-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.39-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
         window.setTimeout(() => URL.revokeObjectURL(objectUrl), 15000);
-        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.37 ZIP と一緒にChatGPTへアップロードしてください。`);
+        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.39 ZIP と一緒にChatGPTへアップロードしてください。`);
       } catch (error) {
         console.error('[CardDataExport] カードデータの書き出しに失敗しました', error);
         alert(`カードデータの書き出しに失敗しました。\n${String(error?.message || error)}`);
@@ -4510,6 +4510,7 @@
 
     // 戦闘エンジン
     function startBattle() {
+      if (typeof aiPlannerResetEvaluationContentCache === 'function') aiPlannerResetEvaluationContentCache();
       hideBattleResultModal();
       const override = performanceLabBattleOverride || storyBattleOverride || campaignBattleOverride;
       const pDeckId=document.getElementById('select-player-deck')?.value || '';
@@ -5760,11 +5761,21 @@
         let unitFuture = 0;
         for (let i = 1; i <= weights.length; i++) {
           const atkDelta = aiPlannerProjectedAtk(unit, i) - (Number(unit.atk) || 0);
-          unitFuture += atkDelta * coefficient * weights[i - 1] * survival;
+          // 永続攻撃バフは強力だが、同じ種類を重ねるほど追加価値を逓減させる。
+          // 「総攻撃力の増加」を何度も線形に加点し、重ねがけだけを選ぶ問題を避ける。
+          const activeAtkRatio = [...(unit.buffs || []), ...(unit.debuffs || [])]
+            .filter(b => b.type === 'atk_ratio' && aiPlannerProjectedDurationActive(b, i))
+            .reduce((sum, b) => sum + (Number(b.val) || 0), 0);
+          const positiveAtkRatio = Math.max(0, activeAtkRatio);
+          const forecastAtkDelta = atkDelta >= 0 ? atkDelta / (1 + positiveAtkRatio / 100) : atkDelta;
+          unitFuture += forecastAtkDelta * coefficient * weights[i - 1] * survival;
           const projectedSpeed = aiPlannerProjectedSpeed(unit, i);
+          const currentSpeed = aiPlannerEffectiveSpeed(unit);
           enemies.forEach(enemy => {
             const foeSpeed = aiPlannerProjectedSpeed(enemy, i);
-            const baselineBefore = (Number(unit.priority) || 0) >= (Number(enemy.priority) || 0);
+            // 行動順の利益は、まだ逆転していない相手を抜ける時にのみ評価する。
+            // 素の行動値を基準にすると、既に先手を取れる相手に対しても毎回全額加点されていた。
+            const baselineBefore = currentSpeed >= aiPlannerEffectiveSpeed(enemy);
             const projectedBefore = projectedSpeed >= foeSpeed;
             if (baselineBefore !== projectedBefore) {
               const swing = Math.min(280, 85 + Math.max(0, aiPlannerEffectiveAtk(enemy)) * 0.055);
@@ -5829,7 +5840,7 @@
       return score;
     }
 
-    function aiPlannerEvaluateStateBase(state, side) {
+    function aiPlannerEvaluateStateBase(state, side, includeForecast = true) {
       const own = aiPlannerActive(state, side, true);
       const enemy = aiPlannerActive(state, side === 'player' ? 'enemy' : 'player', true);
       let score = 0;
@@ -5844,13 +5855,21 @@
         else if (u.role === 'controller') score += u.currentHp > 0 ? 75 : -75;
         const shieldRemaining = (u.shields || []).reduce((sum, sh) => sum + Math.max(0, Number(sh.remaining ?? sh.amount) || 0), 0);
         score += Math.min(shieldRemaining, Math.max(0, Number(u.maxHp) || 0)) * 0.22;
-        score += (aiPlannerEffectiveAtk(u) - u.atk) * 0.18;
-        score += (aiPlannerEffectiveSpeed(u) - u.priority) * 0.75;
+        const effectiveAtk = aiPlannerEffectiveAtk(u);
+        const atkGain = effectiveAtk - u.atk;
+        const activeAtkRatio = [...(u.buffs || []), ...(u.debuffs || [])]
+          .filter(b => b.type === 'atk_ratio' && durationActive(b.duration))
+          .reduce((sum, b) => sum + (Number(b.val) || 0), 0);
+        // 攻撃バフの総量ではなく、既に積まれた量を考慮した限界価値を加点する。
+        score += atkGain >= 0 ? atkGain * 0.18 / (1 + Math.max(0, activeAtkRatio) / 100) : atkGain * 0.18;
+        const speedGain = Math.max(0, aiPlannerEffectiveSpeed(u) - u.priority);
+        // 行動値は上がるほど無条件に強くなるわけではない。順番を変える価値は将来評価側で測り、
+        // ここでは最低限だけ加点し、既に十分高い行動値を積み増すだけの選択を抑制する。
+        score += Math.min(48, speedGain * 0.25);
         [...(u.buffs || [])].forEach(b => {
           if (b.type === 'dmg_cut') score += Math.max(0, Number(b.val) || 0) * 1.6;
           if (b.type === 'damage_taken_ratio') score += Math.max(0, -(Number(b.val)||0)) * 1.6;
-          if (b.type === 'atk_ratio') score += Math.max(0, Number(b.val) || 0) * 0.9;
-          if (b.type === 'speed') score += Math.max(0, Number(b.val) || 0) * 0.7;
+          // atk_ratio と speed の価値は上の逓減済みステータス評価で扱う。
         });
         [...(u.debuffs || [])].forEach(b => {
           if (b.type === 'skill_block') score -= 75;
@@ -5876,10 +5895,13 @@
       score += ownAp * 1.15;
       // 行動可能数が多いほど次の局面が安定する。
       score += own.filter(u => u.currentHp > 0).length * 90;
-      // Three-turn combat lookahead plus future AP-threshold passives. These are discounted
-      // projections rather than a claim that the unit will certainly survive or act freely.
-      score += aiPlannerFutureCombatPotential(state, side);
-      score += aiPlannerApThresholdPassivePotential(state, side);
+      // Full candidate evaluation includes multi-turn projections. The inner before/after
+      // comparison used only to value a passive's immediate trigger must not recursively pay
+      // to recompute forecasts for every hypothetical passive target.
+      if (includeForecast) {
+        score += aiPlannerFutureCombatPotential(state, side);
+        score += aiPlannerApThresholdPassivePotential(state, side);
+      }
       return score;
     }
 
@@ -5913,12 +5935,12 @@
           const candidates = aiPlannerCandidateTargets(state, unit, passive);
           const options = candidates.length ? candidates : [{targetInstanceId:null,subTargetInstanceId:null}];
           let bestValue = 0;
-          const beforeOwner = aiPlannerEvaluateStateBase(state, unit.side);
+          const beforeOwner = aiPlannerEvaluateStateBase(state, unit.side, false);
           for (const option of options) {
             const sim = aiPlannerCloneState(state);
             const result = aiPlannerApplySkill(sim, unit.instanceId, passive, option.targetInstanceId || null, false, option.subTargetInstanceId || null);
             if (!result || Number(result.value) <= -500) continue;
-            const afterOwner = aiPlannerEvaluateStateBase(sim, unit.side);
+            const afterOwner = aiPlannerEvaluateStateBase(sim, unit.side, false);
             // 状態評価で拾いにくい効果（シールド・状態異常など）も少し加味。強い効果を過剰二重加点しない。
             const direct = Math.max(-300, Math.min(1800, Number(result.value) || 0)) * 0.16;
             bestValue = Math.max(bestValue, afterOwner - beforeOwner + direct);
@@ -5938,6 +5960,14 @@
     // Cache by node identity plus a compact mutable-state signature, so a reused node is cheap
     // but an in-place state change cannot accidentally keep a stale score.
     const aiPlannerEvaluationCache = new WeakMap();
+    // Candidate branches often reach an equivalent state through different cloned objects.
+    // Memoize the content-derived evaluation across those clones as well as by object identity.
+    // The cache is bounded and reset for each new battle so edited card data cannot leak values.
+    const AI_PLANNER_EVALUATION_CACHE_LIMIT = 4096;
+    let aiPlannerContentEvaluationCache = new Map();
+    function aiPlannerResetEvaluationContentCache() {
+      aiPlannerContentEvaluationCache = new Map();
+    }
     function aiPlannerStateEvaluationSignature(state) {
       const unitPart = (state?.units || []).map(u => {
         const timed = arr => (arr || []).map(x => `${x.type}:${Number(x.val ?? x.remaining ?? x.amount) || 0}:${Number(x.duration) || 0}:${Number(x.appliedTurn) || 0}`).join(',');
@@ -5949,10 +5979,24 @@
       const signature = aiPlannerStateEvaluationSignature(state);
       const cached = state && typeof state === 'object' ? aiPlannerEvaluationCache.get(state) : null;
       if (cached && cached.signature === signature && cached.scores.has(side)) return cached.scores.get(side);
+      const contentKey = `${side}\u0001${signature}`;
+      if (aiPlannerContentEvaluationCache.has(contentKey)) {
+        const value = aiPlannerContentEvaluationCache.get(contentKey);
+        // Map insertion order is used as a small LRU queue.
+        aiPlannerContentEvaluationCache.delete(contentKey);
+        aiPlannerContentEvaluationCache.set(contentKey, value);
+        if (state && typeof state === 'object') aiPlannerEvaluationCache.set(state, { signature, scores: new Map([[side, value]]) });
+        return value;
+      }
       const value = aiPlannerEvaluateStateBase(state, side) + aiPlannerPassivePotentialScore(state, side);
       const entry = cached && cached.signature === signature ? cached : { signature, scores: new Map() };
       entry.scores.set(side, value);
       if (state && typeof state === 'object') aiPlannerEvaluationCache.set(state, entry);
+      aiPlannerContentEvaluationCache.set(contentKey, value);
+      while (aiPlannerContentEvaluationCache.size > AI_PLANNER_EVALUATION_CACHE_LIMIT) {
+        const oldestKey = aiPlannerContentEvaluationCache.keys().next().value;
+        aiPlannerContentEvaluationCache.delete(oldestKey);
+      }
       return value;
     }
 
@@ -6246,6 +6290,51 @@
       return adjustment;
     }
 
+    function aiPlannerRepeatedPermanentBuffPenalty(state, actor, candidate) {
+      if (!state || !actor || !candidate || candidate.type !== 'skill' || !candidate.skill) return 0;
+      const skill = candidate.skill;
+      const entries = [{effect:skill.mainEffect, targetType:skill.targetType}];
+      if (skill.hasSubEffect && skill.subEffect) entries.push({effect:skill.subEffect, targetType:skill.subEffect.targetType || 'same_main_target'});
+      let penalty = 0;
+      const apKey = actor.side === 'player' ? 'playerAp' : 'enemyAp';
+      const currentAp = Math.max(0, Number(state[apKey]) || 0);
+      const hasAffordableDamageFollowup = (actor.skills || []).some(other => {
+        if (other === skill || other?.id === skill.id || other?.type !== 'active') return false;
+        const eff = other.mainEffect || {};
+        if (!['dmg_atk_ratio','dmg_fixed','dmg_fixed_pierce'].includes(String(eff.type || ''))) return false;
+        return Math.max(0, Number(other.cost) || 0) <= currentAp;
+      });
+      for (const entry of entries) {
+        const effect = entry.effect || {};
+        if (Number(effect.duration) !== -1 || !['mod_atk_ratio','mod_atk_val','mod_speed'].includes(String(effect.type || ''))) continue;
+        const targetId = entry.targetType === 'self' || (entry.targetType === 'same_main_target' && (skill.targetType === 'self' || String(candidate.targetInstanceId || '') === String(actor.instanceId)))
+          ? actor.instanceId : candidate.targetInstanceId;
+        const target = aiPlannerFindUnit(state, targetId);
+        if (!target || target.side !== actor.side) continue;
+        const mappedType = effect.type === 'mod_speed' ? 'speed' : effect.type === 'mod_atk_ratio' ? 'atk_ratio' : 'atk_val';
+        const sign = Math.sign(Number(effect.val) || 0);
+        if (sign <= 0) continue;
+        const existing = [...(target.buffs || []), ...(target.debuffs || [])].filter(b => b.type === mappedType && Number(b.duration) === -1 && Math.sign(Number(b.val) || 0) === sign);
+        if (!existing.length) continue;
+        const stacks = existing.length;
+        if (mappedType === 'atk_ratio') {
+          penalty += 300 + Math.min(3, stacks - 1) * 260;
+        } else if (mappedType === 'atk_val') {
+          penalty += 240 + Math.min(3, stacks - 1) * 220;
+        } else if (mappedType === 'speed') {
+          const currentSpeed = aiPlannerEffectiveSpeed(target);
+          const afterSpeed = currentSpeed + (Number(effect.val) || 0);
+          const enemies = aiPlannerActive(state, target.side === 'player' ? 'enemy' : 'player');
+          const createsNewFirstAction = enemies.some(enemy => currentSpeed < aiPlannerEffectiveSpeed(enemy) && afterSpeed >= aiPlannerEffectiveSpeed(enemy));
+          penalty += createsNewFirstAction ? 90 * stacks : 360 + Math.min(3, stacks - 1) * 280;
+        }
+      }
+      // If a real damage skill is affordable, repeatedly preparing instead of using it has an opportunity cost.
+      if (penalty > 0 && hasAffordableDamageFollowup) penalty += 260;
+      // Once two permanent stacks of the same stat are already present, the next copy needs a much stronger reason.
+      return Math.min(1800, penalty);
+    }
+
     function aiPlannerBuildUnitCandidates(state, actorId, intelligence) {
       const actor = aiPlannerFindUnit(state, actorId);
       if (!actor || actor.currentHp <= 0) return [{ type: 'skip', actorId, targetInstanceId: null, cost: 0, name: 'skip' }];
@@ -6277,7 +6366,8 @@
         const effectType=String(c.skill?.mainEffect?.type||'');
         const checksThreshold=['mod_atk_ratio','mod_atk_val','mod_speed','speed','atk_ratio','status_apply','damage_taken_ratio','damage_cut_ratio','dmg_cut','dmg_atk_ratio','dmg_fixed','dmg_fixed_pierce'].includes(effectType);
         const comboThreshold=checksThreshold?aiPlannerThresholdComboBonus(state,copy,side):0;
-        return { c, score: delta + (r.kills || 0) * 250 + strat + tactical + selfHarm + roleAdjustment + comboThreshold + aiEvaluationError(side) };
+        const repeatBuffPenalty=aiPlannerRepeatedPermanentBuffPenalty(state,actor,c);
+        return { c, score: delta + (r.kills || 0) * 250 + strat + tactical + selfHarm + roleAdjustment + comboThreshold - repeatBuffPenalty + aiEvaluationError(side) };
       }).sort((a,b) => b.score - a.score);
       const keep = Math.max(3,Math.min(8,3+Math.round(getAiTacticalIQ(side)*0.05)));
       return scored.slice(0, Math.min(keep, scored.length)).map(x => x.c);
