@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.35</title>
+  <title>都道府県カード戦争 v1.0.37</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -307,7 +307,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.35</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.37</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -2977,7 +2977,7 @@
         const payload = {
           format: 'prefecture-card-war-card-data',
           formatVersion: 1,
-          gameVersion: '1.0.35',
+          gameVersion: '1.0.37',
           exportedAt: exportedAt.toISOString(),
           intendedUse: 'このJSONと同じバージョンのゲームZIPを参照し、カードの性能・スキル・効果条件・組み合わせを検証する',
           imagesIncluded: false,
@@ -3000,13 +3000,13 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.35-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.37-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
         window.setTimeout(() => URL.revokeObjectURL(objectUrl), 15000);
-        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.35 ZIP と一緒にChatGPTへアップロードしてください。`);
+        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.37 ZIP と一緒にChatGPTへアップロードしてください。`);
       } catch (error) {
         console.error('[CardDataExport] カードデータの書き出しに失敗しました', error);
         alert(`カードデータの書き出しに失敗しました。\n${String(error?.message || error)}`);
@@ -4564,10 +4564,10 @@
         enemyIconUrl:resolvedEnemyIcon,
         playerReserveQueue:[...deploymentSelection.player.reserve],enemyReserveQueue:[...enemyReserve],resultWinner:null, storyMode:!!storyBattleOverride, campaignMode:!!campaignBattleOverride};
       battleState.selectedPlayerInstanceId = getActiveUnits('player')[0]?.instanceId || null;
+      // 同じ戦闘開始イベントで発動するパッシブは、タイミングごとにまとめて行動値順で処理する。
       runPassiveSkills('battle_start');
-      // 開幕の出撃3体も「登場」扱い。戦闘開始時とは別に登場時パッシブを発動する。
-      getActiveUnits('player').forEach(u=>runPassiveSkills('deploy',u));
-      getActiveUnits('enemy').forEach(u=>runPassiveSkills('deploy',u));
+      // 開幕の出撃ユニットは両陣営をまとめ、登場時パッシブを実効行動値順で発動する。
+      runPassiveSkills('deploy');
       if (!window.__campaignHeadlessBattle) switchView('battle');
       initBattleUI(); document.getElementById('decision-command-panel')?.classList.remove('hidden'); document.getElementById('command-options-container')?.replaceChildren(); startTurnPhase();
     }
@@ -4581,6 +4581,7 @@
         name: template.name,
         mainAttr: template.mainAttr,
         subAttrs: template.subAttrs || [],
+        role: isValidUnitRole(template.role) ? template.role : inferUnitRoleFromSkills(template.skills || [], template.stats || {}),
         image: getCardImage(template) || createDummyCardImage("⚔️", "#334155"),
         imageSource: getCardImage(template),
         baseMaxHp: Number(template.stats.hp),
@@ -4671,23 +4672,27 @@
       const arr=side==='player'?battleState.playerUnits:battleState.enemyUnits;
       return arr.filter(u=>u.isActive && (!aliveOnly || u.currentHp>0));
     }
-    function deployNextReserve(side){
+    function deployNextReserve(side, deferDeployPassives=false){
       const queue=side==='player'?battleState.playerReserveQueue:battleState.enemyReserveQueue;
       const units=side==='player'?battleState.playerUnits:battleState.enemyUnits;
       if(!Array.isArray(queue)) return null;
       while(queue.length){
         const id=queue.shift();
         const u=units.find(x=>String(x.cardId)===String(id) && !x.isActive && x.currentHp>0);
-        if(u){u.isActive=true;u.reservedAction={type:'attack',targetInstanceId:null};logBattle(`🔄 ${u.name} が控えから登場！`);runPassiveSkills('deploy',u);return u;}
+        if(u){u.isActive=true;u.reservedAction={type:'attack',targetInstanceId:null};logBattle(`🔄 ${u.name} が控えから登場！`);if(!deferDeployPassives)runPassiveSkills('deploy',u);return u;}
       }
       // IDが旧形式だった場合の救済：控えキューに残る不正IDで交代が止まらないよう、
       // 生存している非アクティブ個体をデッキ順で登場させる。
       const fallback=units.find(x=>!x.isActive&&x.currentHp>0);
-      if(fallback){fallback.isActive=true;fallback.reservedAction={type:'attack',targetInstanceId:null};logBattle(`🔄 ${fallback.name} が控えから登場！（控え情報を復旧）`);runPassiveSkills('deploy',fallback);return fallback;}
+      if(fallback){fallback.isActive=true;fallback.reservedAction={type:'attack',targetInstanceId:null};logBattle(`🔄 ${fallback.name} が控えから登場！（控え情報を復旧）`);if(!deferDeployPassives)runPassiveSkills('deploy',fallback);return fallback;}
       return null;
     }
     function replaceDeadUnitsAtTurnEnd(){
-      ['player','enemy'].forEach(side=>{const units=side==='player'?battleState.playerUnits:battleState.enemyUnits; const deadActive=units.filter(u=>u.isActive&&u.currentHp<=0); deadActive.forEach(u=>{u.isActive=false;}); deadActive.forEach(()=>deployNextReserve(side));});
+      const newlyDeployed=[];
+      // 同じターン終了処理で複数枠を補充する場合、両陣営の登場を先に確定させ、
+      // 今回登場した全ユニットの「登場時」パッシブを1つの同時イベントとして行動値順で処理する。
+      ['player','enemy'].forEach(side=>{const units=side==='player'?battleState.playerUnits:battleState.enemyUnits; const deadActive=units.filter(u=>u.isActive&&u.currentHp<=0); deadActive.forEach(u=>{u.isActive=false;}); deadActive.forEach(()=>{const deployed=deployNextReserve(side,true);if(deployed)newlyDeployed.push(deployed);});});
+      if(newlyDeployed.length)runPassiveSkills('deploy',newlyDeployed);
       const selected = battleState.playerUnits.find(u => u.instanceId === battleState.selectedPlayerInstanceId && u.isActive && u.currentHp > 0);
       if (!selected) { const next = getActiveUnits('player')[0]; battleState.selectedPlayerInstanceId = next?.instanceId || null; }
     }
@@ -5238,6 +5243,7 @@
         name: unit.name,
         mainAttr: unit.mainAttr,
         subAttrs: Array.isArray(unit.subAttrs) ? [...unit.subAttrs] : [],
+        role: isValidUnitRole(unit.role) ? unit.role : inferUnitRoleFromSkills(unit.skills || [], {hp:unit.maxHp, atk:unit.atk, priority:unit.priority}),
         baseMaxHp: Number(unit.baseMaxHp ?? unit.maxHp) || 0,
         maxHp: Math.max(0, Number(unit.maxHp) || 0),
         currentHp: Math.max(0, Number(unit.currentHp) || 0),
@@ -5301,7 +5307,9 @@
         if (skill?.type === 'passive' && skill?.timing === 'battle_start') value += 18;
         skillValue += value;
       }
-      return Math.max(0, Math.min(2200, hp * 0.08 + atk * 0.7 + speed * 2.2 + skillValue));
+      const role = isValidUnitRole(unit.role) ? unit.role : inferUnitRoleFromSkills(unit.skills || [], {hp, atk, priority:speed});
+      const roleValue = role === 'attacker' ? 260 : role === 'controller' ? 170 : 120;
+      return Math.max(0, Math.min(2450, hp * 0.08 + atk * 0.7 + speed * 2.2 + skillValue + roleValue));
     }
 
     function aiPlannerEffectiveAtk(unit) {
@@ -5663,6 +5671,164 @@
       return { value: actual * 1.05 + (before > 0 && actualTarget.currentHp <= 0 ? 1300 : 0), kills: before > 0 && actualTarget.currentHp <= 0 ? 1 : 0, damage: actual, healing: 0 };
     }
 
+    function aiPlannerProjectedDurationActive(item, futureTurn) {
+      if (!item) return false;
+      const duration = Number(item.duration);
+      return duration === -1 || duration > Math.max(0, Number(futureTurn) || 0);
+    }
+
+    function aiPlannerProjectedAtk(unit, futureTurn) {
+      let atk = Math.max(0, Number(unit?.atk) || 0);
+      [...(unit?.buffs || []), ...(unit?.debuffs || [])].forEach(b => {
+        if (!aiPlannerProjectedDurationActive(b, futureTurn)) return;
+        if (b.type === 'atk_ratio') atk += Math.round((Number(unit.atk) || 0) * (Number(b.val) || 0) / 100);
+        if (b.type === 'atk_val') atk += Number(b.val) || 0;
+      });
+      if ((unit?.statuses || []).some(s => s.type === 'weak' && aiPlannerProjectedDurationActive(s, futureTurn))) atk = Math.floor(atk / 2);
+      return Math.max(0, atk);
+    }
+
+    function aiPlannerProjectedSpeed(unit, futureTurn) {
+      let speed = Number(unit?.priority) || 0;
+      [...(unit?.buffs || []), ...(unit?.debuffs || [])].forEach(b => {
+        if (b.type === 'speed' && aiPlannerProjectedDurationActive(b, futureTurn)) speed += Number(b.val) || 0;
+      });
+      if ((unit?.statuses || []).some(s => s.type === 'slow' && aiPlannerProjectedDurationActive(s, futureTurn))) speed = Math.floor(speed / 2);
+      return speed;
+    }
+
+    // Expected next-action damage coefficient: attackers are more likely to spend shared AP on
+    // an offensive skill; controllers/defenders use damaging sub-skills less often unless needed.
+    function aiPlannerExpectedAttackCoefficient(state, unit) {
+      const role = isValidUnitRole(unit?.role) ? unit.role : inferUnitRoleFromSkills(unit?.skills || [], {hp:unit?.maxHp, atk:unit?.atk, priority:unit?.priority});
+      const apKey = unit?.side === 'player' ? 'playerAp' : 'enemyAp';
+      const futureAp = Math.min(100, Math.max(0, Number(state?.[apKey]) || 0) + 20);
+      let bestMultiplier = 0.8;
+      (unit?.skills || []).forEach(sk => {
+        if (sk?.type !== 'active') return;
+        const cost = Math.max(0, Number(sk.cost) || 0) + (aiPlannerHasStatus(unit, 'pressure') ? 5 : 0);
+        if (cost > futureAp) return;
+        const effect = sk.mainEffect || {};
+        let multiplier = 0;
+        if (effect.type === 'dmg_atk_ratio') multiplier = Math.max(0, Number(effect.val) || 0) / 100;
+        else if (effect.type === 'dmg_fixed' || effect.type === 'dmg_fixed_pierce') multiplier = Math.max(0, Number(effect.val) || 0) / Math.max(1, Number(unit.atk) || 0);
+        if (multiplier <= 0) return;
+        const usage = cost === 0 ? 0.9 : Math.min(0.95, 18 / Math.max(18, cost));
+        bestMultiplier = Math.max(bestMultiplier, 0.8 + (multiplier - 0.8) * usage);
+      });
+      const roleReliability = role === 'attacker' ? 1 : role === 'controller' ? 0.42 : 0.58;
+      return Math.max(0.8, 0.8 + (bestMultiplier - 0.8) * roleReliability);
+    }
+
+    function aiPlannerExpectedSurvivalFactor(state, unit) {
+      if (!unit || unit.currentHp <= 0) return 0;
+      const own = aiPlannerActive(state, unit.side);
+      const enemies = aiPlannerActive(state, unit.side === 'player' ? 'enemy' : 'player');
+      if (!enemies.length) return 1;
+      let teamThreat = 0;
+      enemies.forEach(enemy => {
+        let threat = Math.max(0, aiPlannerEffectiveAtk(enemy) * 0.8);
+        (enemy.skills || []).forEach(sk => {
+          if (sk?.type !== 'active') return;
+          const eff = sk.mainEffect || {};
+          let multiplier = eff.type === 'dmg_atk_ratio' ? Number(eff.val) / 100 : 0;
+          if (eff.type === 'dmg_fixed' || eff.type === 'dmg_fixed_pierce') multiplier = (Number(eff.val) || 0) / Math.max(1, Number(enemy.atk) || 0);
+          if (multiplier > 0) threat = Math.max(threat, aiPlannerEffectiveAtk(enemy) * multiplier * 0.75);
+        });
+        teamThreat += threat;
+      });
+      let incoming = teamThreat / Math.max(1, own.length) * 0.66;
+      const protectedByDefender = own.some(ally => ally.instanceId !== unit.instanceId && ally.role === 'defender' && (aiPlannerHasStatus(ally, 'taunt') || (ally.skills || []).some(sk => sk.type === 'active' && sk.mainEffect?.type === 'status_apply' && ['taunt','provoke'].includes(String(sk.mainEffect.status || '')))));
+      if (protectedByDefender && unit.role !== 'defender') incoming *= 0.68;
+      if (unit.role === 'defender' && aiPlannerHasStatus(unit, 'taunt')) incoming *= 1.22;
+      const needed = Math.max(1, incoming * 1.15);
+      return Math.max(0.28, Math.min(1, Number(unit.currentHp) / needed));
+    }
+
+    // Discounted three-turn lookahead. Permanent attack buffs are valued for the extra future
+    // attacks they enable, while action-value buffs are valued for changing turn order, not for
+    // inventing extra actions. Later turns are discounted for death risk and counterplay.
+    function aiPlannerFutureCombatPotential(state, perspectiveSide) {
+      const weights = [0.82, 0.46, 0.24];
+      const active = state.units.filter(u => u && u.isActive && u.currentHp > 0);
+      let value = 0;
+      active.forEach(unit => {
+        const sign = unit.side === perspectiveSide ? 1 : -1;
+        const enemies = aiPlannerActive(state, unit.side === 'player' ? 'enemy' : 'player');
+        const survival = aiPlannerExpectedSurvivalFactor(state, unit);
+        const coefficient = aiPlannerExpectedAttackCoefficient(state, unit);
+        let unitFuture = 0;
+        for (let i = 1; i <= weights.length; i++) {
+          const atkDelta = aiPlannerProjectedAtk(unit, i) - (Number(unit.atk) || 0);
+          unitFuture += atkDelta * coefficient * weights[i - 1] * survival;
+          const projectedSpeed = aiPlannerProjectedSpeed(unit, i);
+          enemies.forEach(enemy => {
+            const foeSpeed = aiPlannerProjectedSpeed(enemy, i);
+            const baselineBefore = (Number(unit.priority) || 0) >= (Number(enemy.priority) || 0);
+            const projectedBefore = projectedSpeed >= foeSpeed;
+            if (baselineBefore !== projectedBefore) {
+              const swing = Math.min(280, 85 + Math.max(0, aiPlannerEffectiveAtk(enemy)) * 0.055);
+              unitFuture += (projectedBefore ? swing : -swing) * weights[i - 1] * survival;
+            }
+          });
+        }
+        value += sign * unitFuture;
+      });
+      return value;
+    }
+
+    function aiPlannerRoughPassiveEffectValue(effect, targetType = 'self') {
+      if (!effect || effect.type === 'none') return 0;
+      const type = String(effect.type || ''), val = Math.abs(Number(effect.val) || 0);
+      let score = 0;
+      if (type === 'dmg_atk_ratio') score = 170 + Math.min(450, val * 2.3);
+      else if (type === 'dmg_fixed' || type === 'dmg_fixed_pierce') score = 100 + Math.min(420, val * 0.18);
+      else if (type === 'heal_fixed') score = Math.min(500, val * 0.22);
+      else if (type === 'heal_max_hp_ratio') score = Math.min(500, val * 7);
+      else if (type === 'shield') score = Math.min(550, val * 0.25);
+      else if (type === 'mod_atk_ratio') score = Math.min(600, val * 6);
+      else if (type === 'mod_atk_val') score = Math.min(500, val * 0.18);
+      else if (type === 'mod_speed') score = Math.min(500, val * 5);
+      else if (type === 'mod_ap') score = Math.min(650, val * 13);
+      else if (type === 'damage_taken_ratio' || type === 'damage_cut_ratio') score = Math.min(500, val * 6);
+      else if (type === 'status_apply') score = ['freeze','paralysis','skill_block','pressure'].includes(String(effect.status || '')) ? 320 : ['taunt','provoke'].includes(String(effect.status || '')) ? 230 : 150;
+      else if (type === 'skill_block') score = 360;
+      else if (type === 'heal_block') score = 220;
+      else if (type === 'mod_max_hp_val') score = Math.min(500, val * 0.12);
+      else if (['clear_buffs','clear_debuffs','clear_statuses','clear_random_buffs','clear_random_debuffs','status_remove'].includes(type)) score = 170;
+      if (['all_enemy','all_ally','all_field'].includes(String(targetType || ''))) score *= 1.45;
+      return Math.min(800, score);
+    }
+
+    function aiPlannerApThresholdPassivePotential(state, perspectiveSide) {
+      const weights = [0.64, 0.43, 0.28, 0.17];
+      let score = 0;
+      for (const unit of state.units.filter(u => u && u.isActive && u.currentHp > 0)) {
+        const apKey = unit.side === 'player' ? 'playerAp' : 'enemyAp';
+        const currentAp = Math.max(0, Number(state[apKey]) || 0);
+        for (const passive of unit.skills || []) {
+          if (passive?.type !== 'passive' || !['turn_start','turn_end','before_action','after_action'].includes(passive.timing)) continue;
+          const cond = passive.selfCond || {};
+          if (cond.type !== 'ap_val_gte') continue;
+          const threshold = Math.max(0, Number(cond.val) || 0);
+          if (threshold <= 0 || threshold > 100) continue;
+          const chance = Math.max(0, Math.min(100, Number(passive.chance ?? 100))) / 100;
+          const direct = aiPlannerRoughPassiveEffectValue(passive.mainEffect, passive.targetType);
+          const sub = passive.hasSubEffect && passive.subEffect ? aiPlannerRoughPassiveEffectValue(passive.subEffect, passive.subEffect.targetType || 'same_main_target') * 0.62 : 0;
+          const utility = Math.min(900, direct + sub) * chance;
+          if (utility < 80) continue; // Do not hoard AP for a trivial threshold passive.
+          for (let turn = 1; turn <= weights.length; turn++) {
+            // AP recovers by 20 at each new turn. For end-of-turn triggers the AP after
+            // this turn is relevant; for all future trigger timings the recovered AP is used.
+            const projectedAp = Math.min(100, currentAp + (passive.timing === 'turn_end' ? 20 * (turn - 1) : 20 * turn));
+            if (projectedAp < threshold) continue;
+            score += (unit.side === perspectiveSide ? 1 : -1) * utility * weights[turn - 1];
+          }
+        }
+      }
+      return score;
+    }
+
     function aiPlannerEvaluateStateBase(state, side) {
       const own = aiPlannerActive(state, side, true);
       const enemy = aiPlannerActive(state, side === 'player' ? 'enemy' : 'player', true);
@@ -5672,6 +5838,12 @@
         const strategicValue = aiPlannerUnitStrategicValue(u);
         if (u.currentHp > 0) score += 220 + ratio * 520 + strategicValue * 0.25;
         else score -= 1750 + strategicValue * 0.55;
+        // An attacker is a high-value win condition: protecting its remaining HP matters more
+        // than treating every living unit as strategically interchangeable.
+        if (u.role === 'attacker') score += u.currentHp > 0 ? 180 : -180;
+        else if (u.role === 'controller') score += u.currentHp > 0 ? 75 : -75;
+        const shieldRemaining = (u.shields || []).reduce((sum, sh) => sum + Math.max(0, Number(sh.remaining ?? sh.amount) || 0), 0);
+        score += Math.min(shieldRemaining, Math.max(0, Number(u.maxHp) || 0)) * 0.22;
         score += (aiPlannerEffectiveAtk(u) - u.atk) * 0.18;
         score += (aiPlannerEffectiveSpeed(u) - u.priority) * 0.75;
         [...(u.buffs || [])].forEach(b => {
@@ -5689,6 +5861,8 @@
         const missing = u.maxHp > 0 ? 1 - u.currentHp / u.maxHp : 0;
         const strategicValue = aiPlannerUnitStrategicValue(u);
         score += missing * 780;
+        const shieldRemaining = (u.shields || []).reduce((sum, sh) => sum + Math.max(0, Number(sh.remaining ?? sh.amount) || 0), 0);
+        score -= Math.min(shieldRemaining, Math.max(0, Number(u.maxHp) || 0)) * 0.22;
         if (u.currentHp <= 0) score += 1750 + strategicValue * 0.55;
         else { score -= strategicValue * 0.25; if (u.currentHp / u.maxHp <= 0.25) score += 220; }
         if ((u.debuffs || []).some(b => b.type === 'skill_block')) score += 75;
@@ -5702,6 +5876,10 @@
       score += ownAp * 1.15;
       // 行動可能数が多いほど次の局面が安定する。
       score += own.filter(u => u.currentHp > 0).length * 90;
+      // Three-turn combat lookahead plus future AP-threshold passives. These are discounted
+      // projections rather than a claim that the unit will certainly survive or act freely.
+      score += aiPlannerFutureCombatPotential(state, side);
+      score += aiPlannerApThresholdPassivePotential(state, side);
       return score;
     }
 
@@ -5756,8 +5934,26 @@
       return score;
     }
 
+    // The same immutable search node is evaluated repeatedly while each candidate is scored.
+    // Cache by node identity plus a compact mutable-state signature, so a reused node is cheap
+    // but an in-place state change cannot accidentally keep a stale score.
+    const aiPlannerEvaluationCache = new WeakMap();
+    function aiPlannerStateEvaluationSignature(state) {
+      const unitPart = (state?.units || []).map(u => {
+        const timed = arr => (arr || []).map(x => `${x.type}:${Number(x.val ?? x.remaining ?? x.amount) || 0}:${Number(x.duration) || 0}:${Number(x.appliedTurn) || 0}`).join(',');
+        return [u.instanceId,u.side,u.isActive?1:0,Number(u.currentHp)||0,Number(u.maxHp)||0,Number(u.atk)||0,Number(u.priority)||0,timed(u.buffs),timed(u.debuffs),timed(u.statuses),timed(u.shields)].join('~');
+      }).join('|');
+      return `${Number(state?.turn)||0}/${Number(state?.playerAp)||0}/${Number(state?.enemyAp)||0}/${unitPart}`;
+    }
     function aiPlannerEvaluateState(state, side) {
-      return aiPlannerEvaluateStateBase(state, side) + aiPlannerPassivePotentialScore(state, side);
+      const signature = aiPlannerStateEvaluationSignature(state);
+      const cached = state && typeof state === 'object' ? aiPlannerEvaluationCache.get(state) : null;
+      if (cached && cached.signature === signature && cached.scores.has(side)) return cached.scores.get(side);
+      const value = aiPlannerEvaluateStateBase(state, side) + aiPlannerPassivePotentialScore(state, side);
+      const entry = cached && cached.signature === signature ? cached : { signature, scores: new Map() };
+      entry.scores.set(side, value);
+      if (state && typeof state === 'object') aiPlannerEvaluationCache.set(state, entry);
+      return value;
     }
 
     function aiPlannerEstimatePassiveSetupBonus(side, actor, skill) {
@@ -5950,6 +6146,106 @@
       return -Math.max(180, damageCost - usefulOtherEffect - setupValue);
     }
 
+    function aiPlannerEstimateBestTargetDamage(state, attacker, target) {
+      if (!attacker || !target || attacker.currentHp <= 0 || target.currentHp <= 0) return 0;
+      let best = aiPlannerDamageAfterCut(target, Math.round(aiPlannerEffectiveAtk(attacker) * 0.8));
+      const apKey = attacker.side === 'player' ? 'playerAp' : 'enemyAp';
+      const futureAp = Math.min(100, Math.max(0, Number(state[apKey]) || 0) + 20);
+      (attacker.skills || []).forEach(sk => {
+        if (sk?.type !== 'active' || !aiPlannerCondition(sk.selfCond, attacker, state)) return;
+        const cost = Math.max(0, Number(sk.cost) || 0) + (aiPlannerHasStatus(attacker, 'pressure') ? 5 : 0);
+        if (cost > futureAp) return;
+        const eff = sk.mainEffect || {};
+        let raw = 0;
+        if (eff.type === 'dmg_atk_ratio') raw = Math.round(aiPlannerEffectiveAtk(attacker) * (Number(eff.val) || 0) / 100);
+        else if (eff.type === 'dmg_fixed' || eff.type === 'dmg_fixed_pierce') raw = Math.max(0, Number(eff.val) || 0);
+        if (!raw) return;
+        // Compare against HP + shields below, so retain the post-mitigation damage here
+        // rather than subtracting shields twice.
+        const dealt = eff.type === 'dmg_fixed_pierce' ? raw : aiPlannerDamageAfterCut(target, raw);
+        best = Math.max(best, dealt);
+      });
+      return best;
+    }
+
+    function aiPlannerThresholdComboBonus(beforeState, afterState, side) {
+      const beforeEnemies = aiPlannerActive(beforeState, side === 'player' ? 'enemy' : 'player');
+      const afterEnemies = aiPlannerActive(afterState, side === 'player' ? 'enemy' : 'player');
+      const beforeAllies = aiPlannerActive(beforeState, side);
+      let bonus = 0;
+      for (const enemyBefore of beforeEnemies) {
+        const enemyAfter = aiPlannerFindUnit(afterState, enemyBefore.instanceId);
+        if (!enemyAfter || enemyAfter.currentHp <= 0) continue;
+        let crossed = false;
+        for (const allyBefore of beforeAllies) {
+          if (allyBefore.currentHp <= 0) continue;
+          const allyAfter = aiPlannerFindUnit(afterState, allyBefore.instanceId);
+          if (!allyAfter || allyAfter.currentHp <= 0) continue;
+          const beforeDamage = aiPlannerEstimateBestTargetDamage(beforeState, allyBefore, enemyBefore);
+          const afterDamage = aiPlannerEstimateBestTargetDamage(afterState, allyAfter, enemyAfter);
+          const beforeThreshold = enemyBefore.currentHp + (enemyBefore.shields || []).reduce((sum, sh) => sum + Math.max(0, Number(sh.remaining ?? sh.amount) || 0), 0);
+          const afterThreshold = enemyAfter.currentHp + (enemyAfter.shields || []).reduce((sum, sh) => sum + Math.max(0, Number(sh.remaining ?? sh.amount) || 0), 0);
+          if (beforeDamage < beforeThreshold && afterDamage >= afterThreshold) { crossed = true; break; }
+        }
+        if (crossed) bonus += Math.min(520, 260 + Math.max(0, aiPlannerEffectiveAtk(enemyAfter)) * 0.06);
+      }
+      return Math.min(1050, bonus);
+    }
+
+    function aiPlannerRoleActionAdjustment(beforeState, afterState, side, candidate, actor, result) {
+      if (!candidate || candidate.type !== 'skill' || !actor || !candidate.skill) return 0;
+      const role = isValidUnitRole(actor.role) ? actor.role : inferUnitRoleFromSkills(actor.skills || [], {hp:actor.maxHp, atk:actor.atk, priority:actor.priority});
+      const effect = candidate.skill.mainEffect || {};
+      const damageSkill = ['dmg_atk_ratio','dmg_fixed','dmg_fixed_pierce'].includes(String(effect.type || ''));
+      const apKey = side === 'player' ? 'playerAp' : 'enemyAp';
+      const beforeAp = Math.max(0, Number(beforeState[apKey]) || 0);
+      const afterAp = Math.max(0, Number(afterState[apKey]) || 0);
+      let adjustment = 0;
+
+      // Controllers may have a damage sub-weapon, but should not consume the team's shared AP
+      // if that prevents a ready attacker from using a meaningfully stronger attack.
+      if (role === 'controller' && damageSkill && Number(candidate.cost) > 0 && !(result?.kills > 0)) {
+        let deniedAttacker = false;
+        const allies = aiPlannerActive(beforeState, side).filter(u => u.instanceId !== actor.instanceId && u.role === 'attacker' && u.currentHp > 0);
+        for (const ally of allies) {
+          const better = (ally.skills || []).some(sk => {
+            if (sk?.type !== 'active' || !aiPlannerCondition(sk.selfCond, ally, beforeState)) return false;
+            const cost = Math.max(0, Number(sk.cost) || 0) + (aiPlannerHasStatus(ally, 'pressure') ? 5 : 0);
+            const eff = sk.mainEffect || {};
+            const offensive = ['dmg_atk_ratio','dmg_fixed','dmg_fixed_pierce'].includes(String(eff.type || ''));
+            if (!offensive || cost <= afterAp || cost > beforeAp) return false;
+            const wouldDeal = eff.type === 'dmg_atk_ratio' ? aiPlannerEffectiveAtk(ally) * (Number(eff.val) || 0) / 100 : Number(eff.val) || 0;
+            const thisDeals = effect.type === 'dmg_atk_ratio' ? aiPlannerEffectiveAtk(actor) * (Number(effect.val) || 0) / 100 : Number(effect.val) || 0;
+            return wouldDeal >= thisDeals * 1.15;
+          });
+          if (better) { deniedAttacker = true; break; }
+        }
+        adjustment -= deniedAttacker ? Math.min(780, 420 + Number(candidate.cost) * 12) : Math.min(240, Number(candidate.cost) * 5.5);
+      }
+
+      // A defender's taunt and protective effects gain value when they buy time for an attacker.
+      if (role === 'defender') {
+        const protects = ['shield','heal_fixed','heal_max_hp_ratio','damage_cut_ratio','damage_taken_ratio'].includes(String(effect.type || '')) || (effect.type === 'status_apply' && ['taunt','provoke'].includes(String(effect.status || '')));
+        if (protects) {
+          const target = aiPlannerFindUnit(afterState, candidate.targetInstanceId) || (candidate.skill.targetType === 'self' ? aiPlannerFindUnit(afterState, actor.instanceId) : null);
+          const targetIsAttacker = target && target.side === side && target.role === 'attacker';
+          if (targetIsAttacker) adjustment += 170 + (target.currentHp / Math.max(1, target.maxHp) < 0.55 ? 120 : 0);
+          if (effect.type === 'status_apply' && ['taunt','provoke'].includes(String(effect.status || '')) && target?.side === side) {
+            const endangeredAttackers = aiPlannerActive(beforeState, side).filter(u => u.role === 'attacker' && u.currentHp / Math.max(1, u.maxHp) < 0.8).length;
+            adjustment += Math.min(420, 120 + endangeredAttackers * 100);
+          }
+        }
+      }
+
+      // Controllers buffing a real attacker receive a small team-plan bonus; the long-horizon
+      // state evaluator supplies most of the actual buff value.
+      if (role === 'controller' && ['mod_atk_ratio','mod_atk_val','mod_speed','shield','damage_taken_ratio','damage_cut_ratio','heal_fixed','heal_max_hp_ratio'].includes(String(effect.type || ''))) {
+        const target = aiPlannerFindUnit(afterState, candidate.targetInstanceId) || (candidate.skill.targetType === 'self' ? aiPlannerFindUnit(afterState, actor.instanceId) : null);
+        if (target && target.side === side && target.role === 'attacker') adjustment += 140;
+      }
+      return adjustment;
+    }
+
     function aiPlannerBuildUnitCandidates(state, actorId, intelligence) {
       const actor = aiPlannerFindUnit(state, actorId);
       if (!actor || actor.currentHp <= 0) return [{ type: 'skip', actorId, targetInstanceId: null, cost: 0, name: 'skip' }];
@@ -5977,7 +6273,11 @@
         const strat=aiStrategyScoreAdjustment(side,c.skill?.mainEffect||null,Number(c.cost)||0,c.type,actor);
         const tactical=c.type==='skill'?aiPlannerTacticalBonus(copy,side,actor,c.skill,r,c.targetInstanceId,c.subTargetInstanceId):0;
         const selfHarm=c.type==='skill'?aiPlannerSelfDamagePenalty(state,actor,c.skill,c.targetInstanceId,c.subTargetInstanceId):0;
-        return { c, score: delta + (r.kills || 0) * 250 + strat + tactical + selfHarm + aiEvaluationError(side) };
+        const roleAdjustment=aiPlannerRoleActionAdjustment(state,copy,side,c,actor,r);
+        const effectType=String(c.skill?.mainEffect?.type||'');
+        const checksThreshold=['mod_atk_ratio','mod_atk_val','mod_speed','speed','atk_ratio','status_apply','damage_taken_ratio','damage_cut_ratio','dmg_cut','dmg_atk_ratio','dmg_fixed','dmg_fixed_pierce'].includes(effectType);
+        const comboThreshold=checksThreshold?aiPlannerThresholdComboBonus(state,copy,side):0;
+        return { c, score: delta + (r.kills || 0) * 250 + strat + tactical + selfHarm + roleAdjustment + comboThreshold + aiEvaluationError(side) };
       }).sort((a,b) => b.score - a.score);
       const keep = Math.max(3,Math.min(8,3+Math.round(getAiTacticalIQ(side)*0.05)));
       return scored.slice(0, Math.min(keep, scored.length)).map(x => x.c);
@@ -6643,7 +6943,7 @@
         if (target.currentHp < before) triggerPassiveEvent('hp_decrease', target);
         if (before > 0 && target.currentHp <= 0) {
           triggerPassiveEvent('death', target);
-          [...getActiveUnits(target.side === 'player' ? 'player' : 'enemy')].filter(x => x !== target).forEach(x => triggerPassiveEvent('ally_death', x));
+          triggerAllyDeathPassives(target.side, target);
         }
         await attackPopup;
         await actionPopupQueue;
@@ -6853,7 +7153,7 @@
         const beforeHp=target.currentHp; const damageResult=dealDamage(target, dmg); const actualDamage=beforeHp-target.currentHp;
         if (damageResult.incomingDamage > 0) triggerPassiveEvent('damage_taken', target, actor);
         if(target.currentHp<beforeHp) triggerPassiveEvent('hp_decrease',target);
-        if(target.currentHp<=0&&beforeHp>0){ triggerPassiveEvent('death',target); [...getActiveUnits(target.side==='player'?'player':'enemy')].filter(u=>u!==target).forEach(u=>triggerPassiveEvent('ally_death',u)); }
+        if(target.currentHp<=0&&beforeHp>0){ triggerPassiveEvent('death',target); triggerAllyDeathPassives(target.side, target); }
         logBattle(`💥 ${target.name} に ${beforeHp-target.currentHp} のダメージ！`);
         return {effect:`攻撃力×${eff.val}%ダメージ${damageResult.absorbed ? `（シールドが${damageResult.absorbed}吸収）` : ''}`, result:`${target.name} に ${actualDamage} ダメージ${target.currentHp<=0?'／撃破！':''}`};
       }
@@ -6862,7 +7162,7 @@
         const beforeHp = target.currentHp; const damageResult=dealDamage(target, eff.val, eff.type === 'dmg_fixed_pierce', eff.type === 'dmg_fixed_pierce'); const actual = beforeHp - target.currentHp;
         if (damageResult.incomingDamage > 0) triggerPassiveEvent('damage_taken', target, actor);
         if(actual>0) triggerPassiveEvent('hp_decrease',target);
-        if(target.currentHp<=0&&beforeHp>0){ triggerPassiveEvent('death',target); [...getActiveUnits(target.side==='player'?'player':'enemy')].filter(u=>u!==target).forEach(u=>triggerPassiveEvent('ally_death',u)); }
+        if(target.currentHp<=0&&beforeHp>0){ triggerPassiveEvent('death',target); triggerAllyDeathPassives(target.side, target); }
         logBattle(`💥 ${target.name} に ${actual} の固定ダメージ！`);
         return {effect:eff.type==='dmg_fixed_pierce'?`${eff.val}の固定貫通ダメージ`:`${eff.val}の固定ダメージ${damageResult.absorbed ? `（シールドが${damageResult.absorbed}吸収）` : ''}`, result:`${target.name} に ${actual} ダメージ${damageResult.absorbed ? `（シールド吸収 ${damageResult.absorbed}）` : ''}${target.currentHp<=0?'／撃破！':''}`};
       }
@@ -6936,7 +7236,7 @@
         if (delta.currentDecreased > 0) triggerPassiveEvent('hp_decrease', target);
         if (target.currentHp <= 0 && beforeCurrent > 0) {
           triggerPassiveEvent('death', target);
-          [...getActiveUnits(target.side === 'player' ? 'player' : 'enemy')].filter(u => u !== target).forEach(u => triggerPassiveEvent('ally_death', u));
+          triggerAllyDeathPassives(target.side, target);
         }
         logBattle(`❤️ ${target.name} の最大HPが ${Number(eff.val) >= 0 ? '+' : ''}${eff.val}変化！`);
         return {effect:`最大HP ${Number(eff.val) >= 0 ? '+' : ''}${eff.val}（${Number(eff.val) >= 0 ? 'バフ' : 'デバフ'}）`, result:`${target.name} 最大HP ${beforeMax}→${target.maxHp} / HP ${target.currentHp}/${target.maxHp}（${durationText(duration)}）`};
@@ -6950,7 +7250,7 @@
         if (target.currentHp < before) triggerPassiveEvent('hp_decrease', target);
         if (target.currentHp <= 0 && before > 0) {
           triggerPassiveEvent('death', target);
-          [...getActiveUnits(target.side === 'player' ? 'player' : 'enemy')].filter(u=>u!==target).forEach(u=>triggerPassiveEvent('ally_death',u));
+          triggerAllyDeathPassives(target.side, target);
         }
         if (removed > 0) {
           logBattle(`✨ ${target.name} のバフをランダムに${removed}個解除した！（指定：${requested}個）`);
@@ -6968,7 +7268,7 @@
         if (target.currentHp < before) triggerPassiveEvent('hp_decrease', target);
         if (target.currentHp <= 0 && before > 0) {
           triggerPassiveEvent('death', target);
-          [...getActiveUnits(target.side === 'player' ? 'player' : 'enemy')].filter(u=>u!==target).forEach(u=>triggerPassiveEvent('ally_death',u));
+          triggerAllyDeathPassives(target.side, target);
         }
         if (removed > 0) {
           logBattle(`✨ ${target.name} のデバフをランダムに${removed}個解除した！（指定：${requested}個）`);
@@ -6985,7 +7285,7 @@
         if (target.currentHp < before) triggerPassiveEvent('hp_decrease', target);
         if (target.currentHp <= 0 && before > 0) {
           triggerPassiveEvent('death', target);
-          [...getActiveUnits(target.side === 'player' ? 'player' : 'enemy')].filter(u=>u!==target).forEach(u=>triggerPassiveEvent('ally_death',u));
+          triggerAllyDeathPassives(target.side, target);
         }
         logBattle(`✨ ${target.name} のバフを解除した！`);
         return {effect:'バフを全解除', result:`${target.name} のバフ解除`};
@@ -6998,7 +7298,7 @@
         if (target.currentHp < before) triggerPassiveEvent('hp_decrease', target);
         if (target.currentHp <= 0 && before > 0) {
           triggerPassiveEvent('death', target);
-          [...getActiveUnits(target.side === 'player' ? 'player' : 'enemy')].filter(u=>u!==target).forEach(u=>triggerPassiveEvent('ally_death',u));
+          triggerAllyDeathPassives(target.side, target);
         }
         logBattle(`✨ ${target.name} のデバフを解除した！`);
         return {effect:'デバフを全解除', result:`${target.name} のデバフ解除`};
@@ -7137,7 +7437,17 @@
       jobs.forEach(job => job());
     }
     function runPassiveSkills(timing, onlyUnit=null, attacker=null) {
-      const units=onlyUnit?[onlyUnit]:[...getActiveUnits('player'),...getActiveUnits('enemy')];
+      const requestedUnitBatch=Array.isArray(onlyUnit);
+      let units=requestedUnitBatch?[...onlyUnit]:onlyUnit?[onlyUnit]:[...getActiveUnits('player'),...getActiveUnits('enemy')];
+      // 同時発動するパッシブはタイミング種別を問わず、イベント開始時の実効行動値が高い順で処理。
+      // battle_start / deploy / turn_start / turn_end などの全体イベントと、同時登場したユニット群で共通適用する。
+      // 順序はイベント開始時に固定し、同値は従来の陣営・デッキ順を維持する。
+      // 同一キャラ内の複数パッシブは、引き続きカード内のスキル一覧順で処理する。
+      if (!onlyUnit || requestedUnitBatch) {
+        units=units.map((unit,index)=>({unit,index,speed:getEffectiveSpeed(unit)}))
+          .sort((a,b)=>b.speed-a.speed || a.index-b.index)
+          .map(entry=>entry.unit);
+      }
       units.forEach(u=>{
         if((u.currentHp<=0 && timing!=='death' && timing!=='hp_decrease' && timing!=='damage_taken') || !u.isActive)return;
         (u.skills||[]).forEach(sk=>{
@@ -7187,6 +7497,14 @@
       const root=passiveTriggerDepth===0;
       passiveTriggerDepth++; try { runPassiveSkills(timing,subject,attacker); } finally { passiveTriggerDepth--; if(root)passiveLoopGuard.clear(); }
     }
+    function triggerAllyDeathPassives(side, deadUnit) {
+      // 1体の死亡によって同時に発動する生存味方の「味方死亡時」パッシブを、イベント開始時の行動値順で処理。
+      const allies = [...getActiveUnits(side)].filter(unit => unit !== deadUnit);
+      const ordered = allies.map((unit,index)=>({unit,index,speed:getEffectiveSpeed(unit)}))
+        .sort((a,b)=>b.speed-a.speed || a.index-b.index)
+        .map(entry=>entry.unit);
+      ordered.forEach(unit=>triggerPassiveEvent('ally_death', unit));
+    }
 
     async function processEndTurnAbnormalitiesOffline() {
       [...battleState.playerUnits,...battleState.enemyUnits].forEach(u=>{
@@ -7196,7 +7514,7 @@
           logBattle(`☠️ ${u.name} は毒で ${dmg} ダメージ！`);
           showActionPopup(u,'毒',{cardType:'unit',name:u.name,image:getCardImage(u)||u.image,hp:u.maxHp,atk:getEffectiveAtk(u),prio:getEffectiveSpeed(u)},{target:u.name,effect:'最大HPの10%ダメージ',result:`${dmg} ダメージ${u.currentHp<=0?'／撃破！':''}`,targetEntity:u,targetHpBefore:{current:before,max:u.maxHp},targetHpAfter:{current:u.currentHp,max:u.maxHp},description:'毒：ターン終了間際に最大HPの10%のダメージ。シールドを貫通する。'});
           if(dmg>0) triggerPassiveEvent('hp_decrease',u);
-          if(u.currentHp<=0&&before>0){triggerPassiveEvent('death',u);[...getActiveUnits(u.side==='player'?'player':'enemy')].filter(x=>x!==u).forEach(x=>triggerPassiveEvent('ally_death',x));}
+          if(u.currentHp<=0&&before>0){triggerPassiveEvent('death',u);triggerAllyDeathPassives(u.side, u);}
         }
         if (u.currentHp > 0 && (u.statuses||[]).some(x=>x.type==='burn'&&durationActive(x.duration))) {
           const before=u.currentHp;
@@ -7229,7 +7547,7 @@
         if (u.currentHp < before) triggerPassiveEvent('hp_decrease', u);
         if (before > 0 && u.currentHp <= 0) {
           triggerPassiveEvent('death', u);
-          [...getActiveUnits(u.side === 'player' ? 'player' : 'enemy')].filter(x=>x!==u).forEach(x=>triggerPassiveEvent('ally_death',x));
+          triggerAllyDeathPassives(u.side, u);
         }
       });
     }

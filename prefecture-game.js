@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.35 — card roles, attack tuning, and star-rank limits */
+/* 都道府県カード戦争 v1.0.37 — strategic combat lookahead, role-aware tactics, and speed-ordered passive batches */
 'use strict';
 
 let campaignState = null;
@@ -152,8 +152,41 @@ function prefCardEffectNodes(card) {
   walk(card?.skills||[]);walk(card?.effect||null);walk(card?.effects||null);
   return out;
 }
+function prefApThresholdPassiveEffectScore(effect,targetType='self') {
+  if(!effect||effect.type==='none')return 0;
+  const type=String(effect.type||''),val=Math.abs(Number(effect.val)||0);let score=0;
+  if(type==='dmg_atk_ratio')score=3.0+Math.min(3,val/60);
+  else if(type==='dmg_fixed'||type==='dmg_fixed_pierce')score=1.5+Math.min(3,val/700);
+  else if(type==='mod_atk_ratio')score=2.5+Math.min(3,val/30);
+  else if(type==='mod_atk_val'||type==='mod_speed')score=2+Math.min(3,val/35);
+  else if(type==='shield')score=2+Math.min(3,val/700);
+  else if(type==='heal_fixed')score=1.5+Math.min(2.5,val/900);
+  else if(type==='heal_max_hp_ratio')score=1.8+Math.min(2.5,val/30);
+  else if(type==='mod_ap')score=2+Math.min(3,val/10);
+  else if(type==='damage_taken_ratio'||type==='damage_cut_ratio')score=2+Math.min(3,val/25);
+  else if(type==='status_apply')score=['freeze','paralysis','pressure'].includes(String(effect.status||''))?4.5:['taunt','provoke'].includes(String(effect.status||''))?3:2;
+  else if(type==='skill_block')score=4;
+  else if(type==='heal_block')score=2.5;
+  else if(['clear_buffs','clear_debuffs','clear_statuses','clear_random_buffs','clear_random_debuffs','status_remove','mod_max_hp_val'].includes(type))score=2;
+  if(['all_enemy','all_ally','all_field'].includes(String(targetType||'')))score*=1.45;
+  return Math.min(8,score);
+}
+function prefCardApThresholdPassiveValue(card) {
+  const skills=Array.isArray(card?.skills)?card.skills:[];
+  if(!skills.some(s=>s?.type==='active'&&Number(s.cost||0)>0))return 0;
+  let total=0;
+  for(const sk of skills){
+    if(sk?.type!=='passive'||sk?.selfCond?.type!=='ap_val_gte')continue;
+    const threshold=Number(sk.selfCond.val)||0;if(threshold<40||threshold>100)continue;
+    const chance=Math.max(0,Math.min(100,Number(sk.chance??100)))/100;
+    let value=prefApThresholdPassiveEffectScore(sk.mainEffect,sk.targetType);
+    if(sk.hasSubEffect&&sk.subEffect)value+=prefApThresholdPassiveEffectScore(sk.subEffect,sk.subEffect.targetType||'same_main_target')*0.62;
+    if(value>=3)total+=value*chance*(0.7+Math.min(0.3,threshold/250));
+  }
+  return Math.min(10,total);
+}
 function prefCardProfile(card) {
-  if(!card)return {tags:new Set(),mainAttr:'',subAttrs:[],supportsAttrs:[],activeCosts:[],maxCost:0,skillCount:0,passiveCount:0,atk:0,hp:0,rank:1};
+  if(!card)return {tags:new Set(),mainAttr:'',subAttrs:[],supportsAttrs:[],activeCosts:[],maxCost:0,skillCount:0,passiveCount:0,atk:0,hp:0,rank:1,role:'',apThresholdPassiveValue:0};
   const tags=new Set(),costs=[],supportsAttrs=new Set();const nodes=prefCardEffectNodes(card);const skills=Array.isArray(card.skills)?card.skills:[];
   const addAttr=value=>{if(typeof value==='string'&&value.trim()&&!['none','any','all','null','undefined'].includes(value.trim().toLowerCase()))supportsAttrs.add(value.trim());};
   const tagNode=(n)=>{
@@ -176,6 +209,8 @@ function prefCardProfile(card) {
   };
   nodes.forEach(tagNode);
   if(skills.some(s=>s.type==='passive'))tags.add('passive_chain');
+  const apThresholdPassiveValue=prefCardApThresholdPassiveValue(card);
+  if(apThresholdPassiveValue>=3)tags.add('ap_threshold_passive');
   if(skills.some(s=>s.hasSubEffect||s.subEffect))tags.add('extra_effect');
   if(skills.some(s=>Number(s.cost||0)>=25))tags.add('heavy_cost');
   if(skills.some(s=>Number(s.cost||0)<=10))tags.add('low_cost');
@@ -192,7 +227,7 @@ function prefCardProfile(card) {
   const atk=Number(card.stats?.atk||0),hp=Number(card.stats?.hp||0),rank=prefRankStars(card);
   if(rank>=4)tags.add('high_rank');if(atk>0)tags.add('attack_role');if(hp>0&&card.cardType!=='magic')tags.add('unit');
   const subs=Array.isArray(card.subAttrs)?card.subAttrs.map(x=>typeof x==='string'?x:(x?.name||x?.id||x?.value||'')).filter(Boolean):[];
-  return {tags,mainAttr:String(card.mainAttr||''),subAttrs:subs,supportsAttrs:[...supportsAttrs],activeCosts:costs,maxCost:Math.max(0,...costs),skillCount:skills.length+(card.effect?1:0),passiveCount:skills.filter(s=>s.type==='passive').length,atk,hp,rank};
+  return {tags,mainAttr:String(card.mainAttr||''),subAttrs:subs,supportsAttrs:[...supportsAttrs],activeCosts:costs,maxCost:Math.max(0,...costs),skillCount:skills.length+(card.effect?1:0),passiveCount:skills.filter(s=>s.type==='passive').length,atk,hp,rank,role:String(card.role||''),apThresholdPassiveValue};
 }
 function prefCardPreferenceScore(region,card) {
   const profile=prefAIProfileForRegion(region);const cp=prefCardProfile(card);let score=0;
@@ -2279,6 +2314,18 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     const activeCards=selected.map(x=>x.card);const activeIds=selected.map(x=>x.inst.id);const reserve=cards.filter(x=>!activeIds.includes(x.inst.id));
     let score=0;const allActiveTags=new Set();
     activeCards.forEach(card=>{score+=prefCardIntrinsicScore(region,card)+prefCardStrategyScore(region,card)+prefCardPreferenceScore(region,card)+prefAIPlanFitScore(region,card);prefCardProfile(card).tags.forEach(t=>allActiveTags.add(t));});
+    const activeRoles=activeCards.map(c=>String(c.role||'')).filter(Boolean);
+    const hasAttacker=activeRoles.includes('attacker'),hasController=activeRoles.includes('controller'),hasDefender=activeRoles.includes('defender');
+    // Roles are guidance, not a forced trinity: three attackers remain a valid composition.
+    if(hasAttacker&&hasDefender)score+=1.8;
+    if(hasAttacker&&hasController)score+=1.2;
+    if(hasDefender&&hasController&&!hasAttacker)score-=0.6;
+    // AP-threshold passives often need a high bank. Prefer keeping an expensive caster in reserve
+    // when active use would compete with that passive; harmless/free-skill passives are not tagged.
+    const apBankRisk=activeCards.reduce((sum,c)=>sum+prefCardProfile(c).apThresholdPassiveValue,0);
+    score-=apBankRisk*(0.9+0.4*profile.cardIQ/100);
+    const reserveApBankValue=reserve.reduce((sum,r)=>sum+prefCardProfile(r.card).apThresholdPassiveValue,0);
+    score+=reserveApBankValue*(0.7+0.25*profile.cardIQ/100);
     // Score only pairs actually co-deployed. Unselected cards no longer falsely create synergy for every candidate.
     for(let i=0;i<activeCards.length;i++)for(let j=i+1;j<activeCards.length;j++)score+=pair(activeCards[i],activeCards[j]);
     mags.forEach(m=>activeCards.forEach(c=>score+=pair(m,c)*0.75));
@@ -2300,9 +2347,10 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
   const shortlist=scoredBuilds.slice(0,3);let best=shortlist[0];
   if(shortlist.length>1){const top=shortlist[0].score;const near=shortlist.filter(x=>top-x.score<=3);if(near.length>1)best=near[Math.floor(Math.random()*near.length)];}
   const active=best?.active||units.slice(0,3).map(x=>x.id);const reserve=units.map(x=>x.id).filter(id=>!active.includes(id)).slice(0,2);
-  const reasons=[`カード選びの賢さ${profile.cardIQ}/100で構築候補を評価`,`主戦術「${(PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)||{}).label||'対応型'}」と副戦術を反映`,`AP効率・役割補完・パッシブ・条件・属性・マジックとの組み合わせを評価`,`候補${candidateSets.length}案を効果解析で評価し、上位${shortlist.length}案を3つの想定戦況（速攻・長期戦・連携成立）で平均比較`];
+  const reservedApThresholdCards=reserve.filter(id=>prefCardProfile(cardById(id)).apThresholdPassiveValue>=3).map(id=>cardById(id)?.name||'AP条件パッシブ持ち');
+  const reasons=[`カード選びの賢さ${profile.cardIQ}/100で構築候補を評価`,`主戦術「${(PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)||{}).label||'対応型'}」と副戦術を反映`,`AP効率・役割補完・パッシブ・条件・属性・マジックとの組み合わせを評価`,`自己永続強化・数ターン先の行動価値と役割間の保護連携を評価`,`AP条件パッシブは有用性と必要APを見て、APを温存しやすい控え配置も評価`,...(reservedApThresholdCards.length?[`AP条件パッシブを持つ控え候補：${reservedApThresholdCards.join('、')}`]:[]),`候補${candidateSets.length}案を効果解析で評価し、上位${shortlist.length}案を3つの想定戦況（速攻・長期戦・連携成立）で平均比較`];
   if(opponentIntel?.confidence>0.15)reasons.push(`調査・対戦記憶の情報を対策に使用（信頼度${Math.round(opponentIntel.confidence*100)}%）`);
-  prefRecordAIThought(region,'編成構築','出撃メンバーを選出',reasons,{activeNames:best?.activeNames||active.map(id=>cardById(id)?.name||'キャラ'),score:best?.score,alternatives:shortlist.map(x=>({names:x.activeNames,score:Math.round(x.score*10)/10,scenarioMean:Math.round((x.scenarioMean||0)*10)/10,scenarios:x.scenarios,attributes:x.attrs})),opponentId:opponentId||null,opponentIntelConfidence:opponentIntel?.confidence||0});
+  prefRecordAIThought(region,'編成構築','出撃メンバーを選出',reasons,{activeNames:best?.activeNames||active.map(id=>cardById(id)?.name||'キャラ'),reserveNames:reserve.map(id=>cardById(id)?.name||'キャラ'),apThresholdReserveNames:reservedApThresholdCards,score:best?.score,alternatives:shortlist.map(x=>({names:x.activeNames,score:Math.round(x.score*10)/10,scenarioMean:Math.round((x.scenarioMean||0)*10)/10,scenarios:x.scenarios,attributes:x.attrs})),opponentId:opponentId||null,opponentIntelConfidence:opponentIntel?.confidence||0});
   return prefNormalizeLoadoutSelection(active.slice(0,3),reserve.slice(0,2),units);
 }
 function prefDefaultLoadoutFallback(regionId) {
