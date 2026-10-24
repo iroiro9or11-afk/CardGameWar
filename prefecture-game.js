@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.39 — diminishing returns for permanent buffs and frontline-aware loadout scoring */
+/* 都道府県カード戦争 v1.0.40 — diminishing returns for permanent buffs and frontline-aware loadout scoring */
 'use strict';
 
 let campaignState = null;
