@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.40</title>
+  <title>都道府県カード戦争 v1.0.41</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -307,7 +307,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.40</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.41</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -2977,7 +2977,7 @@
         const payload = {
           format: 'prefecture-card-war-card-data',
           formatVersion: 1,
-          gameVersion: '1.0.40',
+          gameVersion: '1.0.41',
           exportedAt: exportedAt.toISOString(),
           intendedUse: 'このJSONと同じバージョンのゲームZIPを参照し、カードの性能・スキル・効果条件・組み合わせを検証する',
           imagesIncluded: false,
@@ -3000,13 +3000,13 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.40-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.41-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
         window.setTimeout(() => URL.revokeObjectURL(objectUrl), 15000);
-        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.40 ZIP と一緒にChatGPTへアップロードしてください。`);
+        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.41 ZIP と一緒にChatGPTへアップロードしてください。`);
       } catch (error) {
         console.error('[CardDataExport] カードデータの書き出しに失敗しました', error);
         alert(`カードデータの書き出しに失敗しました。\n${String(error?.message || error)}`);
@@ -6354,6 +6354,91 @@
       return Math.max(0, Math.min(650, value));
     }
 
+    // 回復と行動阻害を同時に与えるスキルは、回復量だけで選ばない。
+    // とくに「しばし休んでいくと良い」のような全回復＋凍結は、
+    // 低HPの挑発役を延命する用途を優先し、攻撃役の行動を奪う乱用を抑える。
+    function aiPlannerHealControlTradeoffPenalty(state, actor, candidate, skillOverride = null) {
+      if (!state || !actor || !candidate) return 0;
+      const skill = skillOverride || candidate.skill || candidate.card?.effect;
+      if (!skill?.hasSubEffect || !skill.subEffect) return 0;
+      const main = skill.mainEffect || {}, sub = skill.subEffect || {};
+      const heals = ['heal_fixed','heal_max_hp_ratio'].includes(String(main.type || ''));
+      if (!heals || sub.type !== 'status_apply' || !['freeze','paralysis'].includes(String(sub.status || ''))) return 0;
+      const subTargetType = sub.targetType || 'same_main_target';
+      if (subTargetType !== 'same_main_target') return 0;
+      const targetId = candidate.targetInstanceId;
+      const target = aiPlannerFindUnit(state, targetId);
+      if (!target || target.side !== actor.side || target.currentHp <= 0) return 0;
+      const missing = Math.max(0, Number(target.maxHp || 0) - Number(target.currentHp || 0));
+      const ratio = Number(target.currentHp || 0) / Math.max(1, Number(target.maxHp || 1));
+      const healAmount = main.type === 'heal_max_hp_ratio'
+        ? Math.min(missing, Number(target.maxHp || 0) * Math.max(0, Number(main.val || 0)) / 100)
+        : Math.min(missing, Math.max(0, Number(main.val || 0)));
+      if (healAmount <= 0) return 260; // 凍結だけ残るなら原則使わない。
+      const role = isValidUnitRole(target.role) ? target.role : inferUnitRoleFromSkills(target.skills || [], {hp:target.maxHp,atk:target.atk,priority:target.priority});
+      const hasTaunt = aiPlannerHasStatus(target, 'taunt') || aiPlannerHasStatus(target, 'provoke') ||
+        (target.skills || []).some(sk => sk?.type === 'passive' && sk.mainEffect?.type === 'status_apply' && ['taunt','provoke'].includes(String(sk.mainEffect.status || '')));
+      const actorAlreadyActed = aiPlannerEffectiveSpeed(target) >= aiPlannerEffectiveSpeed(actor);
+      const enemies = aiPlannerActive(state, target.side === 'player' ? 'enemy' : 'player');
+      const incoming = enemies.reduce((sum, enemy) => sum + Math.max(0, aiPlannerEffectiveAtk(enemy) * 0.8), 0) / Math.max(1, enemies.length);
+      const likelyToDie = target.currentHp <= incoming * 1.15;
+      // Emergency save may justify losing an attack; ordinary top-off does not.
+      let penalty = role === 'attacker' ? 980 : role === 'controller' ? 760 : 600;
+      if (ratio <= 0.25 || likelyToDie) penalty *= 0.58;
+      else if (ratio <= 0.45) penalty *= 0.78;
+      else if (ratio >= 0.80) penalty += 220;
+      if (hasTaunt && role !== 'attacker') penalty *= 0.28;
+      else if (hasTaunt) penalty *= 0.68;
+      if (actorAlreadyActed && Number(sub.duration) === 1) penalty *= 0.25;
+      // Non-taunting attackers/controllers are not normal targets for full-heal + freeze.
+      // Only a genuine survival emergency can justify suppressing their action.
+      if (!hasTaunt && !likelyToDie && ratio > 0.25) {
+        penalty = Math.max(penalty, role === 'attacker' ? 1280 : 980);
+      }
+      if (!hasTaunt && likelyToDie && role === 'attacker') penalty = Math.max(penalty, 680);
+      return Math.max(0, Math.min(1450, penalty));
+    }
+
+    // バッファーが先にAPを使うことで、次ターンに主力が20～30AP技を強化付きで撃てる
+    // 展開を潰す場合は、現在のバフ価値から「待つ価値」を差し引く。
+    function aiPlannerBuffTimingOpportunityPenalty(state, side, actor, candidate, afterState, futureActorIds = []) {
+      if (!state || !actor || !candidate || candidate.type !== 'skill') return 0;
+      const skill = candidate.skill || {};
+      const cost = Math.max(0, Number(candidate.cost ?? skill.cost) || 0);
+      if (cost <= 0) return 0;
+      const effects = [skill.mainEffect, skill.hasSubEffect ? skill.subEffect : null].filter(Boolean);
+      const buffsAttacker = effects.some(e => ['mod_atk_ratio','mod_atk_val','mod_speed'].includes(String(e.type || '')) && Number(e.val || 0) > 0);
+      if (!buffsAttacker) return 0;
+      const target = aiPlannerFindUnit(state, candidate.targetInstanceId);
+      if (!target || target.side !== side) return 0;
+      const role = isValidUnitRole(target.role) ? target.role : inferUnitRoleFromSkills(target.skills || [], {hp:target.maxHp,atk:target.atk,priority:target.priority});
+      if (role !== 'attacker') return 0;
+      const beforeKey = side === 'player' ? 'playerAp' : 'enemyAp';
+      const beforeAp = Math.max(0, Number(state[beforeKey]) || 0);
+      const afterAp = Math.max(0, Number(afterState?.[beforeKey]) || Math.max(0, beforeAp - cost));
+      const futureAp = Math.min(100, afterAp + 20);
+      let strongestAffordableLater = 0;
+      let strongestNow = 0;
+      for (const sk of target.skills || []) {
+        if (sk?.type !== 'active' || !aiPlannerCondition(sk.selfCond, target, state)) continue;
+        const eff = sk.mainEffect || {};
+        if (!['dmg_atk_ratio','dmg_fixed','dmg_fixed_pierce'].includes(String(eff.type || ''))) continue;
+        const skCost = Math.max(0, Number(sk.cost) || 0) + (aiPlannerHasStatus(target,'pressure') ? 5 : 0);
+        const multiplier = eff.type === 'dmg_atk_ratio' ? Number(eff.val || 0) : Number(eff.val || 0) / Math.max(1, Number(target.atk) || 1);
+        const value = Math.max(0, multiplier) * Math.max(1, Number(target.atk) || 1);
+        if (skCost <= beforeAp) strongestNow = Math.max(strongestNow, value);
+        if (skCost > afterAp && skCost <= futureAp) strongestAffordableLater = Math.max(strongestAffordableLater, value);
+      }
+      if (strongestAffordableLater <= 0 || strongestAffordableLater <= strongestNow) return 0;
+      // Delay the support action when spending now blocks the next-turn burst and the current
+      // turn has no meaningful affordable attack on the buff target.
+      const currentTargetCanUseSkill = (target.skills || []).some(sk => sk?.type === 'active' &&
+        ['dmg_atk_ratio','dmg_fixed','dmg_fixed_pierce'].includes(String(sk.mainEffect?.type || '')) &&
+        Math.max(0, Number(sk.cost) || 0) <= afterAp && aiPlannerCondition(sk.selfCond, target, state));
+      if (currentTargetCanUseSkill) return 0;
+      return Math.min(620, 220 + strongestAffordableLater * 0.12);
+    }
+
     function aiPlannerApOpportunityPenalty(state, side, actor, candidate, afterState, futureActorIds = []) {
       if (!candidate || !afterState || !['skill','magic'].includes(candidate.type)) return 0;
       const beforeKey = side === 'player' ? 'playerAp' : 'enemyAp';
@@ -6507,8 +6592,10 @@
         const comboThreshold=checksThreshold?aiPlannerThresholdComboBonus(state,copy,side):0;
         const repeatBuffPenalty=aiPlannerRepeatedPermanentBuffPenalty(state,actor,c);
         const controlRiskPenalty=aiPlannerFriendlyControlRiskPenalty(state,actor,c);
+        const healControlPenalty=aiPlannerHealControlTradeoffPenalty(state,actor,c);
+        const buffTimingPenalty=aiPlannerBuffTimingOpportunityPenalty(state,side,actor,c,copy,futureActorIds);
         const apOpportunityPenalty=aiPlannerApOpportunityPenalty(state,side,actor,c,copy,futureActorIds);
-        return { c, score: delta + (r.kills || 0) * 250 + strat + tactical + selfHarm + roleAdjustment + comboThreshold - repeatBuffPenalty - controlRiskPenalty - apOpportunityPenalty + aiEvaluationError(side) };
+        return { c, score: delta + (r.kills || 0) * 250 + strat + tactical + selfHarm + roleAdjustment + comboThreshold - repeatBuffPenalty - controlRiskPenalty - healControlPenalty - buffTimingPenalty - apOpportunityPenalty + aiEvaluationError(side) };
       }).sort((a,b) => b.score - a.score);
       const keep = Math.max(3,Math.min(8,3+Math.round(getAiTacticalIQ(side)*0.05)));
       return scored.slice(0, Math.min(keep, scored.length)).map(x => x.c);
@@ -6800,10 +6887,12 @@
             const stateDelta = aiPlannerEvaluateStateBase(copy,side,false)-baseValue;
             const strategy = aiStrategyScoreAdjustment(side,sk.mainEffect,cost,'skill',u);
             const risk = aiPlannerFriendlyControlRiskPenalty(plannerState,plannerActor,candidate);
+            const healControl = aiPlannerHealControlTradeoffPenalty(plannerState,plannerActor,candidate);
+            const buffTiming = aiPlannerBuffTimingOpportunityPenalty(plannerState,side,plannerActor,candidate,copy,futureActorIds);
             const repeat = aiPlannerRepeatedPermanentBuffPenalty(plannerState,plannerActor,candidate);
             const apOpportunity = aiPlannerApOpportunityPenalty(plannerState,side,plannerActor,candidate,copy,futureActorIds);
             const roleAdjustment = aiPlannerRoleActionAdjustment(plannerState,copy,side,candidate,plannerActor,result);
-            const score = stateDelta+(result.kills||0)*250+strategy+roleAdjustment-risk-repeat-apOpportunity+aiPlannerEstimatePassiveSetupBonus(side,u,sk)+aiEvaluationError(side);
+            const score = stateDelta+(result.kills||0)*250+strategy+roleAdjustment-risk-healControl-buffTiming-repeat-apOpportunity+aiPlannerEstimatePassiveSetupBonus(side,u,sk)+aiEvaluationError(side);
             if (score > bestScore) { bestScore=score; bestOption=option; }
           }
           if (bestOption) usable.push({sIdx,sk,candidates:liveCandidates,score:bestScore,targetInstanceId:bestOption.targetInstanceId||null,subTargetInstanceId:bestOption.subTargetInstanceId||null});
