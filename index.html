@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.34</title>
+  <title>都道府県カード戦争 v1.0.35</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -307,7 +307,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.34</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.35</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -447,6 +447,16 @@
                 <label class="block text-xs font-semibold text-slate-400 mb-1">サブ属性2</label>
                 <input type="text" id="edit-sub2" list="registered-attributes-list" value="" oninput="sanitizeSubAttributeInput(this)" class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs">
               </div>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-300 mb-1">キャラクターの役割</label>
+              <select id="edit-unit-role" onchange="updatePreview()" class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs">
+                <option value="auto">スキル効果から自動判定</option>
+                <option value="attacker">🔴 アタッカー（攻撃）</option>
+                <option value="controller">🔵 コントローラー（バフ・デバフ）</option>
+                <option value="defender">🟢 ディフェンダー（回復・シールド・タンク）</option>
+              </select>
+              <p class="text-[10px] text-slate-500 mt-1">自動判定は主効果・追加効果を基に行います。必要に応じて手動で変更できます。</p>
             </div>
             <div>
               <label class="block text-xs font-semibold text-slate-400 mb-1">画像アップロード</label>
@@ -1847,6 +1857,48 @@
       }
     }
 
+    const UNIT_ROLE_META = {
+      attacker: {label:'アタッカー', color:'#ef4444'},
+      controller: {label:'コントローラー', color:'#3b82f6'},
+      defender: {label:'ディフェンダー', color:'#22c55e'}
+    };
+    function isValidUnitRole(role) { return Object.prototype.hasOwnProperty.call(UNIT_ROLE_META, String(role||'')); }
+    function inferUnitRoleFromSkills(skills, stats={}) {
+      const score={attacker:0,controller:0,defender:0};
+      const addEffect=(effect)=>{
+        if(!effect || typeof effect!=='object')return;
+        const type=String(effect.type||'none'),status=String(effect.status||'').toLowerCase();
+        if(['dmg_atk_ratio','dmg_fixed','dmg_fixed_pierce'].includes(type)) score.attacker+=5;
+        else if(['heal_fixed','heal_max_hp_ratio','shield','revive'].includes(type)) score.defender+=4;
+        else if(type==='mod_max_hp_val') { if(Number(effect.val)>0)score.defender+=4; else score.controller+=3; }
+        else if(type==='status_apply' && ['taunt','provoke'].includes(status)) score.defender+=5;
+        else if(type==='damage_taken_ratio') { if(Number(effect.val)<0)score.defender+=3; else score.controller+=2; }
+        else if(type==='mod_ap') score.controller+=4;
+        else if(['mod_atk_ratio','mod_atk_val','mod_speed','mod_ap','sub_chance_mod','status_apply','status_remove','clear_statuses','clear_buffs','clear_debuffs','clear_random_buffs','clear_random_debuffs','heal_block','skill_block','hp_decrease','hp_increase'].includes(type)) score.controller+=3;
+        else if(['dmg_fixed_pierce'].includes(type)) score.attacker+=5;
+      };
+      (Array.isArray(skills)?skills:[]).forEach(skill=>{if(!skill || skill.type==='none')return;addEffect(skill.mainEffect);if(skill.hasSubEffect)addEffect(skill.subEffect);});
+      const highest=Math.max(score.attacker,score.controller,score.defender);
+      if(highest>0){
+        // Tie-break in favour of the role with the largest individual impact, then a clear role order.
+        if(score.defender===highest)return 'defender';
+        if(score.controller===highest)return 'controller';
+        return 'attacker';
+      }
+      const hp=Number(stats?.hp)||3000, atk=Number(stats?.atk)||1500;
+      return atk>=hp*0.4?'attacker':'defender';
+    }
+    function inferUnitRoleFromEditorUI(stats={}) {
+      const skills=[];
+      document.querySelectorAll('#unit-skills-builder .skill-builder-card').forEach(card=>{
+        const idx=card.dataset.index;const type=card.querySelector('.skill-type-select')?.value||'none';if(type==='none')return;
+        const read=(part)=>({type:document.querySelector(`.s${idx}-${part}-type`)?.value||'none',val:Number(document.querySelector(`.s${idx}-${part}-val`)?.value||0),status:document.querySelector(`.s${idx}-${part}-status`)?.value||''});
+        const hasSub=!!document.querySelector(`.s${idx}-has-sub`)?.checked;
+        skills.push({type,mainEffect:read('main-eff'),hasSubEffect:hasSub,subEffect:read('sub-eff')});
+      });
+      return inferUnitRoleFromSkills(skills,stats);
+    }
+
     async function normalizeLoadedCards() {
       const beforeCards = allCards;
       const beforeDecks = allDecks;
@@ -1867,6 +1919,7 @@
           if (JSON.stringify(nextSub) !== JSON.stringify(beforeSub)) { card.subAttrs = nextSub; changed = true; }
           // 作成済みキャラクターでランク未設定のものは、現行仕様の推定ランクを初期ランクとして保存する。
           if (card.rank == null || !Number.isFinite(Number(card.rank)) || Number(card.rank) <= 0) { card.rank=estimateUnitRank(card.stats||{}); changed=true; }
+          if (!isValidUnitRole(card.role)) { card.role=inferUnitRoleFromSkills(card.skills||[],card.stats||{}); changed=true; }
         }
         const normalizeEffectSchema = eff => { if(!eff||typeof eff!=='object')return; if(eff.type==='damage_cut_ratio'){eff.type='damage_taken_ratio';eff.val=-(Number(eff.val)||0);changed=true;} };
         if(Array.isArray(card.skills)) card.skills.forEach(sk=>{normalizeEffectSchema(sk.mainEffect);normalizeEffectSchema(sk.subEffect);});
@@ -1925,6 +1978,8 @@
       const rankCard = data.id ? (Array.isArray(allCards) ? allCards.find(c=>String(c.id)===String(data.id)) : null) : null;
       const rankValue = Number(data.rank ?? data.stats?.rank ?? rankCard?.rank ?? 1);
       const rankStars = Math.max(1, Math.min(5, Math.round(Number.isFinite(rankValue) ? rankValue : 1)));
+      const roleId = isValidUnitRole(data.role) ? data.role : (isValidUnitRole(rankCard?.role) ? rankCard.role : inferUnitRoleFromSkills(data.skills || rankCard?.skills || [], data.stats || {hp:data.hp,atk:data.atk}));
+      const roleMeta = UNIT_ROLE_META[roleId] || UNIT_ROLE_META.attacker;
       if (data.cardType === "magic") {
         const magicPrio = data.prio ?? (data.stats?.priority ?? 999);
         const prioText = magicPrio === 999 ? "最速" : (magicPrio === -999 ? "最遅" : `SPD:${magicPrio}`);
@@ -1944,10 +1999,11 @@
       const unitImgUrl = imgUrl || createDummyCardImage("⚔️", "#334155");
       const attrs = [data.mainAttr, ...(data.subAttrs || [])].filter(Boolean).join("/");
       return `
-        <div ${cardIdAttr} class="card-element card-aspect w-full bg-slate-900 border-2 border-amber-500/60 rounded-xl overflow-hidden shadow-xl flex flex-col relative hover:scale-[1.02] transition-transform cursor-pointer select-none">
+        <div ${cardIdAttr} data-unit-role="${roleId}" style="border-color:${roleMeta.color}" class="card-element card-aspect w-full bg-slate-900 border-2 rounded-xl overflow-hidden shadow-xl flex flex-col relative hover:scale-[1.02] transition-transform cursor-pointer select-none">
           <div class="relative w-full h-[58%] bg-slate-950 overflow-hidden">
             <img src="${unitImgUrl}" onerror="this.onerror=null;this.src=createDummyCardImage('⚔️','#334155')" class="w-full h-full object-cover">
-            <span class="absolute top-1 left-1 bg-slate-950/90 border border-amber-500/40 text-amber-300 text-[9px] px-1.5 py-0.5 rounded font-bold truncate max-w-[85%]">${attrs}</span>
+            <span class="absolute top-1 left-1 bg-slate-950/90 border border-amber-500/40 text-amber-300 text-[9px] px-1.5 py-0.5 rounded font-bold truncate max-w-[70%]">${attrs}</span>
+            <span class="absolute top-1 right-1 text-slate-950 text-[9px] px-1.5 py-0.5 rounded font-black shadow" style="background:${roleMeta.color}">${roleMeta.label}</span>
           </div>
           <div class="h-[42%] bg-gradient-to-b from-slate-900 to-slate-950 px-2 py-1.5 flex flex-col gap-1 border-t border-slate-800">
             <div class="font-black text-sm sm:text-base text-slate-100 text-center truncate">${safeName}</div>
@@ -2400,8 +2456,10 @@
         const prio = clamp(parseInt(document.getElementById("edit-priority").value), 0, 100);
         const rank = clamp(parseInt(document.getElementById("edit-unit-rank")?.value || 3), 1, 5);
         const estimate = estimateUnitRank({hp,atk,priority:prio});
+        const roleChoice=document.getElementById('edit-unit-role')?.value||'auto';
+        const role=roleChoice==='auto'?inferUnitRoleFromEditorUI({hp,atk,priority:prio}):roleChoice;
         const estimateBox = document.getElementById('edit-estimated-rank'); if (estimateBox) estimateBox.textContent = estimate.toFixed(1);
-        container.innerHTML = getCardHTML({ cardType: "unit", name, mainAttr, subAttrs: [sub1, sub2], hp, atk, prio, rank, img: croppedImageData.unit });
+        container.innerHTML = getCardHTML({ cardType: "unit", name, mainAttr, subAttrs: [sub1, sub2], hp, atk, prio, rank, role, img: croppedImageData.unit });
       } else {
         syncMagicCardAndSkillName();
         const name = document.getElementById("edit-magic-name").value || "名称未設定";
@@ -2438,7 +2496,9 @@
       const existing = editingCardId ? allCards.find(c => c.id === editingCardId && c.cardType === 'unit') : null;
       const rank = clamp(parseInt(document.getElementById("edit-unit-rank")?.value || 3), 1, 5);
       const value = Math.max(10000, Number(document.getElementById("edit-unit-value")?.value || 500) * 10000);
-      const card = { id: existing?.id || generateCardId(), cardType: "unit", name, mainAttr, subAttrs, rank, value, image: croppedImageData.unit || existing?.image || image, stats: { hp, atk, priority }, skills };
+      const roleChoice=document.getElementById('edit-unit-role')?.value||'auto';
+      const role=isValidUnitRole(roleChoice)?roleChoice:inferUnitRoleFromSkills(skills,{hp,atk,priority});
+      const card = { id: existing?.id || generateCardId(), cardType: "unit", name, mainAttr, subAttrs, rank, value, role, image: croppedImageData.unit || existing?.image || image, stats: { hp, atk, priority }, skills };
       await saveToStore("cards", card);
       allCards = await getAllFromStore("cards");
       refreshAttributeDatalist();
@@ -2633,7 +2693,7 @@
     function getCardBrowserSettings(context) {
       const key = resolveCardBrowserKey(context);
       if (!cardBrowserSettingsByKey[key]) cardBrowserSettingsByKey[key] = {
-        sort: 'default', direction: 'asc', ranks: null, attrs: null,
+        sort: 'default', direction: 'asc', ranks: null, attrs: null, roles: null,
         magicCategories: null, costBands: null
       };
       return { key, state: cardBrowserSettingsByKey[key] };
@@ -2682,6 +2742,10 @@
           const cardAttrs = [card?.mainAttr, ...(Array.isArray(card?.subAttrs) ? card.subAttrs : [])].filter(Boolean).map(String);
           if (!cardAttrs.some(a => settings.attrs.includes(a))) return false;
         }
+        if (settings.roles !== null) {
+          const role=isValidUnitRole(card?.role)?card.role:inferUnitRoleFromSkills(card?.skills||[],card?.stats||{});
+          if (!settings.roles.includes(role)) return false;
+        }
         return true;
       }
       const cats = cardBrowserMagicCategories(card);
@@ -2725,6 +2789,7 @@
     function cardBrowserFilterOptions(key, group) {
       if (group === 'ranks') return [1,2,3,4,5].map(x=>({value:String(x),label:`${'★'.repeat(x)}${'☆'.repeat(5-x)}`}));
       if (group === 'attrs') return cardBrowserAttributeOptions().map(x=>({value:x,label:x}));
+      if (group === 'roles') return [{value:'attacker',label:'🔴 アタッカー'},{value:'controller',label:'🔵 コントローラー'},{value:'defender',label:'🟢 ディフェンダー'}];
       if (group === 'magicCategories') return ['ダメージ','回復','強化・弱体','状態異常付与','状態異常解除','バフ・デバフ解除','AP操作','その他'].map(x=>({value:x,label:x}));
       if (group === 'costBands') return ['0～1 AP','2～3 AP','4～5 AP','6 AP以上'].map(x=>({value:x,label:x}));
       return [];
@@ -2782,7 +2847,7 @@
       document.getElementById('card-browser-settings-subtitle').textContent = key.startsWith('deck-editor') ? 'デッキ作成・編集のカード選択に適用' : market ? '市場のカード表示に適用' : 'カード一覧の表示に適用';
       const sortHtml = `<section><div class="text-[10px] font-black text-slate-200 mb-2">並び替え</div><div class="flex gap-2"><select data-cb-sort class="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded px-2 py-2 text-xs">${choices.map(([v,label])=>`<option value="${v}" ${state.sort===v?'selected':''}>${label}</option>`).join('')}</select><button type="button" data-cb-action="direction" class="px-3 py-2 rounded bg-amber-600 hover:bg-amber-500 text-slate-950 text-xs font-black">${state.direction==='asc'?'昇順 ↑':'降順 ↓'}</button></div><div class="text-[9px] text-slate-500 mt-1">${state.sort==='default'?'デフォルト順は登録・保存順です。':'選択した項目を数値または名前で並べ替えます。'}</div></section>`;
       const filterHtml = unit
-        ? renderCardBrowserFilterGroup(key,state,'ranks','表示するランク') + renderCardBrowserFilterGroup(key,state,'attrs','表示する属性（メイン／サブ属性）')
+        ? renderCardBrowserFilterGroup(key,state,'ranks','表示するランク') + renderCardBrowserFilterGroup(key,state,'attrs','表示する属性（メイン／サブ属性）') + renderCardBrowserFilterGroup(key,state,'roles','表示する役割')
         : renderCardBrowserFilterGroup(key,state,'magicCategories','表示する効果カテゴリ') + renderCardBrowserFilterGroup(key,state,'costBands','表示する消費AP帯');
       body.innerHTML = sortHtml + `<div class="border-t border-slate-700 pt-3 space-y-4">${filterHtml}</div>`;
       positionCardBrowserSettingsPopup();
@@ -2912,7 +2977,7 @@
         const payload = {
           format: 'prefecture-card-war-card-data',
           formatVersion: 1,
-          gameVersion: '1.0.34',
+          gameVersion: '1.0.35',
           exportedAt: exportedAt.toISOString(),
           intendedUse: 'このJSONと同じバージョンのゲームZIPを参照し、カードの性能・スキル・効果条件・組み合わせを検証する',
           imagesIncluded: false,
@@ -2935,13 +3000,13 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.34-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.35-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
         window.setTimeout(() => URL.revokeObjectURL(objectUrl), 15000);
-        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.34 ZIP と一緒にChatGPTへアップロードしてください。`);
+        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.35 ZIP と一緒にChatGPTへアップロードしてください。`);
       } catch (error) {
         console.error('[CardDataExport] カードデータの書き出しに失敗しました', error);
         alert(`カードデータの書き出しに失敗しました。\n${String(error?.message || error)}`);
@@ -3067,6 +3132,7 @@
         document.getElementById('edit-atk').value = 1500;
         document.getElementById('edit-priority').value = 50;
         document.getElementById('edit-unit-rank').value = '3';
+        if (document.getElementById('edit-unit-role')) document.getElementById('edit-unit-role').value = 'auto';
         if (document.getElementById('edit-unit-value')) document.getElementById('edit-unit-value').value = 500;
         document.querySelectorAll('#unit-skills-builder .skill-builder-card').forEach((card,i)=>{
           const sel=card.querySelector('.skill-type-select'); sel.value=i===0?'active':'none'; toggleSkillTypeUI(sel);
@@ -3101,7 +3167,7 @@
       if(card.cardType==='unit') {
         document.getElementById('edit-name').value=card.name||''; document.getElementById('edit-main-attr').value=card.mainAttr||'人間'; if(document.getElementById('edit-unit-value')) document.getElementById('edit-unit-value').value=Math.max(1,Math.round(Number(card.value||5000000)/10000));
         document.getElementById('edit-sub1').value=card.subAttrs?.[0]||''; document.getElementById('edit-sub2').value=card.subAttrs?.[1]||'';
-        document.getElementById('edit-hp').value=card.stats?.hp||3000; document.getElementById('edit-atk').value=card.stats?.atk||1500; document.getElementById('edit-priority').value=card.stats?.priority??50; document.getElementById('edit-unit-rank').value=String(rankStarCount(card.rank ?? estimateUnitRank(card.stats))); 
+        document.getElementById('edit-hp').value=card.stats?.hp||3000; document.getElementById('edit-atk').value=card.stats?.atk||1500; document.getElementById('edit-priority').value=card.stats?.priority??50; document.getElementById('edit-unit-rank').value=String(rankStarCount(card.rank ?? estimateUnitRank(card.stats))); if(document.getElementById('edit-unit-role'))document.getElementById('edit-unit-role').value=isValidUnitRole(card.role)?card.role:'auto'; 
         document.querySelectorAll('#unit-skills-builder .skill-builder-card').forEach((box,i)=>{
           const sk=card.skills?.[i]; const sel=box.querySelector('.skill-type-select'); sel.value=sk?.type||'none'; toggleSkillTypeUI(sel); if(sk) populateSkillEditor(`s${i+1}`,sk,sk.type,false);
         });
@@ -5588,7 +5654,8 @@
       const targetList = aiPlannerSingleTarget(state, enemies, actor, 'random_enemy_1', targetId);
       const actualTarget = targetList[0];
       if (!actualTarget) return { value: -20, kills: 0, damage: 0, healing: 0 };
-      const raw = aiPlannerEffectiveAtk(actor);
+      // AIの戦術評価も実戦と同じ通常攻撃0.8倍を使用する。
+      const raw = Math.round(aiPlannerEffectiveAtk(actor) * 0.8);
       const before = actualTarget.currentHp;
       const afterCut = aiPlannerDamageAfterCut(actualTarget, raw);
       const actual = aiPlannerAbsorbShield(actualTarget, afterCut, false);
@@ -6552,7 +6619,8 @@
         const target = resolveSingleTargetRuntime(enemies, 'random_enemy_1', unit, null)[0];
         if (!target) { logBattle(`⚠️ ${unit.name} の通常攻撃は隠密に阻まれた！`); return; }
         recordCampaignBattleAction(unit,act,target.name,'通常攻撃実行');
-        const raw = getEffectiveAtk(unit);
+        // 通常攻撃はゲームモード・ストーリー・検証ラボ共通で基礎攻撃力の80%。
+        const raw = Math.round(getEffectiveAtk(unit) * 0.8);
         const actorHpBefore = { current: unit.currentHp, max: unit.maxHp };
         const before = target.currentHp;
         const damageResult = dealDamage(target, raw);

@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.34 — card data export for analysis */
+/* 都道府県カード戦争 v1.0.35 — card roles, attack tuning, and star-rank limits */
 'use strict';
 
 let campaignState = null;
@@ -38,7 +38,7 @@ const PREF_REGIONS = [
  '熊本県','大分県','宮崎県','鹿児島県','沖縄県'
 ];
 const PREF_RANK_COUNTS = [{tier:'S',count:1},{tier:'A',count:3},{tier:'B',count:5},{tier:'C',count:10},{tier:'D',count:10},{tier:'E',count:18}];
-const PREF_RANK_UNIT_RECIPE = { S:[5,5,5,5,5], A:[5,5,4,4,4], B:[5,4,4,4,4], C:[4,4,4,4,4], D:[4,4,4,3,3], E:[4,3,3,3,3] };
+const PREF_RANK_UNIT_RECIPE = { S:[5,4,4,4,4], A:[5,4,4,4,3], B:[5,4,4,3,3], C:[5,4,3,3,3], D:[5,3,3,3,3], E:[5,3,3,3,3] };
 const PREF_TIER_VALUE = { S:6, A:5, B:4, C:3, D:2, E:1 };
 const PREF_TIER_COLORS = { S:'text-fuchsia-200 bg-fuchsia-950/70 border-fuchsia-500/50', A:'text-amber-200 bg-amber-950/70 border-amber-500/50', B:'text-cyan-200 bg-cyan-950/70 border-cyan-500/50', C:'text-emerald-200 bg-emerald-950/70 border-emerald-500/50', D:'text-slate-200 bg-slate-800/70 border-slate-600', E:'text-slate-300 bg-slate-900 border-slate-700' };
 const PREF_NAMES = ['ヤマダタロウ','サトウハナコ','スズキレン','タナカユウ','イトウミサキ','ワタナベカイト','ナカムラアオイ','コバヤシハル','カトウユナ','ヨシダソウタ','エミリージャクソン','アレックスカーター','オリビアベネット','ノアウィリアムズ','ソフィアミラー','リアムデイビス','ルナヴァイス','カイヴァルグ','エルナフェリス','ゼノアルカ','ミリアローゼ','レオンハルト','アリアクロウ','ユリウスノクス','セラフィナ','ガブリエルロウ','ミカエルヴェイン','クロエマルタン','イザベルデュラン','エンゾロッシ','ニコラスグレイ','エヴァンストーン','ハナミズキ','カミヤシオン','ホシノミナト','クガレイ','キリサキユウト','ミナセアキラ','アサクラヒナ','フジサワトオル','リリィスター','レイヴンフォール','ノエルヴァレン','シオンアーク','ミライオリオン','タチバナユキ','カゲヤマジン','アマノセツナ','ルーファスベル','エリスムーン','マコトヤマモト','ナナセユイ','ヴァルタークロイツ'];
@@ -376,6 +376,77 @@ function prefYearMatchText(region) { const s=region?.yearStats||{}; return `${s.
 function prefAbsTurn(state=campaignState) { return Math.max(1, Number(state?.absoluteTurn)||((Number(state?.year||1)-1)*52+Number(state?.week||1))); }
 function prefTierForPosition(pos) { if(pos===1)return 'S'; if(pos<=4)return 'A'; if(pos<=9)return 'B'; if(pos<=19)return 'C'; if(pos<=29)return 'D'; return 'E'; }
 function prefRankStars(card) { return Math.max(1,Math.min(5,Math.round(Number(card?.rank ?? estimateUnitRank(card?.stats||{}))||1))); }
+function prefFiveStarLimit(region) { return region?.isPlayer ? 2 : 1; }
+function prefOwnedFiveStarUnits(regionId) {
+  return prefOwnedUnits(regionId).filter(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))===5);
+}
+function prefCountFiveStarIds(ids, units) {
+  const byId=new Map((units||[]).map(inst=>[String(inst.id),inst]));
+  return [...new Set(ids||[])].filter(id=>{const inst=byId.get(String(id));return !!inst&&prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))===5;}).length;
+}
+function prefNormalizeLoadoutSelection(activeIds, reserveIds, units) {
+  const valid=new Map((units||[]).map(inst=>[String(inst.id),inst]));
+  const active=[],reserve=[],seen=new Set();let hasFive=false;
+  const add=(id,target,max)=>{
+    const key=String(id),inst=valid.get(key);if(!inst||seen.has(key)||target.length>=max)return;
+    const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId),isFive=prefRankStars(card)===5;
+    if(isFive&&hasFive)return;
+    target.push(inst.id);seen.add(key);if(isFive)hasFive=true;
+  };
+  (activeIds||[]).forEach(id=>add(id,active,3));
+  (reserveIds||[]).forEach(id=>add(id,reserve,2));
+  // Fill the field first with non-★5 units; retain the single ★5 slot when available.
+  const remaining=(units||[]).filter(x=>!seen.has(String(x.id)));
+  while(active.length<3){let i=remaining.findIndex(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))!==5);if(i<0&&!hasFive)i=remaining.findIndex(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))===5);if(i<0)break;const inst=remaining.splice(i,1)[0];add(inst.id,active,3);}
+  while(reserve.length<2){let i=remaining.findIndex(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))!==5);if(i<0&&!hasFive)i=remaining.findIndex(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))===5);if(i<0)break;const inst=remaining.splice(i,1)[0];add(inst.id,reserve,2);}
+  return {active,reserve};
+}
+function prefBuildAutoLoadout(units) {
+  const ranked=(units||[]).slice().sort((a,b)=>{const ca=prefCardForInstance(a.id)||prefTemplate(a.templateId),cb=prefCardForInstance(b.id)||prefTemplate(b.templateId);return prefRankStars(cb)-prefRankStars(ca)||prefCardValue(cb)-prefCardValue(ca);});
+  const selected=[];let hasFive=false;
+  for(const inst of ranked){const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId),five=prefRankStars(card)===5;if(five&&hasFive)continue;selected.push(inst.id);if(five)hasFive=true;if(selected.length>=5)break;}
+  return prefNormalizeLoadoutSelection(selected.slice(0,3),selected.slice(3,5),units);
+}
+function prefAiUnitReplacementChoice(region, units, incomingInst) {
+  const incoming=prefCardForInstance(incomingInst?.id)||prefTemplate(incomingInst?.templateId);
+  const fives=(units||[]).filter(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))===5);
+  if(incoming&&prefRankStars(incoming)===5&&fives.length>=prefFiveStarLimit(region))return prefAiReplacementChoice(region,fives,incomingInst);
+  // Rival holders start with one ★5. Do not voluntarily replace that last ★5 with a lower-rank
+  // card during normal market/gacha optimization; losing it in battle remains a real game outcome.
+  if(region&&!region.isPlayer&&fives.length>0&&incoming&&prefRankStars(incoming)<5){
+    const nonFives=(units||[]).filter(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))!==5);
+    if(nonFives.length)return prefAiReplacementChoice(region,nonFives,incomingInst);
+    return incomingInst?.id||null;
+  }
+  return prefAiReplacementChoice(region,units,incomingInst);
+}
+function prefEnforceOwnedStar5Caps() {
+  if(!campaignState?.regions)return false;let changed=false,filledRivals=0;
+  const rank5Templates=prefCardTemplates().filter(c=>c.cardType==='unit'&&prefRankStars(c)===5);
+  for(const region of Object.values(campaignState.regions)){
+    let fives=prefOwnedFiveStarUnits(region.id);const limit=prefFiveStarLimit(region);
+    if(fives.length>limit){
+      fives.sort((a,b)=>{const ca=prefCardForInstance(a.id)||prefTemplate(a.templateId),cb=prefCardForInstance(b.id)||prefTemplate(b.templateId);return prefCardValue(cb)-prefCardValue(ca)||Number(cb?.stats?.atk||0)-Number(ca?.stats?.atk||0);});
+      fives.slice(limit).forEach(inst=>prefListInstance(inst,region.id,'star5-cap-migration'));
+      changed=true;
+    }
+    // Under the new starting rule, each rival has one ★5 slot. Older saves may have zero, so
+    // replace the weakest lower-rank card with a copy of an existing ★5 template when available.
+    if(!region.isPlayer&&prefOwnedFiveStarUnits(region.id).length===0&&rank5Templates.length){
+      const owned=prefOwnedUnits(region.id);
+      if(owned.length>=PREF_RIVAL_UNIT_LIMIT){
+        const weakest=owned.filter(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))!==5)
+          .sort((a,b)=>prefCardValue(prefCardForInstance(a.id)||prefTemplate(a.templateId))-prefCardValue(prefCardForInstance(b.id)||prefTemplate(b.templateId)))[0];
+        if(weakest)prefListInstance(weakest,region.id,'star5-holder-migration');
+      }
+      const template=prefRandom(rank5Templates);
+      prefCreateInstance(template.id,'owner',region.id,{source:'star5-holder-migration',copyException:true});
+      filledRivals++;changed=true;
+    }
+  }
+  if(changed)prefLog(`旧セーブを★5所持ルールへ移行しました。超過分を市場へ出品し、${filledRivals}人のライバルに★5カードを補充しました。`,'info');
+  return changed;
+}
 function prefRegion(regionId) { return campaignState?.regions?.[regionId] || null; }
 function prefRegionIconUrl(region) {
   if(!region) return null;
@@ -454,7 +525,7 @@ function prefSendToGacha(inst, reason='return') {
 }
 function prefCardDisplay(cardId, {small=false, selectable=false, extra='' }={}) {
   const inst=campaignState?.instances?.[cardId]; const card=prefCardForInstance(cardId) || prefTemplate(inst?.templateId); if(!inst||!card)return '';
-  const html=getCardHTML({id:cardId,cardType:card.cardType,name:card.name,mainAttr:card.mainAttr,subAttrs:card.subAttrs||[],hp:card.stats?.hp||0,atk:card.stats?.atk||0,prio:card.stats?.priority??999,rank:card.rank,img:getCardImage(card),desc:card.desc||card.description||''});
+  const html=getCardHTML({id:cardId,cardType:card.cardType,name:card.name,mainAttr:card.mainAttr,subAttrs:card.subAttrs||[],hp:card.stats?.hp||0,atk:card.stats?.atk||0,prio:card.stats?.priority??999,rank:card.rank,role:card.role,img:getCardImage(card),desc:card.desc||card.description||''});
   return `<div class="pref-compact-card min-w-0" data-pref-action="details" data-id="${prefEsc(cardId)}"><div class="${small?'opacity-95':''}">${html}</div>${extra}</div>`;
 }
 function prefGradeValue(region) { return PREF_TIER_VALUE[region?.tier||'E']||1; }
@@ -495,9 +566,15 @@ function prefBuildInitialCardPool(templateCards, state) {
   const unused=new Set(units.map(c=>String(c.id)));
   const allTemplates=new Map(units.map(c=>[String(c.id),c]));
   // Allocate each template at most once until the unique templates are all used. Only then are startup copies allowed.
-  function takeInitialUnit(desiredRank) {
+  function takeInitialUnit(desiredRank, forceRank5=false) {
     const avail=[...unused].map(id=>allTemplates.get(id)).filter(Boolean);
     let chosen=null;
+    if(forceRank5){
+      const unusedFives=avail.filter(c=>prefRankStars(c)===5);
+      if(unusedFives.length){chosen=prefRandom(unusedFives);unused.delete(String(chosen.id));return prefCreateInstance(chosen.id,'owner',null,{source:'initial',copyException:false});}
+      const anyFives=units.filter(c=>prefRankStars(c)===5);
+      if(anyFives.length){const source=prefRandom(anyFives);return prefCreateInstance(source.id,'owner',null,{source:'initial-rank5-copy',copyException:true});}
+    }
     for(let r=desiredRank;r>=1&&!chosen;r--){const list=avail.filter(c=>prefRankStars(c)===r); if(list.length)chosen=prefRandom(list);}
     if(!chosen && avail.length) chosen=avail.sort((a,b)=>Math.abs(prefRankStars(a)-desiredRank)-Math.abs(prefRankStars(b)-desiredRank) || prefRankStars(a)-prefRankStars(b))[0];
     if(chosen){unused.delete(String(chosen.id)); return prefCreateInstance(chosen.id,'owner',null,{source:'initial',copyException:false});}
@@ -520,7 +597,7 @@ function prefBuildInitialCardPool(templateCards, state) {
     const row=rankRows[pos-1]; row.position=pos;
     if(!assigned[row.prefecture])assigned[row.prefecture]=[];
     const recipes=PREF_RANK_UNIT_RECIPE[row.tier]||PREF_RANK_UNIT_RECIPE.E;
-    for(const r of recipes){const inst=takeInitialUnitFromAny(r); if(inst)assigned[row.prefecture].push(inst);}
+    for(const r of recipes){const inst=r===5?takeInitialUnit(5,true):takeInitialUnitFromAny(r); if(inst)assigned[row.prefecture].push(inst);}
   }
   // Below the 240-card completeness threshold the starting gacha must have zero drawable characters.
   // If 234–239 templates were authored, there are more templates than starting owner slots but still
@@ -610,6 +687,8 @@ async function prefLoadState() {
       if(!campaignState.pendingAcquisitionQueue.includes(inst.id))campaignState.pendingAcquisitionQueue.push(inst.id);
     }
     if(legacyMagicOverflow.length)prefLog(`旧セーブのマジックカード所持数を上限${PREF_MAGIC_LIMIT}枚に移行しました。超過分はカードを選んで市場へ出品できます。`,'info');
+    // Preserve cards from older saves, but enforce the new ★5 holder limits by listing excess cards.
+    prefEnforceOwnedStar5Caps();
     // Existing campaign saves may still contain low-rank entries in the gacha pool; the draw filter
     // below excludes them without deleting cards already owned in an older save.
     prefSyncCampaignClones();
@@ -875,13 +954,28 @@ function prefAcquireInstance(regionId, instId, options={}) {
     return true;
   }
   const units=prefOwnedUnits(regionId);
+  if(prefRankStars(card)===5){
+    const fiveStars=units.filter(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))===5);
+    const limit=prefFiveStarLimit(region);
+    if(fiveStars.length>=limit){
+      if(region.isPlayer){
+        inst.zone='pending';inst.ownerId=null;inst.sellerRegionId=null;inst.listedAtAbs=null;inst.marketExpiresAbs=null;inst.expiresAtAbs=null;inst.acquiredAtAbs=null;
+        campaignState.pendingAcquisition={kind:'unit',instanceId:instId,regionId,reason:'rank5-limit'};
+        if(!options.deferCapacityModal)prefShowReplaceModal();return 'pending';
+      }
+      const chosen=prefAiReplacementChoice(region,fiveStars,inst);
+      if(chosen===instId){prefListInstance(inst,regionId,'ai-rank5-limit-rejected');prefLog(`${region.prefecture}は★5所持上限のため「${card.name}」の採用を見送りました。`,'info');return true;}
+      const old=campaignState.instances[chosen];if(old)prefListInstance(old,regionId,'ai-rank5-replacement');
+      prefSetInstanceOwner(inst,regionId,true);return true;
+    }
+  }
   if(units.length>= (region.isPlayer?PREF_UNIT_LIMIT:PREF_RIVAL_UNIT_LIMIT)){
     if(region.isPlayer){
       inst.zone='pending';inst.ownerId=null;inst.sellerRegionId=null;inst.expiresAtAbs=null;
       campaignState.pendingAcquisition={kind:'unit',instanceId:instId,regionId,reason:options.reason||'acquire'};
       if(!options.deferCapacityModal)prefShowReplaceModal(); return 'pending';
     }
-    const chosen=prefAiReplacementChoice(region,units,inst);
+    const chosen=prefAiUnitReplacementChoice(region,units,inst);
     if(chosen===instId){prefListInstance(inst,regionId,'ai-rejected-card');return true;}
     const old=campaignState.instances[chosen];if(old)prefListInstance(old,regionId,'ai-replacement');
   }
@@ -892,15 +986,17 @@ function prefShowReplaceModal() {
   const pending=campaignState?.pendingAcquisition;if(!pending)return;
   const inst=campaignState.instances[pending.instanceId],card=prefCardForInstance(pending.instanceId)||prefTemplate(inst?.templateId);
   const kind=pending.kind||inst?.kind||'unit';
-  const owned=kind==='magic'?prefOwnedMagics(pending.regionId||PREF_PLAYER_ID):prefOwnedUnits(pending.regionId||PREF_PLAYER_ID);
+  const allOwned=kind==='magic'?prefOwnedMagics(pending.regionId||PREF_PLAYER_ID):prefOwnedUnits(pending.regionId||PREF_PLAYER_ID);
+  const owned=pending.reason==='rank5-limit'&&kind==='unit'?allOwned.filter(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))===5):allOwned;
   const isMagic=kind==='magic';
   if(!inst||!card){campaignState.pendingAcquisition=null;return;}
   const entries=[...owned.map(x=>({id:x.id,card:prefCardForInstance(x.id)||prefTemplate(x.templateId),incoming:false})),{id:inst.id,card,incoming:true}];
-  const title=isMagic?'マジックカードが上限50枚です':'カードホルダーがいっぱいです';
-  const intro=isMagic
-    ?`新しいマジックカード「<b class="text-amber-200">${prefEsc(card.name||'新カード')}</b>」を受け取りました。マジックカードは最大${PREF_MAGIC_LIMIT}枚です。市場へ出品するカードを選んでください。新カードを選ぶと、新カード自体を出品します。`
+  const title=isMagic?'マジックカードが上限50枚です':pending.reason==='rank5-limit'?'★5カードは所持上限です':'カードホルダーがいっぱいです';
+  const intro=pending.reason==='rank5-limit'
+    ?`★5キャラ「<b class="text-amber-200">${prefEsc(card.name||'新カード')}</b>」を獲得しましたが、自分の★5所持上限は${prefFiveStarLimit(prefRegion(pending.regionId||PREF_PLAYER_ID))}枚です。★5カードだけから市場へ出品する1枚を選んでください。新カードを選ぶと新カード自体を市場へ出品します。`
+    :isMagic?`新しいマジックカード「<b class="text-amber-200">${prefEsc(card.name||'新カード')}</b>」を受け取りました。マジックカードは最大${PREF_MAGIC_LIMIT}枚です。市場へ出品するカードを選んでください。新カードを選ぶと、新カード自体を出品します。`
     :`新しいキャラカード「<b class="text-amber-200">${prefEsc(card.name||'新カード')}</b>」を獲得しました。市場へ出すカードを選んでください。新しいカードを選ぶと、今回は受け取らずに市場へ出品します。`;
-  const warning=!isMagic&&owned.length<=3?'<div class="mt-3 rounded-lg bg-rose-950/60 border border-rose-500/40 p-3 text-xs text-rose-200">キャラカードが3枚未満になると対戦できません。先に補充してください。</div>':'';
+  const warning=!isMagic&&allOwned.length<=3?'<div class="mt-3 rounded-lg bg-rose-950/60 border border-rose-500/40 p-3 text-xs text-rose-200">キャラカードが3枚未満になると対戦できません。先に補充してください。</div>':'';
   prefShowModal(title,`<p class="text-sm text-slate-300 mb-3">${intro}</p><div class="max-h-[58vh] overflow-y-auto pr-1"><div class="grid grid-cols-3 sm:grid-cols-5 gap-2">${entries.map(x=>`<button data-pref-action="replace-held" data-id="${prefEsc(x.id)}" class="min-w-0 rounded-lg border ${x.incoming?'border-amber-500 bg-amber-950/30':'border-slate-700 bg-slate-900'} p-1 hover:border-amber-400"><div class="pointer-events-none">${prefCardDisplay(x.id,{small:true})}</div><div class="text-[10px] ${x.incoming?'text-amber-200':'text-rose-300'} font-black mt-1">${x.incoming?'新カードを市場へ':'これを市場へ'}</div></button>`).join('')}</div></div>${warning}`,[]);
   document.getElementById('pref-modal-close-btn')?.classList.add('hidden');
 }
@@ -921,6 +1017,7 @@ async function prefCommitReplace(oldId) {
   const old=campaignState.instances[oldId],newInst=campaignState.instances[pending.instanceId];
   if(!newInst)return;
   const regionId=pending.regionId||PREF_PLAYER_ID;
+  if(pending.reason==='rank5-limit'&&String(oldId)!==String(newInst.id)&&(!old||prefRankStars(prefCardForInstance(old.id)||prefTemplate(old.templateId))!==5))return;
   const kind=pending.kind||newInst.kind||'unit';
   const label=kind==='magic'?'マジックカード':'キャラカード';
   if(String(oldId)===String(newInst.id)) {
@@ -1014,7 +1111,7 @@ function prefRenderDashboard() {
 function prefRenderHolder() {
   if(!campaignState){prefShowNoGame('pref-holder-list');return;}
   const units=prefOwnedUnits(PREF_PLAYER_ID),magics=prefOwnedMagics(PREF_PLAYER_ID);
-  const uc=document.getElementById('pref-holder-unit-count'),mc=document.getElementById('pref-holder-magic-count');if(uc)uc.textContent=`${units.length}/10`;if(mc)mc.textContent=`${magics.length}/${PREF_MAGIC_LIMIT}`;
+  const uc=document.getElementById('pref-holder-unit-count'),mc=document.getElementById('pref-holder-magic-count');if(uc)uc.textContent=`${units.length}/10 · ★5 ${prefOwnedFiveStarUnits(PREF_PLAYER_ID).length}/2`;if(mc)mc.textContent=`${magics.length}/${PREF_MAGIC_LIMIT}`;
   const list=document.getElementById('pref-holder-list');if(!list)return;
   if(prefCurrentHolderTab==='autobuy'){
     const player=prefPlayerRegion();player.autoBuyMagicTemplateIds=Array.isArray(player.autoBuyMagicTemplateIds)?player.autoBuyMagicTemplateIds:[];
@@ -1230,6 +1327,11 @@ function prefWithdrawListing(id) {
       prefSave().then(()=>{prefSyncCampaignClones();prefShowReplaceModal();}).catch(console.error);return;
     }
   }
+  if(inst.kind==='unit'&&prefRankStars(prefCardForInstance(id)||prefTemplate(inst.templateId))===5&&prefOwnedFiveStarUnits(PREF_PLAYER_ID).length>=prefFiveStarLimit(prefPlayerRegion())){
+    inst.zone='pending';inst.ownerId=null;inst.sellerRegionId=null;inst.listedAtAbs=null;inst.marketExpiresAbs=null;inst.expiresAtAbs=null;inst.acquiredAtAbs=null;
+    campaignState.pendingAcquisition={kind:'unit',instanceId:inst.id,regionId:PREF_PLAYER_ID,reason:'rank5-limit'};
+    prefSave().then(()=>{prefSyncCampaignClones();prefShowReplaceModal();}).catch(console.error);return;
+  }
   if(inst.kind==='unit')prefSetInstanceOwner(inst,PREF_PLAYER_ID,true);else prefSetInstanceOwner(inst,PREF_PLAYER_ID,false);
   prefLog(`市場出品を取り消し、カードをホルダーへ戻しました。`,'info');prefSave().then(()=>{prefRenderAll();renderPrefMarket();}).catch(console.error);
 }
@@ -1313,9 +1415,8 @@ function prefShowBattleSelection(finalizing=false) {
   if(p.lastBattleAbs>0 && p.lastBattleAbs===prefAbsTurn()-1){prefShowModal('連戦禁止','前週に対戦したため、今週は対戦コマンドを選べません。',[{label:'了解',action:'close-modal',style:'primary'}]);return;}
   const provisional=finalizing?(campaignState.turnProcessing?.actions?.[PREF_PLAYER_ID]?.loadout||p.lastLoadout||{}):(p.lastLoadout||{});
   let active=(provisional.active||[]).filter(id=>units.some(x=>x.id===id));let reserve=(provisional.reserve||[]).filter(id=>units.some(x=>x.id===id)&&!active.includes(id));
-  if(active.length!==3){active=units.slice(0,3).map(x=>x.id);reserve=units.slice(3,5).map(x=>x.id);}
-  if(reserve.length>2)reserve=reserve.slice(0,2);
-  if(active.length<3){const rest=units.filter(x=>!active.includes(x.id)&&!reserve.includes(x.id));while(active.length<3&&rest.length)active.push(rest.shift().id);}
+  if(active.length!==3){const auto=prefBuildAutoLoadout(units);active=auto.active;reserve=auto.reserve;}
+  ({active,reserve}=prefNormalizeLoadoutSelection(active,reserve,units));
   const box=document.getElementById('pref-battle-selection');box.classList.remove('hidden');document.getElementById('pref-investigation-selection')?.classList.add('hidden');
   if(finalizing){document.getElementById('pref-command-panel')?.classList.remove('hidden');document.getElementById('pref-turn-progress')?.classList.add('hidden');document.getElementById('pref-pending-battle-panel')?.classList.add('hidden');document.getElementById('campaign-preview-resume')?.classList.add('hidden');}
   const pair=finalizing?(campaignState.turnProcessing?.pairs||[]).find(pair=>pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID):null;
@@ -1331,7 +1432,7 @@ function prefRenderLoadout() {
     const card=prefCardForInstance(inst.id);const label=pos==='active'?'出撃':pos==='reserve'?'控え':'未選択';const cls=pos==='active'?'border-rose-400 bg-rose-950/40':pos==='reserve'?'border-cyan-400 bg-cyan-950/40':'border-slate-700 bg-slate-900';
     return `<button data-pref-action="toggle-loadout" data-id="${prefEsc(inst.id)}" class="rounded-xl border-2 ${cls} p-1 text-left min-w-0"><div class="pointer-events-none">${prefCardDisplay(inst.id,{small:true})}</div><div class="mt-1 text-center text-[10px] font-black ${pos==='active'?'text-rose-200':pos==='reserve'?'text-cyan-200':'text-slate-500'}">${label}</div><div class="text-[9px] text-slate-500 text-center">${prefFormatMoney(prefCardValue(card))}</div></button>`;
   }).join('');
-  const count=document.getElementById('pref-loadout-counter');if(count)count.textContent=`出撃 ${draft.active.length}/3　／　控え ${draft.reserve.length}/2　／　所持 ${units.length}/10`;
+  const count=document.getElementById('pref-loadout-counter');if(count){count.innerHTML=`出撃 ${draft.active.length}/3　／　控え ${draft.reserve.length}/2　／　所持 ${units.length}/10　／　選出中の★5 ${prefCountFiveStarIds([...draft.active,...draft.reserve],units)}/1${prefPendingNotice?`<span class="block text-rose-300 mt-1">${prefEsc(prefPendingNotice)}</span>`:''}`;prefPendingNotice='';}
 }
 function prefToggleLoadout(id) {
   const draft=campaignState?.draftLoadout;if(!draft)return;
@@ -1339,16 +1440,18 @@ function prefToggleLoadout(id) {
     draft.active=draft.active.filter(x=>x!==id);if(draft.reserve.length<2)draft.reserve.push(id);
   }else if(draft.reserve.includes(id)){
     draft.reserve=draft.reserve.filter(x=>x!==id);
-  }else if(draft.active.length<3){draft.active.push(id);}
-  else if(draft.reserve.length<2){draft.reserve.push(id);}
-  else {prefPendingNotice='出撃3体と控え2体まで選択できます。';}
+  }else {
+    const units=prefOwnedUnits(PREF_PLAYER_ID),candidate=prefCardForInstance(id)||prefTemplate(campaignState.instances[id]?.templateId);
+    if(prefRankStars(candidate)===5&&prefCountFiveStarIds([...draft.active,...draft.reserve],units)>=1){prefPendingNotice='ゲームモードのデッキに入れられる★5キャラは1体までです。';prefRenderLoadout();return;}
+    if(draft.active.length<3){draft.active.push(id);}
+    else if(draft.reserve.length<2){draft.reserve.push(id);}
+    else {prefPendingNotice='出撃3体と控え2体まで選択できます。';}
+  }
   prefRenderLoadout();
 }
 function prefAutoLoadout() {
-  const units=prefOwnedUnits(PREF_PLAYER_ID);const ranked=units.slice().sort((a,b)=>{
-    const ca=prefCardForInstance(a.id),cb=prefCardForInstance(b.id);return prefRankStars(cb)-prefRankStars(ca)||prefCardValue(cb)-prefCardValue(ca);
-  });
-  campaignState.draftLoadout={active:ranked.slice(0,3).map(x=>x.id),reserve:ranked.slice(3,5).map(x=>x.id)};prefRenderLoadout();
+  const units=prefOwnedUnits(PREF_PLAYER_ID);
+  campaignState.draftLoadout=prefBuildAutoLoadout(units);prefRenderLoadout();
 }
 function prefShowInvestigationSelection() {
   if(!campaignState)return;
@@ -1563,6 +1666,7 @@ function prefAiTryEconomy(region) {
     const currentUnits=prefOwnedUnits(region.id);
     const marketUnits=prefMarketListings('unit',false)
       .filter(inst=>prefAiCanBuyMarketUnit(region,inst))
+      .filter(inst=>!(prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))===5&&prefOwnedFiveStarUnits(region.id).length>=prefFiveStarLimit(region)))
       .map(inst=>({inst,utility:prefAiMarketUtility(region,inst)}))
       .filter(x=>x.utility>=-3)
       .sort((a,b)=>b.utility-a.utility);
@@ -1652,7 +1756,7 @@ function prefAiTryEconomy(region) {
     let boughtUpgrade=false;
     for(const row of marketUnits){
       const inst=row.inst,card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
-      const replacement=prefAiReplacementChoice(region,units,inst);
+      const replacement=prefAiUnitReplacementChoice(region,units,inst);
       if(!replacement||replacement===inst.id)continue;
       if(!prefAiCanBuyMarketUnit(region,inst,row.utility))continue;
       const price=prefValueFromInstance(inst),seller=inst.sellerRegionId;
@@ -1683,7 +1787,7 @@ function prefAiTryEconomy(region) {
         if(!selected){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;}
         else if(selected.kind==='unit'&&selected.instance){
           const inst=selected.instance,card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
-          const replacement=prefAiReplacementChoice(region,units,inst);
+          const replacement=prefAiUnitReplacementChoice(region,units,inst);
           if(replacement&&replacement!==inst.id){
             const old=campaignState.instances[replacement];if(old)prefListInstance(old,region.id,'ai-gacha-synergy-upgrade');
             const acquired=prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha-upgrade'});
@@ -2148,7 +2252,7 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
   if(cards.length<=3){
     const active=cards.map(x=>x.inst.id);const reserve=[];
     prefRecordAIThought(region,'編成構築','出撃メンバーを選出',['所持キャラが3体以下のため、全員を出撃候補に設定',`カード選びの賢さ${profile.cardIQ}/100`,...(opponentIntel?.confidence>0.2?[`調査・対戦記憶を参照（信頼度${Math.round(opponentIntel.confidence*100)}%）`]:[])],{activeNames:active.map(id=>cardById(id)?.name||'キャラ'),opponentId:opponentId||null});
-    return {active,reserve};
+    return prefNormalizeLoadoutSelection(active,reserve,units);
   }
   const candidateSets=[];
   const pick=(arr,start,need,chosen)=>{if(need===0){candidateSets.push([...chosen]);return;}for(let i=start;i<=arr.length-need;i++)pick(arr,i+1,need-1,[...chosen,arr[i]]);};
@@ -2199,13 +2303,13 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
   const reasons=[`カード選びの賢さ${profile.cardIQ}/100で構築候補を評価`,`主戦術「${(PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)||{}).label||'対応型'}」と副戦術を反映`,`AP効率・役割補完・パッシブ・条件・属性・マジックとの組み合わせを評価`,`候補${candidateSets.length}案を効果解析で評価し、上位${shortlist.length}案を3つの想定戦況（速攻・長期戦・連携成立）で平均比較`];
   if(opponentIntel?.confidence>0.15)reasons.push(`調査・対戦記憶の情報を対策に使用（信頼度${Math.round(opponentIntel.confidence*100)}%）`);
   prefRecordAIThought(region,'編成構築','出撃メンバーを選出',reasons,{activeNames:best?.activeNames||active.map(id=>cardById(id)?.name||'キャラ'),score:best?.score,alternatives:shortlist.map(x=>({names:x.activeNames,score:Math.round(x.score*10)/10,scenarioMean:Math.round((x.scenarioMean||0)*10)/10,scenarios:x.scenarios,attributes:x.attrs})),opponentId:opponentId||null,opponentIntelConfidence:opponentIntel?.confidence||0});
-  return {active:active.slice(0,3),reserve:reserve.slice(0,2)};
+  return prefNormalizeLoadoutSelection(active.slice(0,3),reserve.slice(0,2),units);
 }
 function prefDefaultLoadoutFallback(regionId) {
   const units=prefOwnedUnits(regionId);const r=prefRegion(regionId);const saved=r?.lastLoadout||{};
   let active=(saved.active||[]).filter(id=>units.some(x=>x.id===id));let reserve=(saved.reserve||[]).filter(id=>units.some(x=>x.id===id)&&!active.includes(id));
-  if(active.length<Math.min(3,units.length)){active=units.slice(0,3).map(x=>x.id);reserve=units.slice(3,5).map(x=>x.id);}
-  return {active:active.slice(0,3),reserve:reserve.slice(0,2)};
+  if(active.length<Math.min(3,units.length)){const auto=prefBuildAutoLoadout(units);active=auto.active;reserve=auto.reserve;}
+  return prefNormalizeLoadoutSelection(active.slice(0,3),reserve.slice(0,2),units);
 }
 function prefDefaultLoadout(regionId,opponentId=null) {
   const region=prefRegion(regionId);
@@ -2218,13 +2322,15 @@ function prefBattleOverrideForRegions(aId,bId,playerLoadout=null) {
   const unitsA=prefOwnedUnits(aId),unitsB=prefOwnedUnits(bId);
   const magsA=prefOwnedMagics(aId),magsB=prefOwnedMagics(bId);
   const loadA=playerLoadout||prefDefaultLoadout(aId,bId);const loadB=prefDefaultLoadout(bId,aId);
-  const selectedA=[...loadA.active,...loadA.reserve].filter(id=>unitsA.some(x=>x.id===id)).slice(0,5);
-  const selectedB=[...loadB.active,...loadB.reserve].filter(id=>unitsB.some(x=>x.id===id)).slice(0,5);
-  unitsB.forEach(x=>{if(selectedB.length<5&&!selectedB.includes(x.id))selectedB.push(x.id);});
-  const activeA=loadA.active.filter(id=>selectedA.includes(id)).slice(0,3);
+  const legalA=prefNormalizeLoadoutSelection(loadA.active,loadA.reserve,unitsA);
+  const legalB=prefNormalizeLoadoutSelection(loadB.active,loadB.reserve,unitsB);
+  const selectedA=[...legalA.active,...legalA.reserve].filter(id=>unitsA.some(x=>x.id===id)).slice(0,5);
+  const selectedB=[...legalB.active,...legalB.reserve].filter(id=>unitsB.some(x=>x.id===id)).slice(0,5);
+  unitsB.forEach(x=>{if(selectedB.length<5&&!selectedB.includes(x.id)&&prefCountFiveStarIds([...selectedB,x.id],unitsB)<=1)selectedB.push(x.id);});
+  const activeA=legalA.active.filter(id=>selectedA.includes(id)).slice(0,3);
   while(activeA.length<Math.min(3,selectedA.length)){const id=selectedA.find(x=>!activeA.includes(x));if(!id)break;activeA.push(id);}
   const reserveA=selectedA.filter(id=>!activeA.includes(id)).slice(0,2);
-  const activeB=selectedB.slice(0,3);const reserveB=selectedB.slice(3,5);
+  const activeB=legalB.active.filter(id=>selectedB.includes(id)).slice(0,3);while(activeB.length<Math.min(3,selectedB.length)){const id=selectedB.find(x=>!activeB.includes(x));if(!id)break;activeB.push(id);}const reserveB=selectedB.filter(id=>!activeB.includes(id)).slice(0,2);
   const profileA=a.isPlayer?null:prefAIProfileForRegion(a),profileB=b.isPlayer?null:prefAIProfileForRegion(b);
   return {playerDeck:{id:`pref-${aId}`,name:`${a.prefecture}デッキ`,unitIds:selectedA,magicIds:magsA.map(x=>x.id)},enemyDeck:{id:`pref-${bId}`,name:`${b.prefecture}デッキ`,unitIds:selectedB,magicIds:magsB.map(x=>x.id)},playerActive:activeA,playerReserve:reserveA,
     enemyIntelligence:b.aiIntelligence||'normal',playerIntelligence:a.aiIntelligence||'expert',enemyTacticalIQ:profileB?.tacticalIQ,playerTacticalIQ:profileA?.tacticalIQ,
@@ -2642,6 +2748,7 @@ async function prefHandleClick(action,id,button) {
     if(tx?.stage!=='player-preview'){prefShowModal('対戦準備を確認','対戦相手の決定状態を確認できません。画面を更新して再確認してください。',[{label:'閉じる',action:'close-modal'}]);return;}
     const active=(draft?.active||[]).filter(id=>units.some(x=>x.id===id)).slice(0,3);
     const reserve=(draft?.reserve||[]).filter(id=>units.some(x=>x.id===id)&&!active.includes(id)).slice(0,2);
+    if(prefCountFiveStarIds([...active,...reserve],units)>1){prefShowModal('★5カードの上限','ゲームモードでは出撃3体と控えを合わせて★5キャラは1体までです。編成を見直してください。',[{label:'編成に戻る',action:'close-modal',style:'primary'}]);return;}
     if(active.length!==3){prefShowModal('出撃メンバーを確認','出撃するキャラカードを3体選択してください。',[{label:'編成に戻る',action:'close-modal',style:'primary'}]);return;}
     const loadout={active,reserve};tx.actions[PREF_PLAYER_ID].loadout=JSON.parse(JSON.stringify(loadout));
     prefPlayerRegion().lastLoadout=JSON.parse(JSON.stringify(loadout));campaignState.lastLoadout=JSON.parse(JSON.stringify(loadout));
@@ -2650,7 +2757,8 @@ async function prefHandleClick(action,id,button) {
     await prefSave();prefEnsurePreviewResumeButton();prefRenderDashboard();await prefContinueTurn();return;
   }
   if(action==='confirm-battle'){
-    const draft=campaignState?.draftLoadout;if(!draft||draft.active.length!==3){prefShowModal('出撃メンバーを確認','出撃するキャラカードを3体選択してください。',[{label:'戻る',action:'close-modal',style:'primary'}]);return;}
+    const draft=campaignState?.draftLoadout,units=prefOwnedUnits(PREF_PLAYER_ID);if(!draft||draft.active.length!==3){prefShowModal('出撃メンバーを確認','出撃するキャラカードを3体選択してください。',[{label:'戻る',action:'close-modal',style:'primary'}]);return;}
+    if(prefCountFiveStarIds([...draft.active,...draft.reserve],units)>1){prefShowModal('★5カードの上限','ゲームモードでは出撃3体と控えを合わせて★5キャラは1体までです。編成を見直してください。',[{label:'戻る',action:'close-modal',style:'primary'}]);return;}
     const chosen=[...draft.active,...draft.reserve].slice(0,5);prefPlayerRegion().lastLoadout={active:[...draft.active],reserve:[...draft.reserve]};campaignState.lastLoadout=JSON.parse(JSON.stringify(prefPlayerRegion().lastLoadout));
     document.getElementById('pref-battle-selection')?.classList.add('hidden');await prefBeginTurn({type:'battle',loadout:{active:[...draft.active],reserve:[...draft.reserve]}});return;
   }
