@@ -1,5 +1,5 @@
 /*
- * 都道府県カード戦争 v1.0.40 - カード性能検証ラボ
+ * 都道府県カード戦争 v1.0.43 - カード性能検証ラボ
  * Uses the existing battle engine in isolated, temporary headless battles.
  * Results are intentionally memory-only and never saved to IndexedDB/campaign state.
  */
@@ -45,54 +45,22 @@
   }
 
   const LAB_VALUE_RANGES = {
-    3: { min: 1_000_000, max: 30_000_000 },
-    4: { min: 30_000_000, max: 150_000_000 },
-    5: { min: 150_000_000, max: 500_000_000 }
+    3: { min: 0, max: 1_000_000_000_000_000 },
+    4: { min: 0, max: 1_000_000_000_000_000 },
+    5: { min: 0, max: 1_000_000_000_000_000 }
   };
 
-  // The user's rank-specific valuation curve. Values are yen; win rates are fractions.
-  // The intervals between the five anchor points are filled by linear interpolation.
+  // Exponential valuation: each 20 percentage-point increase in win rate multiplies value by 10.
   const LAB_VALUE_CURVES = {
-    3: [
-      { rate: 0.30, value: 1_000_000 },
-      { rate: 0.40, value: 3_000_000 },
-      { rate: 0.50, value: 5_000_000 },
-      { rate: 0.60, value: 10_000_000 },
-      { rate: 0.70, value: 30_000_000 }
-    ],
-    4: [
-      { rate: 0.30, value: 30_000_000 },
-      { rate: 0.40, value: 45_000_000 },
-      { rate: 0.50, value: 80_000_000 },
-      { rate: 0.60, value: 135_000_000 },
-      { rate: 0.70, value: 150_000_000 }
-    ],
-    5: [
-      { rate: 0.30, value: 150_000_000 },
-      { rate: 0.40, value: 250_000_000 },
-      { rate: 0.50, value: 300_000_000 },
-      { rate: 0.60, value: 400_000_000 },
-      { rate: 0.70, value: 500_000_000 }
-    ]
+    3: [{rate:0.30,value:300_000},{rate:0.50,value:3_000_000},{rate:0.70,value:30_000_000}],
+    4: [{rate:0.30,value:10_000_000},{rate:0.50,value:100_000_000},{rate:0.70,value:1_000_000_000}],
+    5: [{rate:0.30,value:500_000_000},{rate:0.50,value:5_000_000_000},{rate:0.70,value:50_000_000_000}]
   };
 
   function labEstimateValue(stars, winRate) {
-    const curve = LAB_VALUE_CURVES[Number(stars)];
-    if (!curve || !curve.length) return null;
-    const rate = Number.isFinite(Number(winRate)) ? Number(winRate) : 0;
-    if (rate <= curve[0].rate) return curve[0].value;
-    const last = curve[curve.length - 1];
-    if (rate >= last.rate) return last.value;
-    for (let i = 1; i < curve.length; i++) {
-      const upper = curve[i];
-      if (rate <= upper.rate) {
-        const lower = curve[i - 1];
-        const progress = (rate - lower.rate) / (upper.rate - lower.rate);
-        const interpolated = lower.value + (upper.value - lower.value) * progress;
-        return Math.round(interpolated / 10_000) * 10_000;
-      }
-    }
-    return last.value;
+    const curve=LAB_VALUE_CURVES[Number(stars)];if(!curve)return null;
+    const rate=Number.isFinite(Number(winRate))?Number(winRate):0;
+    return Math.round(curve[0].value*Math.pow(10,(rate-0.30)/0.20));
   }
 
   const labOriginalRenderBattleState = renderBattleState;
