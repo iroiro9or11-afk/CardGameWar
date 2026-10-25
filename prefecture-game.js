@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.48 — role-balanced, synergy-aware five-card rival loadouts */
+/* 都道府県カード戦争 v1.0.49 — role-balanced, synergy-aware five-card rival loadouts */
 'use strict';
 
 let campaignState = null;
@@ -2379,6 +2379,27 @@ function prefEstimateBuildScenarios(region,activeCards,reserveCards,magicCards) 
   return {mean:mean*accuracy,scenarios:{burst:Number(burst.toFixed(2)),sustain:Number(sustainScore.toFixed(2)),chain:Number(chain.toFixed(2))}};
 }
 
+function prefCardHasTeamBuff(card) {
+  const skills=Array.isArray(card?.skills)?card.skills:[];
+  const buffTypes=new Set(['mod_atk_ratio','mod_atk_val','mod_speed','damage_dealt_ratio','damage_taken_ratio','damage_cut_ratio','shield','mod_ap','mod_max_hp_val','heal_fixed','heal_max_hp_ratio']);
+  const broadTargets=new Set(['all_ally','all_allies','all_ally_units','all_allies_units']);
+  const isPositiveBuff=e=>{
+    if(!e||!buffTypes.has(String(e.type||'')))return false;
+    const v=Number(e.val)||0;const t=String(e.type||'');
+    if(['damage_taken_ratio'].includes(t))return v<0;
+    if(t==='damage_dealt_ratio'||t==='mod_ap'||t==='mod_max_hp_val')return v>0;
+    if(t==='damage_cut_ratio')return v>0;
+    return true;
+  };
+  return skills.some(skill=>{
+    const entries=[
+      {effect:skill?.mainEffect,target:skill?.targetType||skill?.mainEffect?.targetType},
+      ...(skill?.hasSubEffect&&skill?.subEffect?[{effect:skill.subEffect,target:skill.subEffect.targetType||skill?.subEffectTargetType||skill?.targetType}]:[])
+    ];
+    return entries.some(({effect,target})=>broadTargets.has(String(target||''))&&isPositiveBuff(effect));
+  });
+}
+
 function prefChooseRivalLoadout(regionId,opponentId=null) {
   const region=prefRegion(regionId);const units=prefOwnedUnits(regionId);if(!region||region.isPlayer)return prefDefaultLoadoutFallback(regionId);
   const profile=prefAIProfileForRegion(region);const cardById=id=>prefCardForInstance(id)||prefTemplate(campaignState.instances[id]?.templateId);
@@ -2396,6 +2417,8 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
   const scoredBuilds=[];
   const cardProfile=new Map(cards.map(x=>[String(x.inst.id),prefCardProfile(x.card)]));
   const cardScore=new Map(cards.map(x=>[String(x.inst.id),prefCardIntrinsicScore(region,x.card)+prefCardStrategyScore(region,x.card)+prefCardPreferenceScore(region,x.card)+prefAIPlanFitScore(region,x.card)]));
+  const ownedControllerCount=cards.filter(x=>(cardProfile.get(String(x.inst.id))||prefCardProfile(x.card)).role==='controller').length;
+  const teamBuffIds=new Set(cards.filter(x=>prefCardHasTeamBuff(x.card)).map(x=>String(x.inst.id)));
   const rankFiveCount=xs=>xs.reduce((sum,x)=>sum+(cardProfile.get(String(x.inst.id))?.rank===5?1:0),0);
   const pairCache=new Map();
   const pair=(a,b)=>{
@@ -2450,6 +2473,10 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     const activeProfiles=selected.map(x=>cardProfile.get(String(x.inst.id))||prefCardProfile(x.card));
     const activeRoles=new Set(activeProfiles.map(x=>x.role).filter(Boolean));
     const activeScore=selected.reduce((sum,x)=>sum+(cardScore.get(String(x.inst.id))||0),0);
+    // Broad ally buffs lose value if their controller waits on the bench. Prioritize fielding them,
+    // especially when this deck owns few controllers and cannot easily replace the missing support.
+    const activeTeamBuffControllers=selected.filter(x=>teamBuffIds.has(String(x.inst.id))&&(cardProfile.get(String(x.inst.id))||prefCardProfile(x.card)).role==='controller').length;
+    if(activeTeamBuffControllers)score+=activeTeamBuffControllers*(7.5+(ownedControllerCount<=1?5.0:ownedControllerCount<=2?2.5:0));
     const allActiveTags=new Set();activeProfiles.forEach(x=>x.tags.forEach(t=>allActiveTags.add(t)));
     const hasAttacker=activeRoles.has('attacker'),hasController=activeRoles.has('controller'),hasDefender=activeRoles.has('defender');
     const hasFrontlineDefender=activeProfiles.some(x=>x.tags.has('frontline_defender'));
