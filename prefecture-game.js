@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.46 — diminishing returns for permanent buffs and frontline-aware loadout scoring */
+/* 都道府県カード戦争 v1.0.48 — role-balanced, synergy-aware five-card rival loadouts */
 'use strict';
 
 let campaignState = null;
@@ -170,7 +170,12 @@ function prefApThresholdPassiveEffectScore(effect,targetType='self') {
   else if(type==='status_apply')score=['freeze','paralysis','pressure'].includes(String(effect.status||''))?4.5:['taunt','provoke'].includes(String(effect.status||''))?3:2;
   else if(type==='skill_block')score=4;
   else if(type==='heal_block')score=2.5;
-  else if(['clear_buffs','clear_debuffs','clear_statuses','clear_random_buffs','clear_random_debuffs','status_remove','mod_max_hp_val'].includes(type))score=2;
+  else if(['clear_buffs','clear_debuffs','clear_statuses','clear_random_buffs','clear_random_debuffs','status_remove'].includes(type))score=2;
+  else if(type==='mod_max_hp_val')score=val>0?2.6+Math.min(2.4,val/500):2;
+  else if(type==='damage_dealt_ratio')score=2.2+Math.min(3,val/15);
+  else if(type==='dmg_max_hp_ratio')score=3+Math.min(3,val/12);
+  else if(type==='atk_ratio'||type==='atk_val')score=2+Math.min(3,val/35);
+  else if(type==='sub_chance_mod')score=2+Math.min(3,val/20);
   if(['all_enemy','all_ally','all_field'].includes(String(targetType||'')))score*=1.45;
   return Math.min(8,score);
 }
@@ -189,8 +194,9 @@ function prefCardApThresholdPassiveValue(card) {
   return Math.min(10,total);
 }
 function prefCardProfile(card) {
-  if(!card)return {tags:new Set(),mainAttr:'',subAttrs:[],supportsAttrs:[],activeCosts:[],maxCost:0,skillCount:0,passiveCount:0,atk:0,hp:0,rank:1,role:'',apThresholdPassiveValue:0};
+  if(!card)return {tags:new Set(),mainAttr:'',subAttrs:[],supportsAttrs:[],activeCosts:[],maxCost:0,skillCount:0,passiveCount:0,atk:0,hp:0,rank:1,role:'',apThresholdPassiveValue:0,onFieldPassiveValue:0,deployPassiveValue:0};
   const tags=new Set(),costs=[],supportsAttrs=new Set();const nodes=prefCardEffectNodes(card);const skills=Array.isArray(card.skills)?card.skills:[];
+  let onFieldPassiveValue=0,deployPassiveValue=0;
   const addAttr=value=>{if(typeof value==='string'&&value.trim()&&!['none','any','all','null','undefined'].includes(value.trim().toLowerCase()))supportsAttrs.add(value.trim());};
   const tagNode=(n)=>{
     const t=String(n?.type||'');const val=Number(n?.val??n?.value??0);
@@ -218,6 +224,20 @@ function prefCardProfile(card) {
   // Merely having ATK stats does not make a defender an attacker; role and kit are separate.
   let selfTaunt=false,selfMitigation=false,counterAttack=false,debuffCleanser=false,permanentSelfBuff=false;
   for(const skill of skills){
+    if(skill?.type==='passive'){
+      const timing=String(skill.timing||'');
+      const chance=Math.max(0,Math.min(100,Number(skill.chance??100)))/100;
+      let effectValue=prefApThresholdPassiveEffectScore(skill.mainEffect,skill.targetType);
+      if(skill.hasSubEffect&&skill.subEffect)effectValue+=prefApThresholdPassiveEffectScore(skill.subEffect,skill.subEffect.targetType||'same_main_target')*0.62;
+      effectValue=Math.min(10,effectValue)*chance;
+      // Passive value depends on how often it can influence the field, not merely on its count.
+      if(timing==='turn_start')onFieldPassiveValue+=effectValue*0.72;
+      else if(timing==='turn_end')onFieldPassiveValue+=effectValue*0.58;
+      else if(['before_action','after_action'].includes(timing))onFieldPassiveValue+=effectValue*0.42;
+      else if(timing==='battle_start')onFieldPassiveValue+=effectValue*0.48;
+      else if(['damage_taken','hp_decrease','hp_increase','death','ally_death'].includes(timing))onFieldPassiveValue+=effectValue*0.28;
+      else if(timing==='deploy'){onFieldPassiveValue+=effectValue*0.34;deployPassiveValue+=effectValue*0.58;}
+    }
     const effects=[{effect:skill?.mainEffect,targetType:skill?.targetType},...(skill?.hasSubEffect&&skill?.subEffect?[{effect:skill.subEffect,targetType:skill.subEffect.targetType||'same_main_target'}]:[])];
     for(const entry of effects){
       const e=entry.effect||{},type=String(e.type||''),status=String(e.status||'');
@@ -263,7 +283,7 @@ function prefCardProfile(card) {
   const atk=Number(card.stats?.atk||0),hp=Number(card.stats?.hp||0),rank=prefRankStars(card);
   if(rank>=4)tags.add('high_rank');if(atk>0)tags.add('attack_role');if(hp>0&&card.cardType!=='magic')tags.add('unit');
   const subs=Array.isArray(card.subAttrs)?card.subAttrs.map(x=>typeof x==='string'?x:(x?.name||x?.id||x?.value||'')).filter(Boolean):[];
-  return {tags,mainAttr:String(card.mainAttr||''),subAttrs:subs,supportsAttrs:[...supportsAttrs],activeCosts:costs,maxCost:Math.max(0,...costs),skillCount:skills.length+(card.effect?1:0),passiveCount:skills.filter(s=>s.type==='passive').length,atk,hp,rank,role,apThresholdPassiveValue};
+  return {tags,mainAttr:String(card.mainAttr||''),subAttrs:subs,supportsAttrs:[...supportsAttrs],activeCosts:costs,maxCost:Math.max(0,...costs),skillCount:skills.length+(card.effect?1:0),passiveCount:skills.filter(s=>s.type==='passive').length,atk,hp,rank,role,apThresholdPassiveValue,onFieldPassiveValue:Math.min(8,onFieldPassiveValue),deployPassiveValue:Math.min(8,deployPassiveValue)};
 }
 function prefCardPreferenceScore(region,card) {
   const profile=prefAIProfileForRegion(region);const cp=prefCardProfile(card);let score=0;
@@ -2374,7 +2394,17 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
   const pick=(arr,start,need,chosen)=>{if(need===0){candidateSets.push([...chosen]);return;}for(let i=start;i<=arr.length-need;i++)pick(arr,i+1,need-1,[...chosen,arr[i]]);};
   pick(cards,0,Math.min(3,cards.length),[]);
   const scoredBuilds=[];
-  const pair=(a,b)=>prefPairSynergyRaw(a,b,profile)*(0.25+0.75*profile.cardIQ/100);
+  const cardProfile=new Map(cards.map(x=>[String(x.inst.id),prefCardProfile(x.card)]));
+  const cardScore=new Map(cards.map(x=>[String(x.inst.id),prefCardIntrinsicScore(region,x.card)+prefCardStrategyScore(region,x.card)+prefCardPreferenceScore(region,x.card)+prefAIPlanFitScore(region,x.card)]));
+  const rankFiveCount=xs=>xs.reduce((sum,x)=>sum+(cardProfile.get(String(x.inst.id))?.rank===5?1:0),0);
+  const pairCache=new Map();
+  const pair=(a,b)=>{
+    const ak=String(a?.id??a?.name??''),bk=String(b?.id??b?.name??'');
+    const key=ak<bk?`${ak}\u0000${bk}`:`${bk}\u0000${ak}`;
+    if(pairCache.has(key))return pairCache.get(key);
+    const value=prefPairSynergyRaw(a,b,profile)*(0.25+0.75*profile.cardIQ/100);pairCache.set(key,value);return value;
+  };
+  const cachedPair=(a,b)=>pair(a,b);
   function opponentCounterBonus(activeCards){
     if(!opponentIntel||opponentIntel.confidence<0.15)return 0;
     const adaptive=profile.primaryStrategy==='adaptive'||profile.primaryStrategy==='counter'||profile.secondaryStrategies.some(x=>x==='adaptive'||x==='counter');
@@ -2391,54 +2421,107 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     if(dominant&&dominant[1]>=2){const same=activeCards.filter(c=>prefCardProfile(c).mainAttr===dominant[0]).length;if(same>=3)bonus-=1.5*conf;else if(same<=2)bonus+=0.6*conf;}
     return bonus;
   }
+  function reserveCandidateValue(reserveEntry,activeEntries,activeCards,activeProfiles){
+    const rp=cardProfile.get(String(reserveEntry.inst.id))||prefCardProfile(reserveEntry.card);
+    const base=cardScore.get(String(reserveEntry.inst.id))||0;
+    let value=base*0.22;
+    const roleSet=new Set(activeProfiles.map(x=>x.role).filter(Boolean));
+    // Reserves are actual substitutions, not a score bonus for every unselected owned card.
+    // A deploy-triggered passive is particularly useful when a reserve enters after a KO.
+    value+=Math.min(5,rp.deployPassiveValue*0.85);
+    value+=Math.min(2.8,rp.onFieldPassiveValue*0.12);
+    for(const card of activeCards)value+=cachedPair(reserveEntry.card,card)*0.20;
+    // Keeping one replacement for a core role is valuable; role coverage in the opening three
+    // still takes priority over building a bench of duplicates.
+    if(roleSet.has(rp.role)){
+      if(rp.role==='defender')value+=2.1;
+      else if(rp.role==='attacker')value+=1.55;
+      else if(rp.role==='controller')value+=0.65;
+    }
+    // A second high-quality attacker is a sensible finisher; an extra defender can replace the
+    // tank that was protecting the main attacker. These bonuses are intentionally modest.
+    if(rp.role==='attacker'&&activeProfiles.filter(x=>x.role==='attacker').length===1)value+=0.9;
+    if(rp.role==='defender'&&activeProfiles.some(x=>x.role==='defender'))value+=0.8;
+    return value;
+  }
   for(const selected of candidateSets){
-    const activeCards=selected.map(x=>x.card);const activeIds=selected.map(x=>x.inst.id);const reserve=cards.filter(x=>!activeIds.includes(x.inst.id));
-    let score=0;const allActiveTags=new Set();
-    activeCards.forEach(card=>{score+=prefCardIntrinsicScore(region,card)+prefCardStrategyScore(region,card)+prefCardPreferenceScore(region,card)+prefAIPlanFitScore(region,card);prefCardProfile(card).tags.forEach(t=>allActiveTags.add(t));});
-    const activeProfiles=activeCards.map(prefCardProfile);
-    const reserveProfiles=reserve.map(x=>prefCardProfile(x.card));
-    const activeRoles=activeProfiles.map(x=>x.role).filter(Boolean);
-    const hasAttacker=activeRoles.includes('attacker'),hasController=activeRoles.includes('controller'),hasDefender=activeRoles.includes('defender');
+    if(rankFiveCount(selected)>1)continue;
+    const activeCards=selected.map(x=>x.card);const activeIds=selected.map(x=>x.inst.id);
+    const activeProfiles=selected.map(x=>cardProfile.get(String(x.inst.id))||prefCardProfile(x.card));
+    const activeRoles=new Set(activeProfiles.map(x=>x.role).filter(Boolean));
+    const activeScore=selected.reduce((sum,x)=>sum+(cardScore.get(String(x.inst.id))||0),0);
+    const allActiveTags=new Set();activeProfiles.forEach(x=>x.tags.forEach(t=>allActiveTags.add(t)));
+    const hasAttacker=activeRoles.has('attacker'),hasController=activeRoles.has('controller'),hasDefender=activeRoles.has('defender');
     const hasFrontlineDefender=activeProfiles.some(x=>x.tags.has('frontline_defender'));
-    const reserveHasFrontlineDefender=reserveProfiles.some(x=>x.tags.has('frontline_defender'));
-    // Roles remain flexible: three attackers can win. But a defender with real taunt, mitigation
-    // and counter damage is not generic filler; if available, its front-line contribution counts.
-    if(hasAttacker&&hasDefender)score+=3.8;
-    if(hasAttacker&&hasController)score+=1.2;
-    if(hasDefender&&hasController&&!hasAttacker)score-=0.6;
+    let score=activeScore;
+    // Make the first three slots a coherent opening team. Prefer an attacker, a defender/healer,
+    // and a controller/support when suitably strong cards exist, without banning all-attacker rush builds.
+    if(hasAttacker)score+=2.8;
+    if(hasDefender)score+=3.0;
+    if(hasController)score+=2.6;
+    if(hasAttacker&&hasDefender)score+=4.0;
+    if(hasAttacker&&hasController)score+=2.5;
+    if(hasDefender&&hasController)score+=2.2;
+    if(hasAttacker&&hasDefender&&hasController)score+=4.8;
     if(hasAttacker&&hasFrontlineDefender)score+=7.5;
-    else if(hasAttacker&&reserveHasFrontlineDefender)score-=8.5;
-    // AP-threshold passives often need a high bank. Prefer keeping an expensive caster in reserve
-    // when active use would compete with that passive; harmless/free-skill passives are not tagged.
-    const apBankRisk=activeCards.reduce((sum,c)=>sum+prefCardProfile(c).apThresholdPassiveValue,0);
+    // A powerful protector is more valuable beside the main attacker than on the bench.
+    // Start-of-turn and recurring passives have more opportunities when the unit begins in the field.
+    score+=activeProfiles.reduce((sum,x)=>sum+Math.min(7,x.onFieldPassiveValue),0);
+    // AP-threshold passives may benefit from a quiet reserve slot when active skills would spend the needed AP.
+    const apBankRisk=activeProfiles.reduce((sum,x)=>sum+x.apThresholdPassiveValue,0);
     score-=apBankRisk*(0.9+0.4*profile.cardIQ/100);
-    const reserveApBankValue=reserve.reduce((sum,r)=>sum+prefCardProfile(r.card).apThresholdPassiveValue,0);
-    score+=reserveApBankValue*(0.7+0.25*profile.cardIQ/100);
-    // Score only pairs actually co-deployed. Unselected cards no longer falsely create synergy for every candidate.
-    for(let i=0;i<activeCards.length;i++)for(let j=i+1;j<activeCards.length;j++)score+=pair(activeCards[i],activeCards[j]);
-    mags.forEach(m=>activeCards.forEach(c=>score+=pair(m,c)*0.75));
-    // Reserves matter when a front-line unit falls, but less than the starting lineup.
-    reserve.forEach(r=>{score+=prefCardIntrinsicScore(region,r.card)*0.18+prefCardStrategyScore(region,r.card)*0.12+prefCardPreferenceScore(region,r.card)*0.12+prefAIPlanFitScore(region,r.card)*0.12;activeCards.forEach(c=>score+=pair(r.card,c)*0.16);});
+    // Score actual two-card reserve options, obeying the shared ★5 cap. Do not count unselected
+    // owned cards as though they were on the five-card battle roster.
+    const reservePool=cards.filter(x=>!activeIds.includes(x.inst.id)&&!(rankFiveCount(selected)>=1&&cardProfile.get(String(x.inst.id))?.rank===5));
+    const reserveRanked=reservePool.map(x=>({entry:x,value:reserveCandidateValue(x,selected,activeCards,activeProfiles)})).sort((a,b)=>b.value-a.value);
+    const reserveEntries=[];let selectedFiveCount=rankFiveCount(selected);
+    for(const item of reserveRanked){
+      if(reserveEntries.length>=2)break;
+      const isFive=cardProfile.get(String(item.entry.inst.id))?.rank===5;
+      if(isFive&&selectedFiveCount>=1)continue;
+      reserveEntries.push(item.entry);if(isFive)selectedFiveCount++;
+    }
+    // The reserve queue is a replacement order: if the opening team has a defender, put its
+    // backup tank ahead of a second attacker so the protective role is restored promptly.
+    const activeHasDefender=activeProfiles.some(x=>x.role==='defender');
+    const activeHasAttacker=activeProfiles.some(x=>x.role==='attacker');
+    reserveEntries.sort((a,b)=>{
+      const pa=cardProfile.get(String(a.inst.id))||prefCardProfile(a.card);
+      const pb=cardProfile.get(String(b.inst.id))||prefCardProfile(b.card);
+      const priority=x=>(activeHasDefender&&x.role==='defender'?2.4:0)+(activeHasAttacker&&x.role==='attacker'?0.5:0);
+      return priority(pb)-priority(pa);
+    });
+    const reserveCards=reserveEntries.map(x=>x.card);
+    const reserveProfiles=reserveEntries.map(x=>cardProfile.get(String(x.inst.id))||prefCardProfile(x.card));
+    const reserveHasFrontlineDefender=reserveProfiles.some(x=>x.tags.has('frontline_defender'));
+    if(hasAttacker&&reserveHasFrontlineDefender&&!hasFrontlineDefender)score-=6.0;
+    score+=reserveEntries.reduce((sum,entry)=>sum+(reserveRanked.find(x=>String(x.entry.inst.id)===String(entry.inst.id))?.value||0)*0.35,0);
+    // Score only pairs actually co-deployed, with a slightly stronger emphasis on explicit synergy.
+    for(let i=0;i<activeCards.length;i++)for(let j=i+1;j<activeCards.length;j++)score+=cachedPair(activeCards[i],activeCards[j])*1.28;
+    mags.forEach(m=>activeCards.forEach(c=>score+=cachedPair(m,c)*0.75));
+    // Reserve pair synergy matters less than the opening three because the two reserves usually enter at different times.
+    if(reserveCards.length===2)score+=cachedPair(reserveCards[0],reserveCards[1])*0.08;
+    // Keep a meaningful fallback team even if a small/old save cannot supply every role.
     if(allActiveTags.has('ap_supply')&&allActiveTags.has('heavy_cost'))score+=3.5;
     if(allActiveTags.has('healing'))score+=1.8;if(allActiveTags.has('shield_defense'))score+=1.8;
     if(allActiveTags.has('status_debuff')&&allActiveTags.has('status_condition'))score+=3.0;
     const attrs=new Set(activeCards.map(c=>String(c.mainAttr||'')).filter(Boolean));
     if(activeCards.length===3&&attrs.size===1&&profile.primaryStrategy==='attribute')score+=2.5;
-    // Card-selection IQ changes whether deep synergies are found reliably; imperfect rivals misvalue complex builds.
     const buildQuality=0.50+profile.cardIQ/200;
-    const scenarioEstimate=prefEstimateBuildScenarios(region,activeCards,reserve.map(x=>x.card),mags);
+    const scenarioEstimate=prefEstimateBuildScenarios(region,activeCards,reserveCards,mags);
     score=score*buildQuality+scenarioEstimate.mean*0.45+opponentCounterBonus(activeCards)+prefCardEstimateError(profile.cardIQ);
-    scoredBuilds.push({active:activeIds,score,scenarioMean:scenarioEstimate.mean,scenarios:scenarioEstimate.scenarios,activeNames:activeCards.map(c=>c.name||'キャラ'),attrs:[...attrs]});
+    scoredBuilds.push({active:activeIds,reserve:reserveEntries.map(x=>x.inst.id),score,scenarioMean:scenarioEstimate.mean,scenarios:scenarioEstimate.scenarios,activeNames:activeCards.map(c=>c.name||'キャラ'),reserveNames:reserveCards.map(c=>c.name||'キャラ'),attrs:[...attrs],roleCoverage:[...activeRoles]});
   }
   scoredBuilds.sort((a,b)=>b.score-a.score);
-  // Keep the three highest-scoring builds; expensive full searches are deliberately avoided in the browser.
+  // Keep the three highest-scoring builds; small randomness remains only among genuinely close candidates.
   const shortlist=scoredBuilds.slice(0,3);let best=shortlist[0];
-  if(shortlist.length>1){const top=shortlist[0].score;const near=shortlist.filter(x=>top-x.score<=3);if(near.length>1)best=near[Math.floor(Math.random()*near.length)];}
-  const active=best?.active||units.slice(0,3).map(x=>x.id);const reserve=units.map(x=>x.id).filter(id=>!active.includes(id)).slice(0,2);
+  if(shortlist.length>1){const top=shortlist[0].score;const near=shortlist.filter(x=>top-x.score<=2.0);if(near.length>1)best=near[Math.floor(Math.random()*near.length)];}
+  const active=best?.active||units.slice(0,3).map(x=>x.id);
+  const reserve=best?.reserve||units.map(x=>x.id).filter(id=>!active.includes(id)).slice(0,2);
   const reservedApThresholdCards=reserve.filter(id=>prefCardProfile(cardById(id)).apThresholdPassiveValue>=3).map(id=>cardById(id)?.name||'AP条件パッシブ持ち');
-  const reasons=[`カード選びの賢さ${profile.cardIQ}/100で構築候補を評価`,`主戦術「${(PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)||{}).label||'対応型'}」と副戦術を反映`,`AP効率・役割補完・パッシブ・条件・属性・マジックとの組み合わせを評価`,`自己永続強化は重複の限界価値を逓減し、数ターン先の行動価値と役割間の保護連携を評価`,`挑発・被ダメージ軽減・被弾時カウンターを持つディフェンダーは、アタッカーの初動保護役として評価`,`AP条件パッシブは有用性と必要APを見て、APを温存しやすい控え配置も評価`,...(reservedApThresholdCards.length?[`AP条件パッシブを持つ控え候補：${reservedApThresholdCards.join('、')}`]:[]),`候補${candidateSets.length}案を効果解析で評価し、上位${shortlist.length}案を3つの想定戦況（速攻・長期戦・連携成立）で平均比較`];
+  const reasons=[`カード選びの賢さ${profile.cardIQ}/100で構築候補を評価`,`主戦術「${(PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)||{}).label||'対応型'}」と副戦術を反映`,`先発3体は攻撃・防御回復・サポートの役割補完と、同時に場へ出るカード間の連携を重視`,`ターン開始・ターン終了などの繰り返しパッシブは、先発に置いた場合の発動機会を加点`,`控えは実際に採用する2枚だけを比較し、登場時パッシブと第2アタッカー・第2ディフェンダーの補充価値を評価`,`AP条件パッシブは有用性と必要APを見て、APを温存しやすい控え配置も評価`,...(reservedApThresholdCards.length?[`AP条件パッシブを持つ控え候補：${reservedApThresholdCards.join('、')}`]:[]),`候補${candidateSets.length}案を効果解析で評価し、上位${shortlist.length}案を3つの想定戦況（速攻・長期戦・連携成立）で平均比較`];
   if(opponentIntel?.confidence>0.15)reasons.push(`調査・対戦記憶の情報を対策に使用（信頼度${Math.round(opponentIntel.confidence*100)}%）`);
-  prefRecordAIThought(region,'編成構築','出撃メンバーを選出',reasons,{activeNames:best?.activeNames||active.map(id=>cardById(id)?.name||'キャラ'),reserveNames:reserve.map(id=>cardById(id)?.name||'キャラ'),apThresholdReserveNames:reservedApThresholdCards,score:best?.score,alternatives:shortlist.map(x=>({names:x.activeNames,score:Math.round(x.score*10)/10,scenarioMean:Math.round((x.scenarioMean||0)*10)/10,scenarios:x.scenarios,attributes:x.attrs})),opponentId:opponentId||null,opponentIntelConfidence:opponentIntel?.confidence||0});
+  prefRecordAIThought(region,'編成構築','出撃メンバーを選出',reasons,{activeNames:best?.activeNames||active.map(id=>cardById(id)?.name||'キャラ'),reserveNames:best?.reserveNames||reserve.map(id=>cardById(id)?.name||'キャラ'),apThresholdReserveNames:reservedApThresholdCards,score:best?.score,alternatives:shortlist.map(x=>({names:x.activeNames,reserveNames:x.reserveNames,roles:x.roleCoverage,score:Math.round(x.score*10)/10,scenarioMean:Math.round((x.scenarioMean||0)*10)/10,scenarios:x.scenarios,attributes:x.attrs})),opponentId:opponentId||null,opponentIntelConfidence:opponentIntel?.confidence||0});
   return prefNormalizeLoadoutSelection(active.slice(0,3),reserve.slice(0,2),units);
 }
 function prefDefaultLoadoutFallback(regionId) {
