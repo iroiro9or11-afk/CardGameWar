@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.44 — diminishing returns for permanent buffs and frontline-aware loadout scoring */
+/* 都道府県カード戦争 v1.0.46 — diminishing returns for permanent buffs and frontline-aware loadout scoring */
 'use strict';
 
 let campaignState = null;
@@ -199,6 +199,9 @@ function prefCardProfile(card) {
     if(t==='shield'||t==='damage_cut_ratio'||(t==='damage_taken_ratio'&&val<0))tags.add('shield_defense');
     if(t.startsWith('heal_')||(t==='mod_max_hp_val'&&val>0))tags.add('healing');
     if(t.startsWith('dmg_')||t==='atk_ratio'||t==='atk_val')tags.add('damage');
+    if(t==='dmg_max_hp_ratio')tags.add('hp_scaling_damage');
+    if(t==='damage_dealt_ratio'&&val>0)tags.add('damage_amp');
+    if(t==='damage_dealt_ratio'&&val<0)tags.add('status_debuff');
     if(['mod_atk_ratio','mod_atk_val','atk_ratio','atk_val','mod_speed'].includes(t))tags.add('attack_speed_buff');
     if(['status_apply','status_remove','clear_statuses','skill_block','heal_block','clear_buffs','clear_debuffs','clear_random_buffs','clear_random_debuffs'].includes(t)||(t==='damage_taken_ratio'&&val>0))tags.add('status_debuff');
     if(t==='sub_chance_mod'||n?.hasSubEffect||n?.subEffect)tags.add('extra_effect');
@@ -231,7 +234,12 @@ function prefCardProfile(card) {
   if(counterAttack)tags.add('counter_attack');
   if(debuffCleanser)tags.add('debuff_cleanser');
   if(permanentSelfBuff)tags.add('permanent_self_buff');
-  const role=String(card.role||'');
+  let role=String(card.role||'');
+  if(!role||role==='auto'){
+    if(tags.has('hp_scaling_damage')||tags.has('damage')) role='attacker';
+    if(tags.has('healing')||tags.has('shield_defense')) role='defender';
+    if(tags.has('status_debuff')||tags.has('damage_amp')||tags.has('attack_speed_buff')||tags.has('status_condition')) role='controller';
+  }
   if(role==='defender')tags.add('defender_role');
   if(role==='controller')tags.add('controller_role');
   if(role==='attacker')tags.add('attacker_role');
@@ -273,6 +281,8 @@ function prefPairSynergyRaw(cardA,cardB,profile) {
   if((a.tags.has('ap_supply')&&heavyB)||(b.tags.has('ap_supply')&&heavyA))pair+=7.5;
   if((a.tags.has('attack_speed_buff')&&b.tags.has('damage'))||(b.tags.has('attack_speed_buff')&&a.tags.has('damage')))pair+=4.0;
   if((a.tags.has('healing')||a.tags.has('shield_defense'))&&(b.tags.has('attack_role')||heavyB))pair+=3.0;
+  if((a.tags.has('hp_scaling_damage')&&(b.tags.has('healing')||b.tags.has('damage_amp'))) || (b.tags.has('hp_scaling_damage')&&(a.tags.has('healing')||a.tags.has('damage_amp'))))pair+=7.5;
+  if((a.tags.has('damage_amp')&&b.tags.has('damage'))||(b.tags.has('damage_amp')&&a.tags.has('damage')))pair+=5.5;
   if((b.tags.has('healing')||b.tags.has('shield_defense'))&&(a.tags.has('attack_role')||heavyA))pair+=3.0;
   if((a.tags.has('status_debuff')&&b.tags.has('status_condition'))||(b.tags.has('status_debuff')&&a.tags.has('status_condition')))pair+=7.0;
   if((a.tags.has('extra_effect')&&b.tags.has('status_debuff'))||(b.tags.has('extra_effect')&&a.tags.has('status_debuff')))pair+=4.0;
@@ -324,6 +334,8 @@ function prefRefreshAIPlan(region,trigger='市場確認',force=false) {
   if((highCost.length||profile.primaryStrategy==='heavy')&&!tagged.has('ap_supply'))add('ap-cycle','高コスト主力のAP循環',['ap_supply'],'高コストスキルを使用できるターンを増やす',10);
   if(tagged.has('status_condition')&&!tagged.has('status_debuff'))add('status-setup','条件成立用の状態異常付与',['status_debuff'],'状態異常を条件にする効果を成立させる',9);
   if(tagged.has('status_debuff')&&!tagged.has('status_condition'))add('status-payoff','状態異常からの追撃',['status_condition'],'付与した状態異常を活用する効果を探す',8);
+  if(tagged.has('hp_scaling_damage')&&!tagged.has('damage_amp'))add('hp-scaling-support','HP参照火力の増幅',['damage_amp',...(tagged.has('healing')?[]:['healing'])],'最大HP参照火力には攻撃力バフより与ダメージ強化・最大HP強化・回復が有効',10);
+  if((tagged.has('status_condition')&&!tagged.has('status_debuff'))||units.some(c=>prefCardProfile(c).tags.has('status_condition')&&!prefCardProfile(c).tags.has('status_debuff')))add('status-setup','条件成立用の状態異常付与',['status_debuff'],'状態異常を条件にする効果を成立させる',9);
   if((tagged.has('attack_role')||profile.primaryStrategy==='rush'||profile.primaryStrategy==='heavy')&&!tagged.has('healing')&&!tagged.has('shield_defense'))add('main-survival','主力の生存支援',['healing','shield_defense'],'火力役が行動する前に倒される危険を減らす',7);
   if(profile.primaryStrategy==='attribute'){
     const attr=profile.mainAttrPriority[0]||units.map(c=>String(c.mainAttr||'')).filter(Boolean).sort((a,b)=>units.filter(c=>c.mainAttr===b).length-units.filter(c=>c.mainAttr===a).length)[0]||'';
@@ -343,7 +355,7 @@ function prefRefreshAIPlan(region,trigger='市場確認',force=false) {
   region.aiPlan={version:1,createdAtAbs:old?.createdAtAbs||abs,lastEvaluatedAbs:abs,updatedAtAbs:abs,trigger:String(trigger),rosterSignature,marketSignature,
     primaryStrategy:profile.primaryStrategy,coreCardName:highCost[0]?.name||units.slice().sort((a,b)=>prefCardIntrinsicScore(region,b)-prefCardIntrinsicScore(region,a))[0]?.name||'',
     goalId:chosen.id,title:chosen.title,missingTags:chosen.missingTags,mainAttr:chosen.mainAttr||'',reason:chosen.reason,options,confidence:0.4+0.55*profile.cardIQ/100};
-  const changed=!old||old.goalId!==chosen.id||old.mainAttr!==region.aiPlan.mainAttr||String(old.missingTags||[]).join(',')!==chosen.missingTags.join(',')||old.rosterSignature!==rosterSignature;
+  const changed=!old||old.goalId!==chosen.id||old.mainAttr!==region.aiPlan.mainAttr||(Array.isArray(old.missingTags)?old.missingTags:[]).join(',')!==(Array.isArray(chosen.missingTags)?chosen.missingTags:[]).join(',')||old.rosterSignature!==rosterSignature;
   if(changed||force){
     prefRecordAIThought(region,'長期構築計画',`目標を再評価：${chosen.title}`,[chosen.reason,`カード選びの賢さ${profile.cardIQ}/100`,`比較中の構築案${options.length||1}案`,`再評価の契機：${trigger}`,...(region.aiPlan.coreCardName?[`主力候補：「${region.aiPlan.coreCardName}」を活かす計画`]:[])],
       {goalId:chosen.id,missingTags:chosen.missingTags,mainAttr:chosen.mainAttr,options:options.map(x=>({title:x.title,reason:x.reason,priority:Math.round(x.priority*10)/10})),confidence:region.aiPlan.confidence});
@@ -1603,6 +1615,14 @@ function prefAiRosterComplementBonus(region,card) {
   let bonus=0;
   // Give extra weight to filling a real tactical gap rather than merely duplicating a tag.
   if(cp.tags.has('damage')&&!has('damage'))bonus+=4.5;
+  // Basic personality-neutral roster balance: fill missing combat roles before stacking duplicates.
+  const roles=roster.map(c=>String(c.role||prefCardProfile(c).role||''));
+  const role=String(card.role||cp.role||'');
+  if(['attacker','controller','defender'].includes(role)&&!roles.includes(role))bonus+=roles.length>=2?5.0:2.5;
+  if(['attacker','controller','defender'].includes(role)&&roles.filter(r=>r===role).length>=2)bonus-=4.0;
+  if(cp.tags.has('hp_scaling_damage')&&hasAny(['healing','damage_amp']))bonus+=7.0;
+  if(cp.tags.has('damage_amp')&&has('hp_scaling_damage'))bonus+=6.0;
+  if(cp.tags.has('healing')&&has('hp_scaling_damage'))bonus+=4.5;
   if(cp.tags.has('ap_supply')&&profiles.some(p=>p.maxCost>=25||p.tags.has('heavy_cost')))bonus+=5.5;
   if(cp.tags.has('status_debuff')&&has('status_condition'))bonus+=5.0;
   if(cp.tags.has('status_condition')&&has('status_debuff'))bonus+=5.0;
@@ -1629,7 +1649,12 @@ function prefAiMarketUpgradeQualifies(region,instance,utility) {
 function prefAiUnitReserveFloor(region) {
   const funds=Math.max(0,Number(region?.funds)||0);
   const owned=prefOwnedUnits(region?.id).length;
-  return Math.min(10000000,Math.max(1000000,funds*0.05),owned<3?2000000:10000000);
+  // Keep roughly half of the current rank's periodic funding as a soft rebuild reserve.
+  // Existing cash above that reserve is intentionally available for frequent gacha pulls.
+  const funding=Number(PREF_FUNDING_BY_TIER[region?.supportTier||region?.tier||'E']||PREF_FUNDING_BY_TIER.E)||0;
+  const rankReserve=funding*0.5;
+  const emergencyFloor=owned<3?Math.min(2000000,funds*0.08):Math.min(3000000,funds*0.05);
+  return Math.min(funds,Math.max(rankReserve,emergencyFloor));
 }
 function prefAiCanBuyMarketUnit(region,instance,utility=null) {
   if(!region||!instance||instance.kind!=='unit'||instance.zone!=='market'||instance.sellerRegionId===region.id)return false;
@@ -1641,7 +1666,8 @@ function prefAiCanBuyMarketUnit(region,instance,utility=null) {
   const floor=prefAiUnitReserveFloor(region);
   if(owned.length>=3&&funds-price<floor)return false;
   if(owned.length<3&&funds-price<0)return false;
-  if(utility!=null&&owned.length<5&&utility<-3)return false;
+  if(utility!=null&&owned.length<5&&utility<-3&&prefAiRosterComplementBonus(region,card)<7)return false;
+  if(utility!=null&&owned.length<5&&prefRankStars(card)<=3&&owned.some(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))>=4)&&prefAiRosterComplementBonus(region,card)<7)return false;
   if(utility!=null&&owned.length>=5&&!prefAiMarketUpgradeQualifies(region,instance,utility))return false;
   return true;
 }
@@ -1774,7 +1800,7 @@ function prefAiTryEconomy(region) {
   // If the market cannot complete the roster, use gacha with a bounded budget and repeat while a slot is missing.
   // B-rank gacha yields characters 80% of the time; C is the cheaper fallback (50%).
   region._aiEconomyPhase='不足枠のガチャ補充';
-  let attemptsLimit=Math.min(4,Math.max(1,5-prefOwnedUnits(region.id).length+2));
+  let attemptsLimit=Math.min(6,Math.max(2,5-prefOwnedUnits(region.id).length+3));
   while(prefOwnedUnits(region.id).length<5&&gachaAttempts<attemptsLimit){
     const available=prefEligibleGachaUnitInstances();if(!available.length)break;
     const key=prefAiChooseGachaTier(region,false);if(!key)break;
@@ -1862,7 +1888,7 @@ function prefAiTryEconomy(region) {
       catch(err) { console.error(`[Prefecture] AI gacha upgrade scoring failed for ${region.id}`,err); }
       const eligible=prefEligibleGachaUnitInstances();
       const key=prefAiChooseGachaTier(region,potential>=8);
-      const utilityGate=profile.primaryStrategy==='collector'?2.0:profile.cardIQ>=75?4.0:6.0;
+      const utilityGate=profile.primaryStrategy==='collector'?0.5:profile.cardIQ>=75?2.5:4.5;
       if(eligible.length&&potential>=utilityGate&&key){
         const g=PREF_GACHA[key],cost=g.price,before=units.length;prefBook(region.id,-cost,'gacha');
         region._aiPendingGachaDebit={amount:cost,stage:'シナジー補強'};

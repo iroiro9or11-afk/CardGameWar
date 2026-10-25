@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.44</title>
+  <title>都道府県カード戦争 v1.0.46</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -307,7 +307,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.44</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.46</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -1543,10 +1543,13 @@
       
       switch(eff.type) {
         case "dmg_fixed": return `${eff.val}の固定ダメージ`;
-        case "dmg_fixed_pierce": return `${eff.val}の固定貫通ダメージ(受けるダメージ増減・シールドを無視)`;
+        case "dmg_fixed_pierce": return `${eff.val}の固定貫通ダメージ（受けるダメージ増減を無視、シールドは有効）`;
         case "shield": return `${eff.val}のシールドを付与${durText}`;
         case "sub_chance_mod": return `追加効果の発動確率を${eff.val>=0?'+':''}${eff.val}％${eff.val>=0?'増加':'減少'}${durText}`;
         case "dmg_atk_ratio": return `攻撃力×${eff.val}%のダメージ`;
+        case "dmg_atk_ratio_pierce": return `攻撃力×${eff.val}%の貫通ダメージ（受けるダメージ増減を無視、シールドは有効）`;
+        case "dmg_max_hp_ratio": return `最大HP×${eff.val}%のダメージ`;
+        case "damage_dealt_ratio": return `与えるダメージを${eff.val >= 0 ? '+' : ''}${eff.val}%${eff.val >= 0 ? '増加（バフ）' : '減少（デバフ）'}${durText}`;
         case "heal_fixed": return `${eff.val}回復`;
         case "heal_max_hp_ratio": return `最大HPの${eff.val}%回復`;
         case "mod_atk_ratio": return `攻撃力を${eff.val >= 0 ? '+' : ''}${eff.val}%(${eff.val >= 0 ? 'バフ' : 'デバフ'})${durText}`;
@@ -1870,7 +1873,7 @@
       const addEffect=(effect)=>{
         if(!effect || typeof effect!=='object')return;
         const type=String(effect.type||'none'),status=String(effect.status||'').toLowerCase();
-        if(['dmg_atk_ratio','dmg_fixed','dmg_fixed_pierce'].includes(type)) score.attacker+=5;
+        if(['dmg_atk_ratio','dmg_atk_ratio_pierce','dmg_max_hp_ratio','dmg_fixed','dmg_fixed_pierce'].includes(type)) score.attacker+=5;
         else if(['heal_fixed','heal_max_hp_ratio','shield','revive'].includes(type)) score.defender+=4;
         else if(type==='mod_max_hp_val') { if(Number(effect.val)>0)score.defender+=4; else score.controller+=3; }
         else if(type==='status_apply' && ['taunt','provoke'].includes(status)) score.defender+=5;
@@ -2199,8 +2202,10 @@
             <div class="grid grid-cols-2 gap-1 mb-1">
               <select class="${prefix}-main-eff-type bg-slate-800 text-[10px] rounded" onchange="handleEffectTypeChange('${prefix}', 'main-eff', '${skillType}', ${isMagic})">
                 <option value="dmg_atk_ratio">攻撃力×○％ダメージ</option>
+                <option value="dmg_atk_ratio_pierce">攻撃力×○％の貫通ダメージ（受けるダメージ増減を無視、シールドは有効）</option>
+                <option value="dmg_max_hp_ratio">最大HP×○％のダメージ</option>
                 <option value="dmg_fixed">○の固定ダメージ</option>
-                <option value="dmg_fixed_pierce">○の固定貫通ダメージ（受けるダメージ増減・シールドを無視）</option>
+                <option value="dmg_fixed_pierce">○の固定貫通ダメージ（受けるダメージ増減を無視、シールドは有効）</option>
                 <option value="shield">○のシールドを付与</option>
                 <option value="sub_chance_mod">追加効果の発動確率を○％増加/減少</option>
                 <option value="heal_max_hp_ratio">最大HPの○％回復</option>
@@ -2208,6 +2213,7 @@
                 <option value="mod_atk_ratio">攻撃力を○％増加/減少(バフ/デバフ)</option>
                 <option value="mod_atk_val">攻撃力を○増加/減少(バフ/デバフ)</option>
                 <option value="damage_taken_ratio">受けるダメージを○％増加/減少（増加=デバフ、減少=バフ）</option>
+                <option value="damage_dealt_ratio">与えるダメージを○％増加/減少（増加=バフ、減少=デバフ）</option>
                 <option value="mod_speed">行動値を○増加/減少(バフ/デバフ)</option>
                 <option value="mod_max_hp_val">最大HPを○増加/減少(バフ/デバフ)</option>
                 <option value="mod_ap">APを○増加/減少</option>
@@ -2259,8 +2265,10 @@
                   <span class="text-[8px] text-slate-400">追加効果の種別:</span>
                   <select class="${prefix}-sub-eff-type bg-slate-800 text-[10px] rounded w-full" onchange="handleEffectTypeChange('${prefix}', 'sub-eff', '${skillType}', ${isMagic})">
                     <option value="dmg_atk_ratio">攻撃力×○％ダメージ</option>
+                <option value="dmg_atk_ratio_pierce">攻撃力×○％の貫通ダメージ（受けるダメージ増減を無視、シールドは有効）</option>
+                <option value="dmg_max_hp_ratio">最大HP×○％のダメージ</option>
                     <option value="dmg_fixed">○の固定ダメージ</option>
-                    <option value="dmg_fixed_pierce">○の固定貫通ダメージ（受けるダメージ増減・シールドを無視）</option>
+                    <option value="dmg_fixed_pierce">○の固定貫通ダメージ（受けるダメージ増減を無視、シールドは有効）</option>
                     <option value="shield">○のシールドを付与</option>
                     <option value="sub_chance_mod">追加効果の発動確率を○％増加/減少</option>
                     <option value="heal_max_hp_ratio">最大HPの○％回復</option>
@@ -2268,6 +2276,7 @@
                     <option value="mod_atk_ratio">攻撃力を○％増加/減少</option>
                     <option value="mod_atk_val">攻撃力を○増加/減少(バフ/デバフ)</option>
                     <option value="damage_taken_ratio">受けるダメージを○％増加/減少（増加=デバフ、減少=バフ）</option>
+                <option value="damage_dealt_ratio">与えるダメージを○％増加/減少（増加=バフ、減少=デバフ）</option>
                     <option value="mod_speed">行動値を○増加/減少(バフ/デバフ)</option>
                     <option value="mod_max_hp_val">最大HPを○増加/減少(バフ/デバフ)</option>
                     <option value="mod_ap">APを○増加/減少</option>
@@ -2314,7 +2323,7 @@
 
     function sanitizeMagicEffectUI(prefix = "magic-eff") {
       if (!activeCreateType || activeCreateType !== "magic") return;
-      const forbidden = ["dmg_atk_ratio"];
+      const forbidden = ["dmg_atk_ratio", "dmg_atk_ratio_pierce", "dmg_max_hp_ratio"];
       const main = document.querySelector(`.${prefix}-main-eff-type`);
       if (main && forbidden.includes(main.value)) main.value = "none";
       const sub = document.querySelector(`.${prefix}-sub-eff-type`);
@@ -2388,6 +2397,7 @@
       const newType = selector?.value || '';
       if (valueInput && isRandomClearCountEffect(newType) && !isRandomClearCountEffect(oldType)) valueInput.value = '1';
       if (selector) selector.dataset.lastEffectType = newType;
+      if (isMagic) sanitizeMagicEffectUI(prefix);
       updateSkillFormDisplay(prefix, skillType, isMagic);
     }
 
@@ -2720,6 +2730,7 @@
       const categories = new Set();
       effects.forEach(type => {
         if (String(type).startsWith('dmg_')) categories.add('ダメージ');
+        else if (type === 'damage_dealt_ratio') categories.add('強化・弱体');
         else if (String(type).startsWith('heal_')) categories.add('回復');
         else if (['status_apply'].includes(type)) categories.add('状態異常付与');
         else if (['status_remove','clear_statuses'].includes(type)) categories.add('状態異常解除');
@@ -3004,13 +3015,13 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.44-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.46-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
         window.setTimeout(() => URL.revokeObjectURL(objectUrl), 15000);
-        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.44 ZIP と一緒にChatGPTへアップロードしてください。`);
+        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.46 ZIP と一緒にChatGPTへアップロードしてください。`);
       } catch (error) {
         console.error('[CardDataExport] カードデータの書き出しに失敗しました', error);
         alert(`カードデータの書き出しに失敗しました。\n${String(error?.message || error)}`);
@@ -3205,7 +3216,7 @@
       const statusLine = (arr, title, cls) => arr.length ? `<div class="mb-3"><div class="font-black ${cls} mb-1">${title}</div><div class="space-y-1">${arr.map(x=>`<div class="bg-slate-900 border border-slate-800 rounded px-2 py-1.5"><b>${x.type==='status'?statusName(x.status):x.type}</b>：${x.type==='status' ? '' : (x.val !== undefined ? (x.val>=0?'+':'')+x.val : '')}${durationActive(x.duration) ? ` ／ 残り${durationText(x.duration)}` : ''}</div>`).join('')}</div></div>` : `<div class="text-slate-500">${title}なし</div>`;
       const buffs = unit.buffs || [], debuffs = unit.debuffs || [], shields = unit.shields || [];
       const detailSkills = Array.isArray(unit.skills) && unit.skills.length ? unit.skills : (base.skills || []);
-      const html = `<div class="mb-3"><b class="text-amber-300 text-base">戦闘中ステータス</b><div class="grid grid-cols-2 gap-2 mt-2"><div>現在HP: <b>${unit.currentHp}/${unit.maxHp}</b></div><div>現在行動値: <b class="text-sky-300">${getEffectiveSpeed(unit)}</b></div></div></div>${statusLine(buffs,'🟢 バフ','text-emerald-300')}${statusLine(debuffs,'🔴 デバフ','text-rose-300')}${statusLine((unit.statuses||[]).map(x=>({...x,val:statusName(x.type)})),'🟣 状態異常','text-purple-300')}${shields.length ? `<div class="mb-3"><div class="font-black text-cyan-300 mb-1">🛡 シールド</div><div class="space-y-1">${shields.map((x,i)=>`<div class="bg-slate-900 border border-cyan-900 rounded px-2 py-1.5">${i+1}層目：残り${Number(x.remaining ?? x.amount) || 0} / ${Number(x.amount)||0}（${durationActive(x.duration)?`残り${durationText(x.duration)}`:'期限切れ'}）</div>`).join('')}</div></div>` : '<div class="text-slate-500">シールドなし</div>'}<div class="pt-3 border-t border-slate-800"><b class="text-amber-300">スキル一覧</b>${(detailSkills||[]).map(s=>`<div class="bg-slate-900 p-3 rounded border border-slate-800 text-sm mt-2"><div class="font-black text-amber-200">[${s.type?.toUpperCase()||'SKILL'}] ${s.name} <span class="text-xs text-slate-400">AP:${s.cost||0}</span></div><div class="skill-detail-desc mt-1 text-slate-200">${s.desc||''}</div></div>`).join('')}</div>`;
+      const html = `<div class="mb-3"><b class="text-amber-300 text-base">戦闘中ステータス</b><div class="grid grid-cols-2 gap-2 mt-2"><div>現在HP: <b>${unit.currentHp}/${unit.maxHp}</b></div><div>現在行動値: <b class="text-sky-300">${getEffectiveSpeed(unit)}</b></div></div></div>${statusLine(buffs,'🟢 バフ','text-emerald-300')}${statusLine(debuffs,'🔴 デバフ','text-rose-300')}${statusLine((unit.statuses||[]).map(x=>({...x,type:x.type==='mark'?`印（付与者：${x.sourceName||'不明'}）`:statusName(x.type),val:undefined})),'🟣 状態異常','text-purple-300')}${shields.length ? `<div class="mb-3"><div class="font-black text-cyan-300 mb-1">🛡 シールド</div><div class="space-y-1">${shields.map((x,i)=>`<div class="bg-slate-900 border border-cyan-900 rounded px-2 py-1.5">${i+1}層目：残り${Number(x.remaining ?? x.amount) || 0} / ${Number(x.amount)||0}（${durationActive(x.duration)?`残り${durationText(x.duration)}`:'期限切れ'}）</div>`).join('')}</div></div>` : '<div class="text-slate-500">シールドなし</div>'}<div class="pt-3 border-t border-slate-800"><b class="text-amber-300">スキル一覧</b>${(detailSkills||[]).map(s=>`<div class="bg-slate-900 p-3 rounded border border-slate-800 text-sm mt-2"><div class="font-black text-amber-200">[${s.type?.toUpperCase()||'SKILL'}] ${s.name} <span class="text-xs text-slate-400">AP:${s.cost||0}</span></div><div class="skill-detail-desc mt-1 text-slate-200">${s.desc||''}</div></div>`).join('')}</div>`;
       document.getElementById("detail-card-body").innerHTML = html;
       document.getElementById("btn-edit-card").classList.add('hidden');
       document.getElementById("btn-delete-card").classList.add('hidden');
@@ -5470,11 +5481,12 @@
       if (!target || target.__playerTarget || !effect) return;
       const duration = normalizeDuration(effect.duration);
       const isDamageTaken = effect.type === 'damage_taken_ratio' || effect.type === 'damage_cut_ratio';
+      const isDamageDealt = effect.type === 'damage_dealt_ratio';
       const normalizedVal = effect.type === 'damage_cut_ratio' ? -(Number(effect.val)||0) : (Number(effect.val)||0);
       const isBuff = isDamageTaken ? normalizedVal < 0 : Number(effect.val) >= 0;
       const dest = isBuff ? target.buffs : target.debuffs;
       const item = {
-        type: (effect.type === 'damage_cut_ratio' || effect.type === 'damage_taken_ratio') ? 'damage_taken_ratio' : effect.type === 'mod_speed' ? 'speed' : effect.type === 'mod_max_hp_val' ? 'max_hp' : effect.type === 'mod_atk_ratio' ? 'atk_ratio' : 'atk_val',
+        type: isDamageDealt ? 'damage_dealt_ratio' : (effect.type === 'damage_cut_ratio' || effect.type === 'damage_taken_ratio') ? 'damage_taken_ratio' : effect.type === 'mod_speed' ? 'speed' : effect.type === 'mod_max_hp_val' ? 'max_hp' : effect.type === 'mod_atk_ratio' ? 'atk_ratio' : 'atk_val',
         val: isDamageTaken ? normalizedVal : (Number(effect.val) || 0),
         duration,
         source: isBuff ? 'buff' : 'debuff'
@@ -5516,11 +5528,14 @@
 
       const beforeHp = target.currentHp;
       if (target.currentHp <= 0 && ['heal_fixed','heal_max_hp_ratio','mod_max_hp_val'].includes(effect.type)) return fail({ value: 0, kills: 0, damage: 0, healing: 0 });
-      if (effect.type === 'dmg_fixed' || effect.type === 'dmg_fixed_pierce' || effect.type === 'dmg_atk_ratio') {
-        if (isMagic && effect.type === 'dmg_atk_ratio') return fail({ value: -50, kills: 0, damage: 0, healing: 0 });
-        const raw = (effect.type === 'dmg_fixed' || effect.type === 'dmg_fixed_pierce') ? Number(effect.val) || 0 : Math.round(aiPlannerEffectiveAtk(actor) * ((Number(effect.val) || 0) / 100));
-        const afterCut = effect.type === 'dmg_fixed_pierce' ? Math.max(0, Math.round(raw)) : aiPlannerDamageAfterCut(target, raw);
-        const actual = aiPlannerAbsorbShield(target, afterCut, effect.type === 'dmg_fixed_pierce');
+      if (effect.type === 'dmg_fixed' || effect.type === 'dmg_fixed_pierce' || effect.type === 'dmg_atk_ratio' || effect.type === 'dmg_atk_ratio_pierce' || effect.type === 'dmg_max_hp_ratio') {
+        if (isMagic && ['dmg_atk_ratio','dmg_atk_ratio_pierce','dmg_max_hp_ratio'].includes(effect.type)) return fail({ value: -50, kills: 0, damage: 0, healing: 0 });
+        let raw = (effect.type === 'dmg_fixed' || effect.type === 'dmg_fixed_pierce') ? Number(effect.val) || 0 : effect.type === 'dmg_max_hp_ratio' ? Math.round(Number(actor.maxHp||0) * ((Number(effect.val)||0)/100)) : Math.round(aiPlannerEffectiveAtk(actor) * ((Number(effect.val) || 0) / 100));
+        const dealtRatio = [...(actor.buffs||[]), ...(actor.debuffs||[])].filter(b=>b.type==='damage_dealt_ratio').reduce((sum,b)=>sum+(Number(b.val)||0),0);
+        raw = Math.max(0, Math.round(raw * Math.max(0,1+dealtRatio/100)));
+        const piercing = effect.type === 'dmg_fixed_pierce' || effect.type === 'dmg_atk_ratio_pierce';
+        const afterCut = piercing ? Math.max(0, Math.round(raw)) : aiPlannerDamageAfterCut(target, raw);
+        const actual = aiPlannerAbsorbShield(target, afterCut, false);
         target.currentHp = Math.max(0, target.currentHp - actual);
         const killed = beforeHp > 0 && target.currentHp <= 0;
         const hostileTarget = target.side !== actor.side;
@@ -5550,7 +5565,7 @@
         target.currentHp += actual;
         return ok({ value: actual * (target.side === actor.side ? 0.95 : -1.15), kills: 0, damage: 0, healing: actual });
       }
-      if (effect.type === 'damage_taken_ratio' || effect.type === 'damage_cut_ratio' || effect.type === 'mod_atk_ratio' || effect.type === 'mod_atk_val' || effect.type === 'mod_speed' || effect.type === 'mod_max_hp_val') {
+      if (effect.type === 'damage_taken_ratio' || effect.type === 'damage_cut_ratio' || effect.type === 'damage_dealt_ratio' || effect.type === 'mod_atk_ratio' || effect.type === 'mod_atk_val' || effect.type === 'mod_speed' || effect.type === 'mod_max_hp_val') {
         aiPlannerAddTimed(target, effect);
         const val = Number(effect.val) || 0;
         if (effect.type === 'mod_max_hp_val') {
@@ -5564,11 +5579,12 @@
           const value = Math.abs(val) * weight * (beneficial ? 1 : -1) + (killed ? (beneficial ? 1400 : -2400) : 0);
           return ok({ value, kills: killed ? 1 : 0, damage: Math.max(0, beforeCurrent-target.currentHp), healing: Math.max(0,target.currentHp-beforeCurrent), maxHpChange: target.maxHp-beforeMax });
         }
-        const weight = (effect.type === 'damage_cut_ratio' || effect.type === 'damage_taken_ratio') ? 18 : effect.type === 'mod_speed' ? 10 : 7;
+        const weight = (effect.type === 'damage_cut_ratio' || effect.type === 'damage_taken_ratio') ? 18 : effect.type === 'damage_dealt_ratio' ? 17 : effect.type === 'mod_speed' ? 10 : 7;
         const friendly = target.side === actor.side;
         let beneficial;
         if (effect.type === 'damage_cut_ratio') beneficial = friendly ? val > 0 : val < 0;
         else if (effect.type === 'damage_taken_ratio') beneficial = friendly ? val < 0 : val > 0;
+        else if (effect.type === 'damage_dealt_ratio') beneficial = friendly ? val > 0 : val < 0;
         else beneficial = friendly ? val > 0 : val < 0;
         return ok({ value: Math.abs(val) * weight * (beneficial ? 1 : -1), kills: 0, damage: 0, healing: 0 });
       }
@@ -6207,12 +6223,13 @@
         if (cost > futureAp) return;
         const eff = sk.mainEffect || {};
         let raw = 0;
-        if (eff.type === 'dmg_atk_ratio') raw = Math.round(aiPlannerEffectiveAtk(attacker) * (Number(eff.val) || 0) / 100);
+        if (eff.type === 'dmg_atk_ratio' || eff.type === 'dmg_atk_ratio_pierce') raw = Math.round(aiPlannerEffectiveAtk(attacker) * (Number(eff.val) || 0) / 100);
+        else if (eff.type === 'dmg_max_hp_ratio') raw = Math.round(Number(attacker.maxHp||0) * (Number(eff.val)||0) / 100);
         else if (eff.type === 'dmg_fixed' || eff.type === 'dmg_fixed_pierce') raw = Math.max(0, Number(eff.val) || 0);
         if (!raw) return;
         // Compare against HP + shields below, so retain the post-mitigation damage here
         // rather than subtracting shields twice.
-        const dealt = eff.type === 'dmg_fixed_pierce' ? raw : aiPlannerDamageAfterCut(target, raw);
+        const dealt = ['dmg_fixed_pierce','dmg_atk_ratio_pierce'].includes(eff.type) ? raw : aiPlannerDamageAfterCut(target, raw);
         best = Math.max(best, dealt);
       });
       return best;
@@ -6246,7 +6263,7 @@
       if (!candidate || candidate.type !== 'skill' || !actor || !candidate.skill) return 0;
       const role = isValidUnitRole(actor.role) ? actor.role : inferUnitRoleFromSkills(actor.skills || [], {hp:actor.maxHp, atk:actor.atk, priority:actor.priority});
       const effect = candidate.skill.mainEffect || {};
-      const damageSkill = ['dmg_atk_ratio','dmg_fixed','dmg_fixed_pierce'].includes(String(effect.type || ''));
+      const damageSkill = ['dmg_atk_ratio','dmg_atk_ratio_pierce','dmg_max_hp_ratio','dmg_fixed','dmg_fixed_pierce'].includes(String(effect.type || ''));
       const apKey = side === 'player' ? 'playerAp' : 'enemyAp';
       const beforeAp = Math.max(0, Number(beforeState[apKey]) || 0);
       const afterAp = Math.max(0, Number(afterState[apKey]) || 0);
@@ -6262,7 +6279,7 @@
             if (sk?.type !== 'active' || !aiPlannerCondition(sk.selfCond, ally, beforeState)) return false;
             const cost = Math.max(0, Number(sk.cost) || 0) + (aiPlannerHasStatus(ally, 'pressure') ? 5 : 0);
             const eff = sk.mainEffect || {};
-            const offensive = ['dmg_atk_ratio','dmg_fixed','dmg_fixed_pierce'].includes(String(eff.type || ''));
+            const offensive = ['dmg_atk_ratio','dmg_atk_ratio_pierce','dmg_max_hp_ratio','dmg_fixed','dmg_fixed_pierce'].includes(String(eff.type || ''));
             if (!offensive || cost <= afterAp || cost > beforeAp) return false;
             const wouldDeal = eff.type === 'dmg_atk_ratio' ? aiPlannerEffectiveAtk(ally) * (Number(eff.val) || 0) / 100 : Number(eff.val) || 0;
             const thisDeals = effect.type === 'dmg_atk_ratio' ? aiPlannerEffectiveAtk(actor) * (Number(effect.val) || 0) / 100 : Number(effect.val) || 0;
@@ -6289,7 +6306,7 @@
 
       // Controllers buffing a real attacker receive a small team-plan bonus; the long-horizon
       // state evaluator supplies most of the actual buff value.
-      if (role === 'controller' && ['mod_atk_ratio','mod_atk_val','mod_speed','shield','damage_taken_ratio','damage_cut_ratio','heal_fixed','heal_max_hp_ratio'].includes(String(effect.type || ''))) {
+      if (role === 'controller' && ['mod_atk_ratio','mod_atk_val','mod_speed','shield','damage_taken_ratio','damage_cut_ratio','damage_dealt_ratio','heal_fixed','heal_max_hp_ratio','mod_max_hp_val'].includes(String(effect.type || ''))) {
         const target = aiPlannerFindUnit(afterState, candidate.targetInstanceId) || (candidate.skill.targetType === 'self' ? aiPlannerFindUnit(afterState, actor.instanceId) : null);
         if (target && target.side === side && target.role === 'attacker') adjustment += 140;
       }
@@ -6309,12 +6326,12 @@
       const targetsEnemy = /enemy/.test(String(skill.targetType || '')) || skill.targetType === 'all_enemy';
       const targetPool = targetsEnemy ? enemies : allies;
       let value = 0;
-      if (['dmg_atk_ratio','dmg_fixed','dmg_fixed_pierce'].includes(type)) {
+      if (['dmg_atk_ratio','dmg_atk_ratio_pierce','dmg_max_hp_ratio','dmg_fixed','dmg_fixed_pierce'].includes(type)) {
         if (!targetsEnemy) return 0;
         let best = 0, canKill = false;
         for (const target of enemies) {
-          const raw = type === 'dmg_atk_ratio' ? Math.round(aiPlannerEffectiveAtk(unit) * val / 100) : Math.max(0, val);
-          const damage = type === 'dmg_fixed_pierce' ? raw : aiPlannerDamageAfterCut(target, raw);
+          const raw = type === 'dmg_atk_ratio' || type === 'dmg_atk_ratio_pierce' ? Math.round(aiPlannerEffectiveAtk(unit) * val / 100) : type === 'dmg_max_hp_ratio' ? Math.round(Number(unit.maxHp||0)*val/100) : Math.max(0, val);
+          const damage = ['dmg_fixed_pierce','dmg_atk_ratio_pierce'].includes(type) ? raw : aiPlannerDamageAfterCut(target, raw);
           const shield = (target.shields || []).reduce((sum, sh) => sum + Math.max(0, Number(sh.remaining ?? sh.amount) || 0), 0);
           best = Math.max(best, damage);
           if (damage >= target.currentHp + shield) canKill = true;
@@ -6542,7 +6559,7 @@
       const hasAffordableDamageFollowup = (actor.skills || []).some(other => {
         if (other === skill || other?.id === skill.id || other?.type !== 'active') return false;
         const eff = other.mainEffect || {};
-        if (!['dmg_atk_ratio','dmg_fixed','dmg_fixed_pierce'].includes(String(eff.type || ''))) return false;
+        if (!['dmg_atk_ratio','dmg_atk_ratio_pierce','dmg_max_hp_ratio','dmg_fixed','dmg_fixed_pierce'].includes(String(eff.type || ''))) return false;
         return Math.max(0, Number(other.cost) || 0) <= currentAp;
       });
       for (const entry of entries) {
@@ -6841,9 +6858,9 @@
       if (!target) return -9999;
       const effect = skill.mainEffect || {};
       let score = 0;
-      if (effect.type === 'dmg_fixed' || effect.type === 'dmg_fixed_pierce' || effect.type === 'dmg_atk_ratio') {
-        const raw = (effect.type === 'dmg_fixed' || effect.type === 'dmg_fixed_pierce') ? Number(effect.val || 0) : Math.round(aiPlannerEffectiveAtk(unit) * Number(effect.val || 0) / 100);
-        const actual = effect.type === 'dmg_fixed_pierce' ? Math.max(0, Math.round(raw)) : aiPlannerDamageAfterCut(target, raw);
+      if (effect.type === 'dmg_fixed' || effect.type === 'dmg_fixed_pierce' || effect.type === 'dmg_atk_ratio' || effect.type === 'dmg_atk_ratio_pierce' || effect.type === 'dmg_max_hp_ratio') {
+        const raw = (effect.type === 'dmg_fixed' || effect.type === 'dmg_fixed_pierce') ? Number(effect.val || 0) : effect.type === 'dmg_max_hp_ratio' ? Math.round(Number(unit.maxHp||0)*Number(effect.val||0)/100) : Math.round(aiPlannerEffectiveAtk(unit) * Number(effect.val || 0) / 100);
+        const actual = ['dmg_fixed_pierce','dmg_atk_ratio_pierce'].includes(effect.type) ? Math.max(0, Math.round(raw)) : aiPlannerDamageAfterCut(target, raw);
         score += actual * 0.8;
         if (actual >= target.currentHp) score += 260;
         if (target.currentHp / Math.max(1, target.maxHp) < 0.35) score += 75;
@@ -6851,6 +6868,7 @@
       if (effect.type === 'heal_fixed' || effect.type === 'heal_max_hp_ratio') score += (1 - target.currentHp / Math.max(1, target.maxHp)) * 110;
       if (effect.type === 'mod_atk_ratio' || effect.type === 'mod_atk_val' || effect.type === 'mod_speed') score += target.side === unit.side ? 55 : 20;
       if (effect.type === 'damage_taken_ratio' || effect.type === 'damage_cut_ratio') { const v = effect.type === 'damage_cut_ratio' ? -(Number(effect.val)||0) : (Number(effect.val)||0); score += (v < 0 ? (target.side === unit.side ? 75 : 5) : (target.side !== unit.side ? 75 : -10)); }
+      if (effect.type === 'damage_dealt_ratio') score += (Number(effect.val||0)>0 ? (target.side===unit.side?90:-10) : (target.side!==unit.side?70:-20));
       if (effect.type === 'heal_block' || effect.type === 'skill_block') score += target.side !== unit.side ? 85 : -20;
       if (effect.type === 'mod_ap') score += Number(effect.val || 0) > 0 ? 55 : 35;
       const side=unit?.side||'enemy';
@@ -6878,9 +6896,9 @@
       const friendly = target.side === unit.side;
       const base = scoreAiTarget(target, skill, unit);
       let beneficial;
-      if (['dmg_fixed','dmg_fixed_pierce','dmg_atk_ratio'].includes(type)) {
+      if (['dmg_fixed','dmg_fixed_pierce','dmg_atk_ratio','dmg_atk_ratio_pierce','dmg_max_hp_ratio'].includes(type)) {
         if (!friendly) return base;
-        const raw = type === 'dmg_atk_ratio' ? Math.round(aiPlannerEffectiveAtk(unit) * value / 100) : value;
+        const raw = type === 'dmg_atk_ratio' || type === 'dmg_atk_ratio_pierce' ? Math.round(aiPlannerEffectiveAtk(unit) * value / 100) : type === 'dmg_max_hp_ratio' ? Math.round(Number(unit.maxHp||0)*value/100) : value;
         const lethal = raw >= Number(target.currentHp || 0);
         return -Math.max(100, Math.abs(base)) - (lethal ? 5000 : 300);
       }
@@ -7359,7 +7377,7 @@
         const raw = Math.round(getEffectiveAtk(unit) * 0.8);
         const actorHpBefore = { current: unit.currentHp, max: unit.maxHp };
         const before = target.currentHp;
-        const damageResult = dealDamage(target, raw);
+        const damageResult = dealDamage(target, raw, false, false, unit);
         const dealt = before - target.currentHp;
         logBattle(`⚔️ ${unit.name} の通常攻撃！ ${target.name} に ${dealt} ダメージ！`);
         const attackPopup = showActionPopup(unit, "通常攻撃", {cardType:'unit',name:unit.name,image:getCardImage(unit)||unit.image,hp:unit.maxHp,atk:getEffectiveAtk(unit),prio:getEffectiveSpeed(unit)}, {
@@ -7577,30 +7595,29 @@
 
       const duration = normalizeDuration(eff.duration);
 
-      if (eff.type === "dmg_atk_ratio") {
-        // マジックカードの発動者はプレイヤーでありキャラではないため、
-        // 基礎攻撃力参照ダメージはマジックでは使用不可。
-        if (isMagic) {
-          logBattle(`⚠️ マジックカードでは「攻撃力×○％ダメージ」は使用できません。`);
+      if (["dmg_atk_ratio", "dmg_atk_ratio_pierce", "dmg_max_hp_ratio", "dmg_fixed", "dmg_fixed_pierce"].includes(eff.type)) {
+        if (isMagic && ['dmg_atk_ratio','dmg_atk_ratio_pierce','dmg_max_hp_ratio'].includes(eff.type)) {
+          logBattle(`⚠️ マジックカードではキャラの攻撃力・最大HPを参照するダメージを使用できません。`);
           return;
         }
-        const baseAtk = actor ? getEffectiveAtk(actor) : 1000;
-        const dmg = Math.round(baseAtk * (eff.val / 100));
-        const beforeHp=target.currentHp; const damageResult=dealDamage(target, dmg); const actualDamage=beforeHp-target.currentHp;
+        let raw = 0;
+        if (eff.type === 'dmg_atk_ratio' || eff.type === 'dmg_atk_ratio_pierce') raw = Math.round((actor ? getEffectiveAtk(actor) : 1000) * (Number(eff.val) || 0) / 100);
+        else if (eff.type === 'dmg_max_hp_ratio') raw = Math.round((actor ? Number(actor.maxHp) : 1000) * (Number(eff.val) || 0) / 100);
+        else raw = Number(eff.val) || 0;
+        const piercing = eff.type === 'dmg_fixed_pierce' || eff.type === 'dmg_atk_ratio_pierce';
+        // 貫通は対象の受けるダメージ補正だけを無視し、攻撃者の与ダメージ補正とシールドは有効。
+        const beforeHp = target.currentHp;
+        const damageResult = dealDamage(target, raw, piercing, false, actor);
+        const actual = beforeHp - target.currentHp;
         if (damageResult.incomingDamage > 0) triggerPassiveEvent('damage_taken', target, actor);
-        if(target.currentHp<beforeHp) triggerPassiveEvent('hp_decrease',target);
-        if(target.currentHp<=0&&beforeHp>0){ triggerPassiveEvent('death',target); triggerAllyDeathPassives(target.side, target); }
-        logBattle(`💥 ${target.name} に ${beforeHp-target.currentHp} のダメージ！`);
-        return {effect:`攻撃力×${eff.val}%ダメージ${damageResult.absorbed ? `（シールドが${damageResult.absorbed}吸収）` : ''}`, result:`${target.name} に ${actualDamage} ダメージ${target.currentHp<=0?'／撃破！':''}`};
-      }
-
-      if (eff.type === "dmg_fixed" || eff.type === "dmg_fixed_pierce") {
-        const beforeHp = target.currentHp; const damageResult=dealDamage(target, eff.val, eff.type === 'dmg_fixed_pierce', eff.type === 'dmg_fixed_pierce'); const actual = beforeHp - target.currentHp;
-        if (damageResult.incomingDamage > 0) triggerPassiveEvent('damage_taken', target, actor);
-        if(actual>0) triggerPassiveEvent('hp_decrease',target);
-        if(target.currentHp<=0&&beforeHp>0){ triggerPassiveEvent('death',target); triggerAllyDeathPassives(target.side, target); }
-        logBattle(`💥 ${target.name} に ${actual} の固定ダメージ！`);
-        return {effect:eff.type==='dmg_fixed_pierce'?`${eff.val}の固定貫通ダメージ`:`${eff.val}の固定ダメージ${damageResult.absorbed ? `（シールドが${damageResult.absorbed}吸収）` : ''}`, result:`${target.name} に ${actual} ダメージ${damageResult.absorbed ? `（シールド吸収 ${damageResult.absorbed}）` : ''}${target.currentHp<=0?'／撃破！':''}`};
+        if (actual > 0) triggerPassiveEvent('hp_decrease', target);
+        if (target.currentHp <= 0 && beforeHp > 0) { triggerPassiveEvent('death', target); triggerAllyDeathPassives(target.side, target); }
+        const effectLabel = eff.type === 'dmg_max_hp_ratio' ? `最大HP×${eff.val}%ダメージ`
+          : eff.type === 'dmg_atk_ratio_pierce' ? `攻撃力×${eff.val}%の貫通ダメージ`
+          : eff.type === 'dmg_atk_ratio' ? `攻撃力×${eff.val}%ダメージ`
+          : eff.type === 'dmg_fixed_pierce' ? `${eff.val}の固定貫通ダメージ` : `${eff.val}の固定ダメージ`;
+        logBattle(`💥 ${target.name} に ${actual} のダメージ！`);
+        return {effect:`${effectLabel}${damageResult.absorbed ? `（シールドが${damageResult.absorbed}吸収）` : ''}`, result:`${target.name} に ${actual} ダメージ${damageResult.absorbed ? `（シールド吸収 ${damageResult.absorbed}）` : ''}${target.currentHp<=0?'／撃破！':''}`};
       }
 
       if (eff.type === "sub_chance_mod") {
@@ -7635,6 +7652,15 @@
         target.currentHp = Math.min(target.maxHp, target.currentHp + healVal);
         const actualHeal = target.currentHp - beforeHp; if(actualHeal>0) triggerPassiveEvent('hp_increase',target); logBattle(`💚 ${target.name} のHPが ${actualHeal} 回復した！`);
         return {effect:`${healVal}回復`, result:`${target.name} のHP +${actualHeal}`};
+      }
+
+      if (eff.type === "damage_dealt_ratio") {
+        const val = Number(eff.val) || 0;
+        const isBuff = val >= 0;
+        addTimedStatus(target, { type: 'damage_dealt_ratio', val, duration, source: isBuff ? 'buff' : 'debuff' }, isBuff);
+        const text = `与えるダメージ ${val>=0?'+':''}${val}%（${isBuff?'増加・バフ': '減少・デバフ'}）`;
+        logBattle(`⚔️ ${target.name} の${text}！`);
+        return {effect:text, result:`${target.name} に ${durationText(duration)}適用`};
       }
 
       if (eff.type === "damage_taken_ratio" || eff.type === "damage_cut_ratio") {
@@ -7743,13 +7769,21 @@
       if (eff.type === "status_apply") {
         target.statuses = target.statuses || [];
         const status=eff.status||'poison';
-        if(target.statuses.some(x=>x.type===status&&durationActive(x.duration))){ logBattle(`⚠️ ${target.name} は${statusName(status)}中のため重ねがけできません。`); return {effect:`${statusName(status)}を付与`,result:`${statusName(status)}は既に継続中`}; }
-        target.statuses.push({type:status,duration:duration,appliedTurn:battleState.turn});
-        logBattle(`🌀 ${target.name} に${statusName(status)}を${durationText(duration)}付与！`);
-        return {effect:`${statusName(status)}を付与`,result:`${target.name} に${durationText(duration)}適用`};
+        // 「印」だけは付与者ごとに別インスタンスとして管理し、重複付与を許可する。
+        if(status !== 'mark' && target.statuses.some(x=>x.type===status&&durationActive(x.duration))){ logBattle(`⚠️ ${target.name} は${statusName(status)}中のため重ねがけできません。`); return {effect:`${statusName(status)}を付与`,result:`${statusName(status)}は既に継続中`}; }
+        target.statuses.push({type:status,duration:duration,appliedTurn:battleState.turn,...(status==='mark'?{sourceId:actor?.instanceId||null,sourceName:actor?.name||'不明な付与者'}:{})});
+        logBattle(`🌀 ${target.name} に${statusName(status)}を${durationText(duration)}付与！${status==='mark'?`（付与者：${actor?.name||'不明'}）`:''}`);
+        return {effect:`${statusName(status)}を付与${status==='mark'?'（付与者別）':''}`,result:`${target.name} に${durationText(duration)}適用`};
       }
-      if (eff.type === "status_remove") { target.statuses=(target.statuses||[]).filter(x=>x.type!==(eff.status||'poison')); return {effect:`${statusName(eff.status||'poison')}を解除`,result:`${target.name} の状態異常解除`}; }
-      if (eff.type === "clear_statuses") { target.statuses=[]; return {effect:'全ての状態異常を解除',result:`${target.name} の状態異常解除`}; }
+      if (eff.type === "status_remove") {
+        const status=eff.status||'poison';
+        target.statuses=(target.statuses||[]).filter(x=>x.type!==status || (status==='mark' && String(x.sourceId??'')!==String(actor?.instanceId??'')));
+        return {effect:`${statusName(status)}を解除`,result:`${target.name} の${statusName(status)}解除（印は付与者本人のもののみ）`};
+      }
+      if (eff.type === "clear_statuses") {
+        target.statuses=(target.statuses||[]).filter(x=>x.type==='mark' && String(x.sourceId??'')!==String(actor?.instanceId??''));
+        return {effect:'解除可能な状態異常を全て解除',result:`${target.name} の状態異常解除（他者が付けた印は残存）`};
+      }
 
       if (eff.type === "heal_block") {
         target.debuffs = target.debuffs || [];
@@ -7766,8 +7800,16 @@
       }
     }
 
-    function dealDamage(unit, amount, bypassReceivedDamageModifiers=false, bypassShields=false) {
+    function dealDamage(unit, amount, bypassReceivedDamageModifiers=false, bypassShields=false, attacker=null) {
       let finalAmount = Math.max(0, Number(amount)||0);
+      // 与ダメージ補正と被ダメージ補正は、それぞれ同じ段階で乗算する。
+      // 貫通ダメージでも攻撃者側の補正は有効。シールドは全ての貫通ダメージを吸収できる。
+      if (attacker) {
+        const dealtRatio = [...(attacker.buffs||[]), ...(attacker.debuffs||[])]
+          .filter(b => b.type === 'damage_dealt_ratio')
+          .reduce((sum,b) => sum + (Number(b.val)||0),0);
+        finalAmount *= Math.max(0, 1 + dealtRatio / 100);
+      }
       if (!bypassReceivedDamageModifiers) {
         const receivedRatio = [...(unit.buffs||[]), ...(unit.debuffs||[])]
           .filter(b => b.type === 'damage_taken_ratio' || b.type === 'dmg_cut')

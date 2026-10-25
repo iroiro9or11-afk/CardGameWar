@@ -1,5 +1,5 @@
 /*
- * 都道府県カード戦争 v1.0.43 - カード性能検証ラボ
+ * 都道府県カード戦争 v1.0.46 - カード性能検証ラボ
  * Uses the existing battle engine in isolated, temporary headless battles.
  * Results are intentionally memory-only and never saved to IndexedDB/campaign state.
  */
@@ -245,32 +245,35 @@
     return [...chosen, ...reserves];
   }
 
-  function labBuildPlayerRoster(targetCard, allUnits) {
+  function labBuildPlayerRoster(targetCard, allUnits, excludeIds = []) {
     const stars = labStars(targetCard);
+    const excluded = new Set(excludeIds.map(String));
     if (stars === 5) {
-      const fillers = allUnits.filter(card => labStars(card) === 4 && String(card.id) !== String(targetCard.id));
-      if (fillers.length < 4) throw new Error('★5カードの検証には、作成カード一覧に★4キャラカードが4枚以上必要です。検証用にキャンペーンカードや架空カードは使用しません。');
-      return labArrangeRoster([targetCard, ...labPick(fillers, 4)], targetCard);
+      const star5 = allUnits.filter(card => labStars(card) === 5 && !excluded.has(String(card.id)));
+      const star4 = allUnits.filter(card => labStars(card) === 4 && !excluded.has(String(card.id)));
+      // Two ★5 cards and three ★4 cards per side. The focal card is guaranteed to participate.
+      const otherStar5 = star5.filter(card => String(card.id) !== String(targetCard.id));
+      if (star4.length < 3 || otherStar5.length < 1 || star5.length < 2) throw new Error('★5カードの検証には、作成カード一覧に★5キャラカードが合計4枚以上、★4キャラカードが6枚以上必要です（両陣営それぞれ★5を2枚・★4を3枚）。');
+      const chosen5 = labPick(otherStar5, 1);
+      const chosen4 = labPick(star4, 3);
+      return labArrangeRoster([targetCard, ...chosen5, ...chosen4], targetCard);
     }
-    const sameRank = allUnits.filter(card => labStars(card) === stars);
-    if (sameRank.length < 5) throw new Error(`★${stars}カードの検証には、作成カード一覧に★${stars}キャラカードが合計5枚以上必要です。★1・★2やキャンペーン中のカードは使用しません。`);
-    return labArrangeRoster([targetCard, ...labPick(sameRank, 4, [targetCard.id])], targetCard);
+    const sameRank = allUnits.filter(card => labStars(card) === stars && !excluded.has(String(card.id)));
+    if (sameRank.length < 5) throw new Error(`★${stars}カードの検証には、作成カード一覧に★${stars}キャラカードが合計10枚以上必要です。★1・★2やキャンペーン中のカードは使用しません。`);
+    return labArrangeRoster([targetCard, ...labPick(sameRank.filter(c=>String(c.id)!==String(targetCard.id)), 4)], targetCard);
   }
 
-  function labBuildEnemyRoster(targetCard, allUnits) {
+  function labBuildEnemyRoster(targetCard, allUnits, excludeIds = []) {
     const stars = labStars(targetCard);
+    const excluded = new Set(excludeIds.map(String));
     if (stars === 5) {
-      const star5 = allUnits.filter(card => labStars(card) === 5);
-      const star4 = allUnits.filter(card => labStars(card) === 4);
-      if (star4.length < 4) throw new Error('★5カードの検証には、作成カード一覧に★4キャラカードが4枚以上必要です。');
-      // Prefer a different ★5 template; if there is only one authored ★5, a mirror match is the only valid registered-card option.
-      const otherStar5 = star5.filter(card => String(card.id) !== String(targetCard.id));
-      const enemyAce = labPick(otherStar5.length ? otherStar5 : star5, 1)[0];
-      return labArrangeRoster([enemyAce, ...labPick(star4, 4)], enemyAce);
+      const star5 = allUnits.filter(card => labStars(card) === 5 && !excluded.has(String(card.id)));
+      const star4 = allUnits.filter(card => labStars(card) === 4 && !excluded.has(String(card.id)));
+      if (star5.length < 2 || star4.length < 3) throw new Error('★5カードの検証で両陣営のカードを重複させないため、★5キャラカード4枚以上・★4キャラカード6枚以上が必要です。');
+      return labArrangeRoster([...labPick(star5, 2), ...labPick(star4, 3)]);
     }
-    const sameRank = allUnits.filter(card => labStars(card) === stars);
-    if (sameRank.length < 5) throw new Error(`★${stars}カードの検証には、作成カード一覧に★${stars}キャラカードが合計5枚以上必要です。`);
-    // The enemy team is sampled independently. It may include the tested template if the authored pool is small.
+    const sameRank = allUnits.filter(card => labStars(card) === stars && !excluded.has(String(card.id)));
+    if (sameRank.length < 5) throw new Error(`★${stars}カードの検証には、作成カード一覧に★${stars}キャラカードが合計10枚以上必要です。`);
     return labArrangeRoster(labPick(sameRank, 5));
   }
 
@@ -813,7 +816,7 @@
       <section class="rounded-xl border border-slate-800 bg-slate-900 p-4"><h4 class="text-base font-black text-violet-200 mb-2">登場位置の統計（編成された${summary.count}戦）</h4><p class="text-xs text-slate-400 mb-3">「先陣」は出撃枠（最初の3体）を指します。控えに配置された場合は、控え1・控え2のどちらから登場する編成だったかを集計します。試合中の交代・登場前に倒されたかどうかとは区別した、編成時点の配置割合です。</p><div class="grid grid-cols-1 sm:grid-cols-3 gap-2">${labMetricCard('先陣（出撃枠）', `${summary.appearancePositions.active}戦（${labPercent(summary.appearancePositionRates.active)}）`, '最初から場に出る3体のいずれか')}${labMetricCard('控え1', `${summary.appearancePositions.reserve1}戦（${labPercent(summary.appearancePositionRates.reserve1)}）`, '控えの1番目として配置')}${labMetricCard('控え2', `${summary.appearancePositions.reserve2}戦（${labPercent(summary.appearancePositionRates.reserve2)}）`, '控えの2番目として配置')}</div></section>
       ${skillDiagnosticsHtml}
       <section class="grid grid-cols-1 md:grid-cols-2 gap-3"><div class="rounded-xl border border-emerald-800/60 bg-slate-900 p-4"><h4 class="text-base font-black text-emerald-300 mb-3">強いところ・実際の貢献</h4><ul class="space-y-3">${copy.strengths.map(text => `<li class="text-sm leading-relaxed text-slate-200 flex gap-2"><span class="text-emerald-300">＋</span><span>${labEsc(text)}</span></li>`).join('')}</ul></div><div class="rounded-xl border border-rose-800/60 bg-slate-900 p-4"><h4 class="text-base font-black text-rose-300 mb-3">弱いところ・改善できそうな点</h4><ul class="space-y-3">${copy.weaknesses.map(text => `<li class="text-sm leading-relaxed text-slate-200 flex gap-2"><span class="text-rose-300">−</span><span>${labEsc(text)}</span></li>`).join('')}</ul></div></section>
-      <section class="rounded-xl border border-slate-800 bg-slate-900 p-4"><h4 class="text-sm font-black text-slate-200">今回の検証条件</h4><p class="text-xs leading-relaxed text-slate-400 mt-2">合計${summary.count}戦。検証対象のランクに合わせ、作成カード一覧に登録済みの★3〜★5キャラのみでチームをランダム編成します。★5カードを検証する場合は、双方とも★5を1体・★4を4体に固定します。★3・★4カードは同ランク5体で編成します。マジックカードは一切使用しません。双方の戦術AIは最高設定です。結果は一時表示のみで、キャンペーンデータや通常戦績は変更しません。</p></section>
+      <section class="rounded-xl border border-slate-800 bg-slate-900 p-4"><h4 class="text-sm font-black text-slate-200">今回の検証条件</h4><p class="text-xs leading-relaxed text-slate-400 mt-2">合計${summary.count}戦。検証対象のランクに合わせ、作成カード一覧に登録済みの★3〜★5キャラのみでチームをランダム編成します。★5カードを検証する場合は、双方とも★5を2体・★4を3体に固定します。★3・★4カードは同ランク5体で編成します。マジックカードは一切使用しません。双方の戦術AIは最高設定です。結果は一時表示のみで、キャンペーンデータや通常戦績は変更しません。</p></section>
       <div class="flex flex-wrap gap-2"><button type="button" onclick="rerunPerformanceLab()" class="px-4 py-3 bg-violet-600 hover:bg-violet-500 rounded-xl text-sm font-black">同じカードを再検証</button><button type="button" onclick="resetPerformanceLabReport()" class="px-4 py-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-sm font-bold">別のカードを選ぶ</button></div>`;
     report.classList.remove('hidden');
     progress?.classList.add('hidden');
@@ -962,7 +965,7 @@
       <section class="rounded-2xl border border-violet-500/50 bg-gradient-to-br from-slate-900 via-slate-950 to-violet-950 p-4 sm:p-6 shadow-xl">
         <div class="text-[10px] font-black tracking-widest text-violet-300">BATCH PERFORMANCE RANKING</div>
         <h3 class="text-xl sm:text-2xl font-black text-white mt-1">★${rank}キャラ 一括評価ランキング</h3>
-        <p class="text-xs text-slate-300 mt-2">ランク帯のランダム対戦を共通で実施し、各対戦のチームに参加した対象キャラの試合数・勝敗を個別に加算します。全キャラが${LAB_TOTAL_BATTLES}回以上参加した時点で終了します。★3・★4は同ランク5体、★5は★5を1体＋★4を4体の編成です。両陣営でカードIDが重複した編成は無効とし、試合数・勝敗を一切加算せず再抽選します。登録済み作成カードのみを使い、マジックは使いません。</p>
+        <p class="text-xs text-slate-300 mt-2">ランク帯のランダム対戦を共通で実施し、各対戦のチームに参加した対象キャラの試合数・勝敗を個別に加算します。全キャラが${LAB_TOTAL_BATTLES}回以上参加した時点で終了します。★3・★4は同ランク5体、★5は★5を2体＋★4を3体の編成です。両陣営でカードIDが重複した編成は無効とし、試合数・勝敗を一切加算せず再抽選します。登録済み作成カードのみを使い、マジックは使いません。</p>
         <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-4">${labMetricCard('評価対象', `${entries.length} 枚`, '選択ランクの作成キャラ')}${labMetricCard('実施対戦数', labFormatNumber(totalBattles), '共有した戦闘シミュレーション数')}${labMetricCard(`${LAB_TOTAL_BATTLES}回到達`, `${completedCount} / ${entries.length} 枚`, `参加回数合計 ${labFormatNumber(playedAppearances)}`)}</div>
       </section>
       ${status}
@@ -993,15 +996,15 @@
   function labBuildBatchRoster(rank, candidates, allUnits, statsById, excludeForThisSide = []) {
     const excluded = new Set(excludeForThisSide.map(String));
     if (rank === 5) {
-      const ace = labPickLeastTested(candidates, statsById, 1, [...excluded])[0];
-      if (!ace) throw new Error('一括評価の両陣営に重複なしで★5を配置できません。作成カード一覧に★5キャラカードが2枚以上必要です。');
-      const star4 = allUnits.filter(card => labStars(card) === 4 && !excluded.has(String(card.id)) && String(card.id) !== String(ace.id));
-      if (star4.length < 4) throw new Error('一括評価で同一カードを両陣営に配置しないため、作成カード一覧に★4キャラカードが合計8枚以上必要です。');
-      const fillers = labPickLeastTested(star4, statsById, 4, [...excluded, String(ace.id)]);
-      if (fillers.length !== 4) throw new Error('★5一括評価の★4補充カードを重複なしで選べませんでした。編成を再抽選してください。');
-      return labArrangeRoster([ace, ...fillers], ace);
+      const aces = labPickLeastTested(candidates, statsById, 2, [...excluded]);
+      if (aces.length !== 2) throw new Error('★5一括評価では、両陣営に重複なしで配置するため★5カードが合計4枚以上必要です。');
+      const aceIds = aces.map(c=>String(c.id));
+      const star4 = allUnits.filter(card => labStars(card) === 4 && !excluded.has(String(card.id)) && !aceIds.includes(String(card.id)));
+      if (star4.length < 3) throw new Error('★5一括評価で両陣営に★4を3体ずつ配置するため、★4カードが合計6枚以上必要です。');
+      const fillers = labPickLeastTested(star4, statsById, 3, [...excluded, ...aceIds]);
+      if (fillers.length !== 3) throw new Error('★5一括評価の★4補充カードを重複なしで選べませんでした。');
+      return labArrangeRoster([...aces, ...fillers], aces[0]);
     }
-
     const roster = labPickLeastTested(candidates, statsById, 5, [...excluded]);
     if (roster.length !== 5) {
       throw new Error(`★${rank}一括評価で両陣営に重複なしで編成するには、同ランクの作成キャラカードが10枚以上必要です。現在は${candidates.length}枚です。`);
@@ -1028,12 +1031,12 @@
     // A batch with a card on both sides is invalid and must never contribute statistics.
     if (rank === 5) {
       const star4Count = allUnits.filter(card => labStars(card) === 4).length;
-      if (candidates.length < 2) {
-        alert('★5一括評価では同じカードを両陣営に入れないため、作成カード一覧に★5キャラカードが2枚以上必要です。');
+      if (candidates.length < 4) {
+        alert('★5一括評価では同じカードを両陣営に入れないため、作成カード一覧に★5キャラカードが4枚以上必要です。');
         return;
       }
-      if (star4Count < 8) {
-        alert(`★5一括評価では両陣営に★4を4体ずつ配置するため、作成カード一覧に★4キャラカードが8枚以上必要です。現在は${star4Count}枚です。`);
+      if (star4Count < 6) {
+        alert(`★5一括評価では両陣営に★4を3体ずつ配置するため、作成カード一覧に★4キャラカードが6枚以上必要です。現在は${star4Count}枚です。`);
         return;
       }
     } else if (candidates.length < 10) {
@@ -1062,7 +1065,7 @@
     let totalBattles = 0;
     let rejectedLineups = 0;
     const maxRejectedLineups = 100;
-    const slotsPerBattle = rank === 5 ? Math.min(2, candidates.length) : Math.min(10, candidates.length);
+    const slotsPerBattle = rank === 5 ? Math.min(4, candidates.length) : Math.min(10, candidates.length);
     const maxBatchBattles = Math.ceil(LAB_TOTAL_BATTLES * candidates.length / Math.max(1, slotsPerBattle)) + Math.max(10, Math.ceil(LAB_TOTAL_BATTLES * 0.02));
     const allReachedTarget = () => candidates.every(card => (statsById.get(String(card.id))?.games || 0) >= LAB_TOTAL_BATTLES);
     try {
@@ -1205,8 +1208,8 @@
     const targetStars = labStars(targetCard);
     const sameRankCount = allUnits.filter(card => labStars(card) === targetStars).length;
     try {
-      labBuildPlayerRoster(targetCard, allUnits);
-      labBuildEnemyRoster(targetCard, allUnits);
+      const preflightPlayer = labBuildPlayerRoster(targetCard, allUnits);
+      labBuildEnemyRoster(targetCard, allUnits, preflightPlayer.map(c=>String(c.id)));
     } catch (error) {
       alert(error.message || String(error));
       return;
@@ -1233,8 +1236,8 @@
     let done = 0;
     try {
       // Preflight once, then run the configured number of randomized registered-card team battles.
-      labBuildPlayerRoster(targetCard, allUnits);
-      labBuildEnemyRoster(targetCard, allUnits);
+      const preflightPlayer = labBuildPlayerRoster(targetCard, allUnits);
+      labBuildEnemyRoster(targetCard, allUnits, preflightPlayer.map(c=>String(c.id)));
       labSetProgress(done, targetCard);
       await labYieldToBrowser();
       for (let i = 0; i < LAB_TOTAL_BATTLES; i++) {
@@ -1242,8 +1245,14 @@
           labRenderInterrupted(done, targetCard);
           return;
         }
-        const playerRoster = labBuildPlayerRoster(targetCard, allUnits);
-        const enemyRoster = labBuildEnemyRoster(targetCard, allUnits);
+        let playerRoster = null, enemyRoster = null;
+        for (let attempt = 0; attempt < 30; attempt++) {
+          playerRoster = labBuildPlayerRoster(targetCard, allUnits);
+          enemyRoster = labBuildEnemyRoster(targetCard, allUnits, playerRoster.map(c=>String(c.id)));
+          if (!labRostersHaveDuplicate(playerRoster, enemyRoster)) break;
+          playerRoster = null; enemyRoster = null;
+        }
+        if (!playerRoster || !enemyRoster) throw new Error('カード重複のない検証チームを作成できませんでした。★5・★4の登録カード数を確認してください。');
         const row = await labPlayBattle(targetCard, 'random', i, playerRoster, enemyRoster, magicPool);
         results.push(row);
         uniqueRosters.add(row.opponentRosterKey);
