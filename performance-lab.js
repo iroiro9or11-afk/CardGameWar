@@ -44,10 +44,11 @@
     return targetMetrics.skillUsage[key];
   }
 
+  // Reference bounds follow each rank's actual valuation curve, rather than the old shared 10^15 cap.
   const LAB_VALUE_RANGES = {
-    3: { min: 0, max: 1_000_000_000_000_000 },
-    4: { min: 0, max: 1_000_000_000_000_000 },
-    5: { min: 0, max: 1_000_000_000_000_000 }
+    3: { min: 300_000, max: 30_000_000 },
+    4: { min: 10_000_000, max: 1_000_000_000 },
+    5: { min: 500_000_000, max: 50_000_000_000 }
   };
 
   // Exponential valuation: each 20 percentage-point increase in win rate multiplies value by 10.
@@ -698,7 +699,7 @@
     const value = labEstimateValue(stars, winRate);
     const confidence = uniqueEnemyRosters >= 30 && sameRankCount >= 8 ? '比較的高い' : uniqueEnemyRosters >= 10 && sameRankCount >= 4 ? '標準' : '限定的';
     const confidenceFactor = confidence === '比較的高い' ? 0.06 : confidence === '標準' ? 0.12 : 0.22;
-    const margin = range ? Math.round((range.max - range.min) * confidenceFactor / 10_000) * 10_000 : null;
+    const margin = range ? Math.max(10_000, Math.round((range.max - range.min) * confidenceFactor / 10_000) * 10_000) : null;
     const interval = range && value != null ? { min: Math.max(range.min, value - margin), max: Math.min(range.max, value + margin) } : null;
     return {
       stars, wins, draws, losses, winRate, winPointRate, totalTarget, totalPlayer, totalEnemy,

@@ -6937,7 +6937,7 @@
       if(typeof prefShowModal==='function'&&battleState.campaignMode){prefShowModal('降参の確認','降参するとこの対戦は敗北扱いになります。本当に降参しますか？',[{label:'対戦を続ける',action:'close-modal'},{label:'降参する',action:'confirm-surrender',style:'danger'}]);return;}
       if(!confirm('降参すると敗北扱いになります。本当に降参しますか？'))return;finalizeSurrenderBattle();
     }
-    function finalizeSurrenderBattle(){if(!battleState||battleState.resultWinner)return;battleState.resultWinner='enemy';battleState.phase='result';document.getElementById('decision-command-panel')?.classList.add('hidden');logBattle('🏳️ プレイヤーが降参しました。');if(battleState.campaignMode&&typeof prefFinalizePlayerBattle==='function'&&campaignBattlePending){prefFinalizePlayerBattle('enemy').then(()=>showBattleResultModal('enemy'));}else showBattleResultModal('enemy');}
+    function finalizeSurrenderBattle(){if(!battleState||battleState.resultWinner)return;battleState.resultWinner='enemy';battleState.phase='result';document.getElementById('decision-command-panel')?.classList.add('hidden');logBattle('🏳️ プレイヤーが降参しました。');if(battleState.campaignMode&&typeof prefFinalizePlayerBattle==='function'&&campaignBattlePending){prefFinalizePlayerBattle('enemy').then(()=>showBattleResultModal('enemy')).catch(err=>{console.error('[Prefecture] surrender settlement failed:',err);showBattleResultModal('enemy');});}else showBattleResultModal('enemy');}
     function showBattleResultModal(winner) {
       const modal = document.getElementById('battle-result-modal');
       const title = document.getElementById('battle-result-title');

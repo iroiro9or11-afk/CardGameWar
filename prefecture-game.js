@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.51 — resilient rank-ordered campaign processing, synergy-aware five-card rival loadouts */
+/* 都道府県カード戦争 v1.0.53 — revised gacha odds, surrender and lab demo improvements */
 'use strict';
 
 let campaignState = null;
@@ -32,9 +32,9 @@ const PREF_FUNDING_WEEKS = [1, 14, 27, 40];
 const PREF_FUNDING_BY_TIER = { S: 10000000000, A: 5000000000, B: 1000000000, C: 500000000, D: 300000000, E: 100000000 };
 const PREF_GACHA_VALUE_LIMITS = {4:100000000,5:5000000000};
 const PREF_GACHA = {
-  A: { label: 'Aランクガチャ', price: 100000000, odds: [{kind:'unit',rank:5,band:'lower',weight:15},{kind:'unit',rank:5,band:'upper',weight:5},{kind:'unit',rank:4,band:'any',weight:80}] },
-  B: { label: 'Bランクガチャ', price: 10000000, odds: [{kind:'unit',rank:5,band:'lower',weight:1},{kind:'unit',rank:4,band:'lower',weight:40},{kind:'unit',rank:4,band:'upper',weight:10},{kind:'unit',rank:3,band:'any',weight:49}] },
-  C: { label: 'Cランクガチャ', price: 1000000, odds: [{kind:'unit',rank:4,band:'lower',weight:10},{kind:'unit',rank:3,band:'any',weight:90}] }
+  A: { label: 'Aランクガチャ', price: 100000000, odds: [{kind:'unit',rank:5,band:'upper',weight:5},{kind:'unit',rank:5,band:'lower',weight:15},{kind:'unit',rank:4,band:'any',weight:60},{kind:'unit',rank:3,band:'any',weight:10},{kind:'magic',weight:10}] },
+  B: { label: 'Bランクガチャ', price: 10000000, odds: [{kind:'unit',rank:5,band:'lower',weight:1},{kind:'unit',rank:4,band:'upper',weight:10},{kind:'unit',rank:4,band:'lower',weight:40},{kind:'unit',rank:3,band:'any',weight:29},{kind:'magic',weight:20}] },
+  C: { label: 'Cランクガチャ', price: 1000000, odds: [{kind:'unit',rank:4,band:'lower',weight:1},{kind:'unit',rank:3,band:'any',weight:30},{kind:'magic',weight:69}] }
 };
 const PREF_REGIONS = [
  '北海道','青森県','岩手県','宮城県','秋田県','山形県','福島県','茨城県','栃木県','群馬県','埼玉県','千葉県','東京都','神奈川県',
@@ -1327,10 +1327,10 @@ function prefRenderGacha() {
   const eligible=prefEligibleGachaUnitInstances();const counts=[3,4,5].map(rank=>eligible.filter(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))===rank).length);
   const pool=document.getElementById('pref-gacha-pool-counts');if(pool){pool.className='grid grid-cols-3 gap-2';pool.innerHTML=counts.map((n,i)=>`<div class="rounded-xl border border-amber-500/20 bg-slate-900 p-2 text-center"><div class="text-[9px] text-slate-400">★${i+3}</div><div class="text-amber-200 font-black text-lg">${n}</div><div class="text-[9px] text-slate-500">残存</div></div>`).join('');}
   const allowed=[];const tier=p.tier||'E';if(['S','A','B'].includes(tier))allowed.push('A');if(['S','A','B','C','D'].includes(tier))allowed.push('B');allowed.push('C');
-  list.innerHTML=allowed.map(key=>{const g=PREF_GACHA[key];const unlocked=(key==='A'?['S','A','B'].includes(tier):key==='B'?['S','A','B','C','D'].includes(tier):true);const probs=g.odds.map(o=>`${o.band==='lower'?'下位':o.band==='upper'?'上位':''}★${o.rank} ${o.weight}%`).join(' / ');
+  list.innerHTML=allowed.map(key=>{const g=PREF_GACHA[key];const unlocked=(key==='A'?['S','A','B'].includes(tier):key==='B'?['S','A','B','C','D'].includes(tier):true);const probs=g.odds.map(o=>o.kind==='magic'?`マジックカード ${o.weight}%`:`${o.band==='lower'?'下位':o.band==='upper'?'上位':''}★${o.rank} ${o.weight}%`).join(' / ');
     return `<div class="relative overflow-hidden rounded-2xl border ${key==='A'?'border-amber-400/50':key==='B'?'border-cyan-400/40':key==='C'?'border-violet-400/40':'border-purple-500/40'} bg-gradient-to-br from-slate-900 to-slate-950 p-4"><div class="absolute -right-4 -top-4 text-7xl opacity-10">✨</div><div class="relative"><div class="text-[10px] text-slate-400 font-bold">CLASS ${key}</div><h3 class="text-lg font-black ${key==='A'?'text-amber-200':key==='B'?'text-cyan-200':key==='C'?'text-violet-200':'text-purple-200'} mt-1">${prefEsc(g.label)}</h3><div class="text-2xl font-black text-white mt-2">${prefFormatMoney(g.price)}</div><div class="text-[10px] text-slate-400 mt-2 leading-relaxed">排出率：${prefEsc(probs)}</div><button data-pref-action="pull-gacha" data-id="${prefEsc(key)}" class="mt-4 w-full py-3 rounded-xl font-black text-sm ${unlocked?'bg-violet-600 hover:bg-violet-500 text-white':'bg-slate-800 text-slate-500 cursor-not-allowed'}" ${unlocked?'':'disabled'}>1回引く</button></div></div>`;
   }).join('');
-  document.getElementById('pref-gacha-note').textContent=`現在の所持金：${prefFormatMoney(p.funds)}。現在の京都府ランク：${tier}。AランクガチャはBランク以上、BランクガチャはDランク以上で解放。ガチャ1回につき表示確率のキャラ1枚＋マジック1枚を獲得します。マジックは所持上限${PREF_MAGIC_LIMIT}枚を超えると入れ替えが必要です。`;
+  document.getElementById('pref-gacha-note').textContent=`現在の所持金：${prefFormatMoney(p.funds)}。現在の京都府ランク：${tier}。AランクガチャはBランク以上、BランクガチャはDランク以上で解放。ガチャ1回につき表示確率に従ってキャラまたはマジックを1枚獲得し、さらにマジック1枚が確定で付きます。マジックは所持上限${PREF_MAGIC_LIMIT}枚を超えると入れ替えが必要です。`;
 }
 function prefRenderRanking() {
   if(!campaignState){const b=document.getElementById('pref-ranking-body');if(b)b.innerHTML='<tr><td colspan="7" class="p-8 text-center text-slate-500">ゲームを開始してください。</td></tr>';return;}
@@ -1501,8 +1501,9 @@ function prefResolveGachaTier(key) {
   const roll=Math.random()*100;let cursor=0;let result=null;
   for(const odds of g.odds){cursor+=odds.weight;if(roll<cursor){result=odds;break;}}
   if(!result)return null;
+  if(result.kind==='magic'){const templates=prefCardTemplates().filter(c=>c.cardType==='magic');const template=prefRandom(templates);if(!template)return {kind:'magic',rank:0,band:'any',instance:null,noUnits:true};const instance=prefCreateInstance(template.id,'pending',null,{source:'gacha-random-magic'});return {kind:'magic',rank:0,band:'any',instance};}
   let eligible=prefEligibleGachaUnitInstances().filter(inst=>{const c=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);if(prefRankStars(c)!==Number(result.rank))return false;const threshold=PREF_GACHA_VALUE_LIMITS[Number(result.rank)];return result.band==='upper'?Number(c?.value||0)>=threshold:result.band==='lower'?Number(c?.value||0)<threshold:true;});
-  if(!eligible.length){const threes=prefEligibleGachaUnitInstances().filter(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))===3);return {kind:'unit',rank:3,band:'any',instance:prefRandom(threes)||null,fallback:true};}
+  if(!eligible.length){const threes=prefEligibleGachaUnitInstances().filter(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))===3);if(threes.length)return {kind:'unit',rank:3,band:'any',instance:prefRandom(threes),fallback:true};const magic=prefCardTemplates().filter(c=>c.cardType==='magic');const template=prefRandom(magic);return template?{kind:'magic',rank:0,band:'any',instance:prefCreateInstance(template.id,'pending',null,{source:'gacha-fallback-magic'}),fallback:true,noUnits:true}:null;}
   return {kind:'unit',rank:Number(result.rank),band:result.band,instance:prefRandom(eligible)};
 }
 async function prefPullGacha(key) {
@@ -1514,11 +1515,12 @@ async function prefPullGacha(key) {
   prefBook(PREF_PLAYER_ID,-g.price,'gacha');
   const selected=prefResolveGachaTier(key);
   let resultCard=null;
-  if(!selected?.instance){prefBook(PREF_PLAYER_ID,g.price,'gacha-refund');prefShowModal('ガチャ停止','条件に合うキャラカードがガチャにありません。カードを作成・登録してください。',[{label:'戻る',action:'close-modal'}]);return;}
+  if(!selected?.instance){prefBook(PREF_PLAYER_ID,g.price,'gacha-refund');prefShowModal('ガチャ停止','排出対象のカードがありません。マジックカードまたは対象ランクのキャラカードを登録してください。',[{label:'戻る',action:'close-modal'}]);return;}
   resultCard=selected.instance;
   prefAcquireInstance(PREF_PLAYER_ID,resultCard.id,{reason:'gacha',deferCapacityModal:true});
   const card=prefCardForInstance(resultCard.id)||prefTemplate(resultCard.templateId);
-  prefLog(`ガチャからキャラカード「${card?.name||'カード'}」（★${prefRankStars(card)}・${selected.band==='lower'?'下位':selected.band==='upper'?'上位':'通常'}）が排出されました。`,'success');
+  if(selected.kind==='magic')prefLog(`ガチャの確率枠からマジックカード「${card?.name||'カード'}」が排出されました。`,'success');
+  else prefLog(`ガチャからキャラカード「${card?.name||'カード'}」（★${prefRankStars(card)}・${selected.band==='lower'?'下位':selected.band==='upper'?'上位':'通常'}）が排出されました。`,'success');
   const magicTemplates=prefCardTemplates().filter(c=>c.cardType==='magic');
   const magicTemplate=prefRandom(magicTemplates);let bundledMagicInstance=null;
   if(magicTemplate){
@@ -1542,7 +1544,7 @@ async function prefPullGacha(key) {
   const fallback=selected.fallback?`<p class="text-xs text-amber-200 mt-2">希望ランクのカードが残っていないため、${selected.noUnits?'マジックカードに切り替えました':`★${selected.rank}で代用しました`}。</p>`:'';
   const zone=campaignState.instances[resultCard?.id]?.zone;
   const bundledMagic=campaignState.logs?.slice(-5).find(x=>String(x.message||x.text||'').includes('抱き合わせでマジックカード'))?.message||'';const location=zone==='market'?'<p class="text-xs text-cyan-200 mt-2">重複のため市場へ自動出品されました。</p>':zone==='pending'?`<p class="text-xs text-amber-200 mt-2">所持上限${resultCard?.kind==='magic'?`（マジック${PREF_MAGIC_LIMIT}枚）`:''}のため、既存カードまたは新カードを選んで市場へ出品してください。</p>`:'';
-  const cardBlock=c?`<div class="grid grid-cols-2 gap-3 mt-3 items-start"><div><div class="text-[10px] text-amber-200 font-black mb-1">キャラカード</div><div class="mx-auto w-full max-w-[11rem]">${prefCardDisplay(resultCard.id,{small:true})}</div><div class="text-center mt-2"><div class="font-black text-white text-sm">${prefEsc(c.name)}</div><div class="text-emerald-200 font-black mt-1">価値 ${prefFormatMoney(prefCardValue(c))}</div></div></div>${bundledMagicInstance?(()=>{const mc=prefCardForInstance(bundledMagicInstance.id)||prefTemplate(bundledMagicInstance.templateId);return `<div><div class="text-[10px] text-violet-200 font-black mb-1">確定マジック</div><div class="mx-auto w-full max-w-[11rem]">${prefCardDisplay(bundledMagicInstance.id,{small:true})}</div><div class="text-center mt-2"><div class="font-black text-white text-sm">${prefEsc(mc?.name||'マジックカード')}</div><div class="text-emerald-200 font-black mt-1">価値 ${prefFormatMoney(prefCardValue(mc))}</div></div></div>`;})():''}</div><div class="text-[10px] text-slate-500 mt-2">カード画像をタップすると詳細を確認できます</div>`:'<p class="text-slate-400 text-sm">カードの登録データが見つかりませんでした。</p>';
+  const cardBlock=c?`<div class="grid grid-cols-2 gap-3 mt-3 items-start"><div><div class="text-[10px] text-amber-200 font-black mb-1">${c?.cardType==='magic'?'確率枠のマジックカード':'キャラカード'}</div><div class="mx-auto w-full max-w-[11rem]">${prefCardDisplay(resultCard.id,{small:true})}</div><div class="text-center mt-2"><div class="font-black text-white text-sm">${prefEsc(c.name)}</div><div class="text-emerald-200 font-black mt-1">価値 ${prefFormatMoney(prefCardValue(c))}</div></div></div>${bundledMagicInstance?(()=>{const mc=prefCardForInstance(bundledMagicInstance.id)||prefTemplate(bundledMagicInstance.templateId);return `<div><div class="text-[10px] text-violet-200 font-black mb-1">確定マジック</div><div class="mx-auto w-full max-w-[11rem]">${prefCardDisplay(bundledMagicInstance.id,{small:true})}</div><div class="text-center mt-2"><div class="font-black text-white text-sm">${prefEsc(mc?.name||'マジックカード')}</div><div class="text-emerald-200 font-black mt-1">価値 ${prefFormatMoney(prefCardValue(mc))}</div></div></div>`;})():''}</div><div class="text-[10px] text-slate-500 mt-2">カード画像をタップすると詳細を確認できます</div>`:'<p class="text-slate-400 text-sm">カードの登録データが見つかりませんでした。</p>';
   prefShowModal('✨ ガチャ結果',`<div class="text-center"><div class="inline-flex px-3 py-1 rounded-full bg-violet-950 border border-violet-500/50 text-violet-200 text-xs font-black">${prefEsc(g.label)} · ${prefFormatMoney(g.price)}</div><div class="text-4xl mt-3 animate-pulse">${c?.cardType==='magic'?'📜':'🌟'}</div>${cardBlock}${fallback}${location}</div>`,[{label:'結果を閉じる',action:'gacha-result-close'},{label:'続けて引く',action:'gacha-pull-again',id:key,style:'primary'}]);
 }
 
@@ -3075,6 +3077,7 @@ function prefShowPurchasePanel() {}
 
 async function prefHandleClick(action,id,button) {
   if(action==='ai-thoughts'){prefShowAIThoughts(id);return;}
+  if(action==='confirm-surrender'){prefCloseModal();if(typeof finalizeSurrenderBattle==='function')finalizeSurrenderBattle();return;}
   if(action==='close-modal'){prefCloseModal();if(campaignState?.turnProcessing?.stage==='player-preview'){document.getElementById('pref-turn-progress')?.classList.add('hidden');if(document.querySelector('.view-section:not(.hidden)')?.id==='view-prefecture')prefRenderDashboard();prefEnsurePreviewResumeButton();}return;}
   if(action==='battle-preview-back'){prefCloseModal();document.getElementById('pref-turn-progress')?.classList.add('hidden');if(document.querySelector('.view-section:not(.hidden)')?.id==='view-prefecture')prefRenderDashboard();prefEnsurePreviewResumeButton();return;}
   if(action==='battle-preview-continue'){prefCloseModal();if(campaignState?.turnProcessing?.stage==='player-preview'){prefEnsurePreviewResumeButton();if(document.querySelector('.view-section:not(.hidden)')?.id!=='view-prefecture')switchView('prefecture');prefShowBattleSelection(true);}return;}
