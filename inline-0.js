@@ -1898,13 +1898,13 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.49-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.51-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
         window.setTimeout(() => URL.revokeObjectURL(objectUrl), 15000);
-        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.49 ZIP と一緒にChatGPTへアップロードしてください。`);
+        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.51 ZIP と一緒にChatGPTへアップロードしてください。`);
       } catch (error) {
         console.error('[CardDataExport] カードデータの書き出しに失敗しました', error);
         alert(`カードデータの書き出しに失敗しました。\n${String(error?.message || error)}`);
