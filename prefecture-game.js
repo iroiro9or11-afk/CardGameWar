@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.58 — responsive progress UI for campaign turn processing */
+/* 都道府県カード戦争 v1.0.61 — shared high-quality rival AI, indexed evaluation, budget-driven gacha */
 'use strict';
 
 let campaignState = null;
@@ -13,6 +13,9 @@ let prefHolderSearch = '';
 let prefMarketSearch = '';
 let prefPendingNotice = '';
 let prefTurnStartAbs = 1;
+// Card profiles are pure analysis of card definitions. Cache them between AI candidate comparisons;
+// snapshots invalidate the entry when an editor replaces or updates relevant card fields.
+const PREF_CARD_PROFILE_CACHE = new WeakMap();
 
 const PREF_STATE_KEY = 'prefecture_campaign_state_v1';
 const PREF_PLAYER_ID = '京都府';
@@ -109,10 +112,15 @@ function prefNormalizeAIProfile(raw={}, fallback={}) {
     effectPriority:orderList(src.effectPriority,20).filter(x=>PREF_AI_EFFECT_PREFERENCES.some(p=>p.id===x)),
     preset:String(src.preset||'custom')};
 }
+const PREF_AI_PROFILE_MEMO = new WeakMap();
 function prefAIProfileForRegion(region) {
-  if(!region) return prefNormalizeAIProfile({});
-  region.aiProfile=prefNormalizeAIProfile(region.aiProfile,{tier:region.tier,personality:region.personality,intelligence:region.aiIntelligence});
-  return region.aiProfile;
+  if(!region)return prefNormalizeAIProfile({});
+  const memo=PREF_AI_PROFILE_MEMO.get(region);
+  if(memo&&memo.profile===region.aiProfile&&memo.tier===region.tier&&memo.personality===region.personality&&memo.legacy===region.aiIntelligence)return memo.profile;
+  const normalized=prefNormalizeAIProfile(region.aiProfile,{tier:region.tier,personality:region.personality,intelligence:region.aiIntelligence});
+  region.aiProfile=normalized;
+  PREF_AI_PROFILE_MEMO.set(region,{profile:normalized,tier:region.tier,personality:region.personality,legacy:region.aiIntelligence});
+  return normalized;
 }
 function prefAIProfileFromRival(rival,tier,personality) {
   if(rival?.aiProfile) return prefNormalizeAIProfile(rival.aiProfile,{tier,personality,intelligence:rival.intelligence});
@@ -197,6 +205,9 @@ function prefCardApThresholdPassiveValue(card) {
 }
 function prefCardProfile(card) {
   if(!card)return {tags:new Set(),mainAttr:'',subAttrs:[],supportsAttrs:[],activeCosts:[],maxCost:0,skillCount:0,passiveCount:0,atk:0,hp:0,rank:1,role:'',apThresholdPassiveValue:0,onFieldPassiveValue:0,deployPassiveValue:0};
+  const cached=PREF_CARD_PROFILE_CACHE.get(card);
+  const sig={cardType:card.cardType,rank:card.rank,role:card.role,mainAttr:card.mainAttr,subAttrs:card.subAttrs,stats:card.stats,skills:card.skills,effect:card.effect,effects:card.effects,atk:card.stats?.atk,hp:card.stats?.hp};
+  if(cached&&cached.cardType===sig.cardType&&cached.rank===sig.rank&&cached.role===sig.role&&cached.mainAttr===sig.mainAttr&&cached.subAttrs===sig.subAttrs&&cached.stats===sig.stats&&cached.skills===sig.skills&&cached.effect===sig.effect&&cached.effects===sig.effects&&cached.atk===sig.atk&&cached.hp===sig.hp)return cached.value;
   const tags=new Set(),costs=[],supportsAttrs=new Set();const nodes=prefCardEffectNodes(card);const skills=Array.isArray(card.skills)?card.skills:[];
   let onFieldPassiveValue=0,deployPassiveValue=0;
   const addAttr=value=>{if(typeof value==='string'&&value.trim()&&!['none','any','all','null','undefined'].includes(value.trim().toLowerCase()))supportsAttrs.add(value.trim());};
@@ -285,7 +296,9 @@ function prefCardProfile(card) {
   const atk=Number(card.stats?.atk||0),hp=Number(card.stats?.hp||0),rank=prefRankStars(card);
   if(rank>=4)tags.add('high_rank');if(atk>0)tags.add('attack_role');if(hp>0&&card.cardType!=='magic')tags.add('unit');
   const subs=Array.isArray(card.subAttrs)?card.subAttrs.map(x=>typeof x==='string'?x:(x?.name||x?.id||x?.value||'')).filter(Boolean):[];
-  return {tags,mainAttr:String(card.mainAttr||''),subAttrs:subs,supportsAttrs:[...supportsAttrs],activeCosts:costs,maxCost:Math.max(0,...costs),skillCount:skills.length+(card.effect?1:0),passiveCount:skills.filter(s=>s.type==='passive').length,atk,hp,rank,role,apThresholdPassiveValue,onFieldPassiveValue:Math.min(8,onFieldPassiveValue),deployPassiveValue:Math.min(8,deployPassiveValue)};
+  const value={tags,mainAttr:String(card.mainAttr||''),subAttrs:subs,supportsAttrs:[...supportsAttrs],activeCosts:costs,maxCost:Math.max(0,...costs),skillCount:skills.length+(card.effect?1:0),passiveCount:skills.filter(s=>s.type==='passive').length,atk,hp,rank,role,apThresholdPassiveValue,onFieldPassiveValue:Math.min(8,onFieldPassiveValue),deployPassiveValue:Math.min(8,deployPassiveValue)};
+  PREF_CARD_PROFILE_CACHE.set(card,{...sig,value});
+  return value;
 }
 function prefCardPreferenceScore(region,card) {
   const profile=prefAIProfileForRegion(region);const cp=prefCardProfile(card);let score=0;
@@ -367,7 +380,7 @@ function prefAIActiveTrioPlanEvaluation(activeCards, activeProfiles, profile) {
     if(hasTeamBuff)score+=0.5;
     if(hasDamageBuddy)score+=1.2;
     // 同程度の候補なら、カードIQの高いAIほど支援関係を重く評価する。
-    score*=0.78+0.22*(Number(profile?.cardIQ)||0)/100;
+    score*=0.94+0.06*(Number(profile?.cardIQ)||0)/100;
     if(!best||score>best.score)best={score,coreName:String(core.name||'主力候補'),title:has(cp,'hp_scaling_damage')?'HP参照火力を中心とした耐久連携':has(cp,'status_condition')?'状態異常・条件効果コンボ':(cp.maxCost>=25||has(cp,'heavy_cost'))?'高コスト主力をAP支援で通す':hasTeamBuff?'全体強化から主力火力へつなぐ':coreDamage?'主力火力＋生存支援':'基礎性能を中心とした構成',reasons:[...new Set(reasons)].slice(0,5)};
   }
   const roles=new Set(ps.map(p=>p.role).filter(Boolean));
@@ -379,22 +392,31 @@ function prefAIActiveTrioPlanEvaluation(activeCards, activeProfiles, profile) {
   if(!ps.some(directDamage))score-=8.0;
   return {...(best||{coreName:'',title:'勝ち筋未確立',reasons:[]}),score:Number(score.toFixed(2)),roles:[...roles]};
 }
-function prefCardEstimateError(cardIQ) {return (Math.random()-0.5)*(100-prefClamp(cardIQ,0,100))/100*4;}
+function prefCardEstimateError(cardIQ) {return (Math.random()-0.5)*(100-prefClamp(cardIQ,0,100))/100*0.7;}
 function prefCardSynergyScore(region,card,extraCards=[],includeOwned=true) {
   if(!region||!card)return 0;
   const profile=prefAIProfileForRegion(region);const own=includeOwned?[...prefOwnedUnits(region.id),...prefOwnedMagics(region.id)].map(i=>prefCardForInstance(i.id)||prefTemplate(i.templateId)).filter(Boolean):[];
   const candidates=[...own,...(extraCards||[]).filter(Boolean)];const seen=new Set();let synergy=0;
   for(const other of candidates){const key=String(other.id??other.name??'');if(key===String(card.id??card.name??'')||seen.has(key))continue;seen.add(key);synergy+=prefPairSynergyRaw(card,other,profile);}
-  const scale=0.25+0.75*(profile.cardIQ/100);
+  const scale=0.88+0.12*(profile.cardIQ/100);
   return Math.max(0,Math.min(32,synergy*scale));
 }
 function prefRefreshAIPlan(region,trigger='市場確認',force=false) {
   if(!region||region.isPlayer||!campaignState)return null;
   const profile=prefAIProfileForRegion(region),abs=prefAbsTurn();
   const owned=[...prefOwnedUnits(region.id),...prefOwnedMagics(region.id)].map(inst=>prefCardForInstance(inst.id)||prefTemplate(inst.templateId)).filter(Boolean);
-  const market=prefMarketListings(null,false).filter(inst=>inst.sellerRegionId!==region.id).map(inst=>`${inst.id}:${inst.kind}:${inst.templateId}`).sort();
+  // Keep a deterministic, order-independent market fingerprint without allocating and sorting a
+  // potentially large string array every time one of the 46 AI rivals refreshes its plan.
+  const market=prefMarketListings(null,false).filter(inst=>inst.sellerRegionId!==region.id);
+  let marketHashA=2166136261,marketHashB=0;
+  for(const inst of market){
+    const token=`${inst.id}:${inst.kind}:${inst.templateId}`;
+    let h=2166136261;
+    for(let j=0;j<token.length;j++){h^=token.charCodeAt(j);h=Math.imul(h,16777619);}
+    marketHashA=(marketHashA+h)>>>0;marketHashB^=h;
+  }
   const rosterSignature=[...prefOwnedUnits(region.id),...prefOwnedMagics(region.id)].map(x=>`${x.id}:${x.templateId}`).sort().join('|');
-  const marketSignature=market.join('|');
+  const marketSignature=`${market.length}:${marketHashA}:${marketHashB>>>0}`;
   const old=region.aiPlan;
   if(!force&&old&&old.rosterSignature===rosterSignature&&old.marketSignature===marketSignature&&Number(old.lastEvaluatedAbs)===abs)return old;
   const tagged=new Set();owned.forEach(c=>prefCardProfile(c).tags.forEach(t=>tagged.add(t)));
@@ -450,9 +472,45 @@ function prefAIPlanFitScore(region,card) {
   return Math.min(14,best);
 }
 
+function prefMagicTacticalValue(card){
+  if(!card||card.cardType!=='magic')return 0;
+  const eff=card.effect||{},cp=prefCardProfile(card),cost=Math.max(0,Number(eff.cost)||0);
+  let value=0;
+  function component(e,target,multiplier){
+    if(!e)return 0;
+    const t=String(e.type||''),n=Number(e.val)||0,side=String(target||'');
+    const friendly=side==='self'||side.includes('ally');
+    const broad=side.includes('all_')||side==='all_enemy'||side==='all_ally';
+    let raw=0;
+    if(t.startsWith('dmg_'))raw=t==='dmg_atk_ratio'?0.7:Math.min(7,Math.max(0,n)/650);
+    else if(t==='mod_ap')raw=Math.min(8,Math.abs(n)/5);
+    else if(t==='shield'||t==='heal_fixed'||t==='mod_max_hp_val')raw=Math.min(8,Math.abs(n)/750);
+    else if(t==='heal_max_hp_ratio')raw=Math.min(8,Math.abs(n)/12);
+    else if(['mod_atk_ratio','damage_dealt_ratio','damage_taken_ratio','damage_cut_ratio','mod_speed'].includes(t))raw=Math.min(8,Math.abs(n)/12);
+    else if(['status_apply','skill_block','heal_block','status_remove','clear_debuffs','clear_buffs'].includes(t))raw=4;
+    const negative=t.startsWith('dmg_')||t==='skill_block'||t==='heal_block'||t==='status_apply'||(t==='mod_ap'&&n<0)||(t==='damage_taken_ratio'&&n>0)||(t==='damage_cut_ratio'&&n<0)||(t==='mod_atk_ratio'&&n<0);
+    const useful=friendly?!negative:negative;
+    return multiplier*(useful?raw:-raw*1.8)*(broad?1.65:1);
+  }
+  value+=component(eff.mainEffect,eff.targetType,1);
+  if(eff.hasSubEffect&&eff.subEffect)value+=component(eff.subEffect,eff.subEffect.targetType==='same_main_target'?eff.targetType:eff.subEffect.targetType,0.65);
+  if(cp.tags.has('ap_supply'))value+=2;
+  if(cp.tags.has('shield_defense')||cp.tags.has('healing'))value+=1;
+  const chance=Math.max(0,Math.min(100,Number(eff.chance??100)))/100;
+  const conditional=eff.selfCond&&eff.selfCond.type!=='none'?0.85:1;
+  return value*chance*conditional-Math.min(12,cost*0.19);
+}
+
 function prefCardIntrinsicScore(region,card) {
-  if(!card)return 0;const rank=prefRankStars(card),p=prefCardProfile(card),val=Math.log10(Math.max(10000,prefCardValue(card)));
-  const profile=prefAIProfileForRegion(region);let score=rank*5.2+val;
+  if(!card)return 0;
+  if(card.cardType==='magic')return 17+prefMagicTacticalValue(card)*2.5+Math.max(-3,Math.min(4,Math.log10(Math.max(1,prefCardValue(card))/1000000)))*1.5;
+  const rank=prefRankStars(card),p=prefCardProfile(card),value=prefCardValue(card);
+  const valueAnchor=rank===5?PREF_GACHA_VALUE_LIMITS[5]:rank===4?PREF_GACHA_VALUE_LIMITS[4]:rank===3?3000000:1000000;
+  // Rank should matter materially, while the card's estimated value distinguishes weak and strong
+  // cards within the same rank. Personality bonuses are deliberately too small to override this.
+  const valueSignal=Math.max(-2,Math.min(2,Math.log10(Math.max(1,value)/Math.max(1,valueAnchor))));
+  const profile=prefAIProfileForRegion(region);
+  let score=rank*12+(rank>=4?5:0)+(rank===5?6:0)+valueSignal*3.6;
   score+=Math.min(8,p.atk/1200)+Math.min(6,p.hp/6000)+p.skillCount*0.8+p.passiveCount*1.2;
   if(profile.primaryStrategy==='rush'||profile.secondaryStrategies.includes('rush'))score+=Math.min(5,p.atk/1600);
   if(profile.primaryStrategy==='sustain'||profile.secondaryStrategies.includes('sustain'))score+=Math.min(3,p.hp/7000);
@@ -511,9 +569,24 @@ function prefRandom(arr) { return arr[Math.floor(Math.random()*arr.length)]; }
 function prefShuffle(arr) { const out=[...(arr||[])]; for(let i=out.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[out[i],out[j]]=[out[j],out[i]];} return out; }
 function prefClamp(n,min,max) { n=Number(n); return Number.isFinite(n)?Math.max(min,Math.min(max,n)):min; }
 function prefEsc(v) { return String(v ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
-function prefCardTemplates() { return (Array.isArray(allCards)?allCards:[]).filter(c=>!c.campaignInstance); }
-function prefTemplate(id) { return prefCardTemplates().find(c=>String(c.id)===String(id)) || null; }
-function prefCardForInstance(id) { return (Array.isArray(allCards)?allCards:[]).find(c=>String(c.id)===String(id)) || null; }
+// An AI evaluation can query the same card hundreds of times. Rebuild the O(1) indexes
+// only when the library reference/size changes; campaign cards are appended in place.
+let prefCardIndexSource=null,prefCardIndexLength=-1,prefCardById=new Map(),prefTemplateById=new Map(),prefCardTemplateList=[];
+function prefInvalidateCardIndex(){prefCardIndexSource=null;prefCardIndexLength=-1;}
+function prefEnsureCardIndex(){
+  const cards=Array.isArray(allCards)?allCards:[];
+  if(prefCardIndexSource===cards&&prefCardIndexLength===cards.length)return;
+  prefCardIndexSource=cards;prefCardIndexLength=cards.length;
+  prefCardById=new Map();prefTemplateById=new Map();prefCardTemplateList=[];
+  for(const card of cards){
+    if(!card)continue;
+    prefCardById.set(String(card.id),card);
+    if(!card.campaignInstance){prefCardTemplateList.push(card);prefTemplateById.set(String(card.id),card);}
+  }
+}
+function prefCardTemplates(){prefEnsureCardIndex();return prefCardTemplateList;}
+function prefTemplate(id){prefEnsureCardIndex();return prefTemplateById.get(String(id))||null;}
+function prefCardForInstance(id){prefEnsureCardIndex();return prefCardById.get(String(id))||null;}
 function prefCardValue(card) { return Math.max(10000, Number(card?.value)|| (card?.cardType==='magic'?1000000:5000000)); }
 function prefValueFromInstance(instance) { const c=prefCardForInstance(instance?.id); return prefCardValue(c || prefTemplate(instance?.templateId)); }
 function prefFormatMoney(amount) {
@@ -595,16 +668,57 @@ function prefAiUnitReplacementChoice(region, units, incomingInst) {
   const incoming=prefCardForInstance(incomingInst?.id)||prefTemplate(incomingInst?.templateId);
   const fives=(units||[]).filter(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))===5);
   if(!incoming)return incomingInst?.id||null;
+  const incomingRank=prefRankStars(incoming);
+  const highTier=!!region&&!region.isPlayer&&['S','A','B'].includes(String(region.tier||''));
+  const cardFor=inst=>prefCardForInstance(inst?.id)||prefTemplate(inst?.templateId);
+
+  // Funded top-tier rivals must not let preference/synergy scores justify retaining ★3 beside ★4/★5.
+  // Reject a weak draw outright; the caller refunds the pull or skips the market listing.
+  if(incomingRank<=3&&(units||[]).filter(x=>prefRankStars(cardFor(x))>=4).length>=3)return incomingInst?.id||null;
+
   let replaceable=(units||[]).slice();
-  if(prefRankStars(incoming)===5&&fives.length>=prefFiveStarLimit(region))replaceable=fives;
-  // ライバルが保有する★5は、より高い質の★5と比較するとき以外は維持する。
-  else if(region&&!region.isPlayer&&fives.length>0&&prefRankStars(incoming)<5){
-    const nonFives=(units||[]).filter(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))!==5);
+  if(incomingRank===5&&fives.length>=prefFiveStarLimit(region))replaceable=fives;
+  else if(region&&!region.isPlayer&&incomingRank<5&&fives.length>0){
+    const nonFives=(units||[]).filter(x=>prefRankStars(cardFor(x))!==5);
     if(nonFives.length)replaceable=nonFives;
     else return incomingInst?.id||null;
   }
+
+  if(replaceable.length&&incomingRank>=4){
+    const rows=replaceable.map(inst=>({inst,card:cardFor(inst),rank:prefRankStars(cardFor(inst))})).filter(x=>x.card);
+    // Rank upgrades beat small synergy differences: replace the lowest-ranked eligible card first.
+    const lower=rows.filter(x=>x.rank<incomingRank);
+    if(lower.length){
+      const lowestRank=Math.min(...lower.map(x=>x.rank));
+      const weakestRank=lower.filter(x=>x.rank===lowestRank);
+      weakestRank.sort((a,b)=>{
+        const ae=Number(a.inst.expiresAtAbs)||Number.MAX_SAFE_INTEGER;
+        const be=Number(b.inst.expiresAtAbs)||Number.MAX_SAFE_INTEGER;
+        return ae-be||prefCardValue(a.card)-prefCardValue(b.card);
+      });
+      return weakestRank[0].inst.id;
+    }
+
+    // With the holder's two ★5 slots already occupied, a genuinely upper-value ★5 must be allowed
+    // to displace a lower-value ★5. Previously the minimum-gain check could keep the weak ★5 forever.
+    if(incomingRank===5&&fives.length>=prefFiveStarLimit(region)&&Number(incoming.value||0)>=PREF_GACHA_VALUE_LIMITS[5]){
+      const lowerValueFives=rows.filter(x=>x.rank===5&&Number(x.card?.value||0)<PREF_GACHA_VALUE_LIMITS[5]);
+      if(lowerValueFives.length){
+        lowerValueFives.sort((a,b)=>Number(a.card?.value||0)-Number(b.card?.value||0));
+        return lowerValueFives[0].inst.id;
+      }
+    }
+
+    // Refresh an otherwise comparable unit before its 52-turn expiry, preventing needless roster gaps.
+    const now=prefAbsTurn();
+    const expiring=rows.filter(x=>x.rank<=incomingRank&&x.inst.expiresAtAbs!=null&&Number(x.inst.expiresAtAbs)-now<=6&&Number(x.inst.expiresAtAbs)>=now);
+    if(expiring.length){
+      expiring.sort((a,b)=>Number(a.inst.expiresAtAbs)-Number(b.inst.expiresAtAbs)||a.rank-b.rank||prefCardValue(a.card)-prefCardValue(b.card));
+      return expiring[0].inst.id;
+    }
+  }
+
   if(region&&!region.isPlayer&&replaceable.length){
-    // 単体評価が最低のカードを機械的に捨てず、交換後に成立する最良の先発3枚と控えまで比較する。
     const before=prefAIQuickRosterQuality(region,units);let bestId=null,bestDelta=-Infinity;
     for(const old of replaceable){
       const afterUnits=(units||[]).map(x=>String(x.id)===String(old.id)?incomingInst:x);
@@ -612,7 +726,7 @@ function prefAiUnitReplacementChoice(region, units, incomingInst) {
       if(delta>bestDelta){bestDelta=delta;bestId=old.id;}
     }
     const iq=Number(prefAIProfileForRegion(region).cardIQ)||0;
-    const minGain=iq>=75?0.8:iq>=45?1.8:3.0;
+    const minGain=0.7; // 全ライバルが小さくても実利のある改善を拾う。IQは思考方針と探索幅に残す。
     if(bestId&&bestDelta>=minGain)return bestId;
     return incomingInst?.id||null;
   }
@@ -676,7 +790,14 @@ function prefRegionIconUrl(region) {
 }
 
 function prefPlayerRegion() { return prefRegion(PREF_PLAYER_ID); }
-function prefInstances(filter=()=>true) { return Object.values(campaignState?.instances||{}).filter(filter); }
+let prefInstanceSource=null,prefInstanceSnapshot=[],prefInstanceCount=0;
+function prefInvalidateInstanceIndex(){prefInstanceSource=null;}
+function prefInstances(filter=()=>true){
+  const source=campaignState?.instances;
+  if(!source)return [];
+  if(prefInstanceSource!==source){prefInstanceSource=source;prefInstanceSnapshot=Object.values(source);prefInstanceCount=prefInstanceSnapshot.length;}
+  return prefInstanceSnapshot.filter(filter);
+}
 function prefOwnedInstances(regionId, kind=null) {
   return prefInstances(x=>x.zone==='owner' && x.ownerId===regionId && (!kind || x.kind===kind));
 }
@@ -717,7 +838,7 @@ function prefCreateInstance(templateId, zone, ownerId=null, options={}) {
     sellerRegionId:options.sellerRegionId||null,listedAtAbs:options.listedAtAbs||null,marketExpiresAbs:options.marketExpiresAbs||null,
     acquiredAtAbs:zone==='owner'?abs:null,expiresAtAbs:zone==='owner'&&template.cardType==='unit'?abs+PREF_CARD_LIFETIME:null,
     copyException:!!options.copyException,initialUnavailable:!!options.initialUnavailable,source:options.source||'campaign'};
-  campaignState.instances[id]=inst;
+  campaignState.instances[id]=inst;prefInvalidateInstanceIndex();
   if(zone!=='consumed') allCards.push({...template,id,campaignInstance:true,templateId:template.id,copyException:inst.copyException});
   return inst;
 }
@@ -766,6 +887,23 @@ function prefGrantGachaBundleMagic(regionId) {
   if(owned.some(x=>String(x.templateId)===String(template.id)) || owned.length>=PREF_MAGIC_LIMIT){prefListInstance(inst,regionId,owned.length>=PREF_MAGIC_LIMIT?'gacha-bundle-capacity':'duplicate-gacha-bundle');return {template,listed:true};}
   const result=prefAcquireInstance(regionId,inst.id,{reason:'gacha-bundle'});return {template,listed:result==='pending'};
 }
+// The resolver already creates the exact probability-slot magic instance. Do not roll a
+// second template and leave the real result orphaned in the pending zone.
+function prefAiReceiveDrawnMagic(region, selected, reason='ai-gacha'){
+  const inst=selected?.instance;
+  if(!region||!inst||inst.kind!=='magic')return false;
+  const duplicate=prefOwnedMagics(region.id).some(x=>String(x.templateId)===String(inst.templateId));
+  if(duplicate)prefListInstance(inst,region.id,'duplicate-gacha');
+  else {
+    const acquired=prefAcquireInstance(region.id,inst.id,{reason});
+    if(acquired===false){prefListInstance(inst,region.id,'ai-magic-acquisition-failed');return false;}
+  }
+  // Every paid pull includes the additional guaranteed magic, even when the probability
+  // slot was already magic. Duplicates are listed by the ordinary acquisition rules.
+  prefGrantGachaBundleMagic(region.id);
+  return true;
+}
+
 function prefNewStats() { return {assetMetric:0,wins:0,losses:0,draws:0,battles:0,investigations:0,marketIncome:0,marketExpense:0,aidIncome:0}; }
 function prefDefaultRegion(prefecture, isPlayer, repName, personality, initialPosition) {
   const tier=prefTierForPosition(initialPosition);
@@ -809,7 +947,9 @@ function prefBuildInitialCardPool(templateCards, state) {
     }
     return null;
   }
-  function takeInitialUnitFromAny(desiredRank) { return takeInitialUnit(desiredRank); }
+  // A recipe's ★5 slot is a hard quality requirement. If unique ★5 templates are exhausted,
+  // allow a marked initial copy rather than silently filling the top-tier rival with ★4/★3.
+  function takeInitialUnitFromAny(desiredRank) { return takeInitialUnit(desiredRank, Number(desiredRank)===5); }
   function takeInitialUnitByBand(rank, band) {
     const avail=[...unused].map(id=>allTemplates.get(id)).filter(c=>c&&prefRankStars(c)===rank);
     const threshold=PREF_GACHA_VALUE_LIMITS[rank];
@@ -1118,7 +1258,7 @@ function prefCardStrategyScore(region,card) {
   // Main strategy strongly shapes evaluation; secondary strategies are smaller but meaningful influences.
   let score=one(profile.primaryStrategy)+profile.secondaryStrategies.reduce((sum,id)=>sum+one(id)*0.34,0);
   // A card's raw role is still more important than stylistic preference for low card-IQ rivals.
-  return score*(0.45+0.55*(profile.cardIQ/100));
+  return score*(0.90+0.10*(profile.cardIQ/100));
 }
 
 function prefCardScoreForRegion(region, inst) {
@@ -1153,7 +1293,7 @@ function prefAIQuickRosterQuality(region, unitInstances) {
     const group=[entries[i],entries[j],entries[k]],profiles=group.map(x=>cp.get(String(x.inst.id))||prefCardProfile(x.card));
     if(profiles.filter(x=>x.rank===5).length>PREF_BATTLE_RANK5_LIMIT)continue;
     let score=group.reduce((sum,x)=>sum+(base.get(String(x.inst.id))||0),0);
-    for(let a=0;a<group.length;a++)for(let b=a+1;b<group.length;b++)score+=prefPairSynergyRaw(group[a].card,group[b].card,profile)*(0.25+0.75*profile.cardIQ/100)*1.25;
+    for(let a=0;a<group.length;a++)for(let b=a+1;b<group.length;b++)score+=prefPairSynergyRaw(group[a].card,group[b].card,profile)*(0.88+0.12*profile.cardIQ/100)*1.25;
     const plan=prefAIActiveTrioPlanEvaluation(group.map(x=>x.card),profiles,profile);score+=plan.score;
     const roles=new Set(profiles.map(x=>x.role));
     if(roles.has('attacker'))score+=2.8;if(roles.has('defender'))score+=3;if(roles.has('controller'))score+=2.6;
@@ -1176,13 +1316,18 @@ function prefAIQuickRosterQuality(region, unitInstances) {
 function prefAiReplacementChoice(region, unitInstances, incomingInst) {
   if(!unitInstances.length)return null;
   const personality=region.personality||'careful';
-  let scored=unitInstances.map(inst=>({inst,score:prefCardScoreForRegion(region,inst)}));
-  if(personality==='aggressive')scored.sort((a,b)=>{const ca=prefCardForInstance(a.inst.id),cb=prefCardForInstance(b.inst.id);return Number(ca?.stats?.atk||0)-Number(cb?.stats?.atk||0)||a.score-b.score;});
-  else if(personality==='collector')scored.sort((a,b)=>prefCardValue(prefCardForInstance(a.inst.id))-prefCardValue(prefCardForInstance(b.inst.id))||a.score-b.score);
+  const effectiveScore=inst=>{
+    const card=prefCardForInstance(inst?.id)||prefTemplate(inst?.templateId);
+    return prefCardScoreForRegion(region,inst)+prefAiRosterComplementBonus(region,card)*0.55;
+  };
+  let scored=unitInstances.map(inst=>({inst,score:effectiveScore(inst)}));
+  if(personality==='aggressive')scored.sort((a,b)=>{const ca=prefCardForInstance(a.inst.id)||prefTemplate(a.inst.templateId),cb=prefCardForInstance(b.inst.id)||prefTemplate(b.inst.templateId);return Number(ca?.stats?.atk||0)-Number(cb?.stats?.atk||0)||a.score-b.score;});
+  else if(personality==='collector')scored.sort((a,b)=>prefCardValue(prefCardForInstance(a.inst.id)||prefTemplate(a.inst.templateId))-prefCardValue(prefCardForInstance(b.inst.id)||prefTemplate(b.inst.templateId))||a.score-b.score);
   else scored.sort((a,b)=>a.score-b.score);
-  const weakest=scored[0];
-  if(incomingInst && prefCardScoreForRegion(region,incomingInst)<=weakest.score && personality!=='collector')return incomingInst.id;
-  if(incomingInst && personality==='collector' && prefValueFromInstance(incomingInst)<=prefCardValue(prefCardForInstance(weakest.inst.id)))return incomingInst.id;
+  const weakest=scored[0];if(!weakest)return null;
+  const incomingScore=incomingInst?effectiveScore(incomingInst):-Infinity;
+  if(incomingInst && incomingScore<=weakest.score && personality!=='collector')return incomingInst.id;
+  if(incomingInst && personality==='collector' && prefValueFromInstance(incomingInst)<=prefCardValue(prefCardForInstance(weakest.inst.id)||prefTemplate(weakest.inst.templateId)))return incomingInst.id;
   return weakest.inst.id;
 }
 function prefAiMagicReplacementChoice(region, magicInstances, incomingInst) {
@@ -1820,12 +1965,13 @@ function prefAiRosterComplementBonus(region,card) {
 }
 function prefAiMarketUpgradeQualifies(region,instance,utility) {
   if(!region||!instance||!Number.isFinite(Number(utility)))return false;
-  const profile=prefAIProfileForRegion(region);
-  const complement=prefAiRosterComplementBonus(region,prefCardForInstance(instance.id)||prefTemplate(instance.templateId));
-  const baseThreshold=Number(profile.cardIQ)>=75?6:Number(profile.cardIQ)>=45?8:10;
-  // A reasonable-priced card that closes an explicit team-combo gap can be worth buying
-  // even when its isolated score is not dramatically higher than the weakest card.
-  return Number(utility)>=baseThreshold||(complement>=4.5&&Number(utility)>=-2);
+  const profile=prefAIProfileForRegion(region),card=prefCardForInstance(instance.id)||prefTemplate(instance.templateId);
+  const complement=prefAiRosterComplementBonus(region,card),rank=prefRankStars(card);
+  const baseThreshold=6; // Rank-independent minimum market utility; roster replacement still checks actual gain.
+  // High-rank purchases are a legitimate investment for a funded A/S/B rival. Keep the reserve
+  // gate elsewhere and let the replacement comparison reject cards that do not improve the roster.
+  const qualityInvestment=['S','A','B'].includes(region.tier)&&rank>=4&&Number(utility)>=-0.5;
+  return Number(utility)>=baseThreshold||(complement>=4.5&&Number(utility)>=-2)||qualityInvestment;
 }
 function prefAiUnitReserveFloor(region) {
   const funds=Math.max(0,Number(region?.funds)||0);
@@ -1860,7 +2006,7 @@ function prefAiHasViableUnitReinforcement(region) {
   // When the five-card battle roster is incomplete, an affordable C pull is a viable refill
   // even if it consumes the normal reserve; otherwise the reserve rule can deadlock at 3-4 units.
   if(prefEligibleGachaUnitInstances().length && (funds>=PREF_GACHA.C.price+prefAiUnitReserveFloor(region) || units<5&&funds>=PREF_GACHA.C.price))return true;
-  return prefMarketListings('unit',false).some(inst=>{
+  return prefAiShortlistMarketUnitInstances(region,28).some(inst=>{
     if(!prefAiCanBuyMarketUnit(region,inst))return false;
     return prefAiCanBuyMarketUnit(region,inst,prefAiMarketUtility(region,inst));
   });
@@ -1870,16 +2016,71 @@ function prefAiChooseGachaTier(region,prioritizeQuality=false) {
   const floor=prefAiUnitReserveFloor(region);
   const eligibleB=['S','A','B','C','D'].includes(region?.tier);
   const eligibleA=['S','A','B'].includes(region?.tier);
-  // B is the default refill pull (80% character outcomes); C is the low-cash fallback.
-  if(eligibleA&&['S','A','B'].includes(region.tier)&&prioritizeQuality&&funds>=PREF_GACHA.A.price+floor)return 'A';
+  // A is the quality tier: use it when the roster genuinely needs an upgrade and the reserve remains safe.
+  if(eligibleA&&prioritizeQuality&&funds>=PREF_GACHA.A.price+floor)return 'A';
   if(eligibleB&&funds>=PREF_GACHA.B.price+floor)return 'B';
-  if(funds>=PREF_GACHA.C.price+floor||prefOwnedUnits(region.id).length<5&&funds>=PREF_GACHA.C.price)return 'C';
+  // Preserve working capital when three legal starters already exist. Only a genuinely
+  // unplayable squad (fewer than 3 cards) can spend down to the last affordable pull.
+  if(funds>=PREF_GACHA.C.price+floor||prefOwnedUnits(region.id).length<3&&funds>=PREF_GACHA.C.price)return 'C';
   return null;
 }
-function prefAiBestGachaUpgradePotential(region) {
+function prefAiShouldPrioritizeQualityGacha(region, unitsOverride=null, eligibleOverride=null) {
+  if(!region||!['S','A','B'].includes(region.tier))return false;
+  const funds=Number(region.funds)||0,floor=prefAiUnitReserveFloor(region);
+  if(funds<PREF_GACHA.A.price+floor)return false;
+  const units=Array.isArray(unitsOverride)?unitsOverride:prefOwnedUnits(region.id);
+  const hasWeakRank=units.some(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))<=3);
+  const now=prefAbsTurn();
+  const nearingExpiry=units.some(inst=>inst.expiresAtAbs!=null&&Number(inst.expiresAtAbs)-now>=0&&Number(inst.expiresAtAbs)-now<=8);
+  const rebuild=region.aiMemory?.rebuildPending?.status==='pending';
+  const eligible=Array.isArray(eligibleOverride)?eligibleOverride:prefEligibleGachaUnitInstances();
+  let hasFourPlusTarget=false,hasUpperFiveTarget=false;
+  for(const inst of eligible){
+    const c=prefCardForInstance(inst.id)||prefTemplate(inst.templateId),rank=prefRankStars(c);
+    if(rank>=4)hasFourPlusTarget=true;
+    if(rank===5&&Number(c?.value||0)>=PREF_GACHA_VALUE_LIMITS[5])hasUpperFiveTarget=true;
+    if(hasFourPlusTarget&&hasUpperFiveTarget)break;
+  }
+  if(!hasFourPlusTarget)return false;
+  // If a battle slot is missing, choose a better pool rather than filling with a cheap weak draw.
+  if(units.length<5)return true;
+  const ownedFiveCount=units.filter(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))===5).length;
+  const hasUpperFive=units.some(inst=>{const c=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);return prefRankStars(c)===5&&Number(c?.value||0)>=PREF_GACHA_VALUE_LIMITS[5];});
+  const hasLowValueFive=units.some(inst=>{const c=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);return prefRankStars(c)===5&&Number(c?.value||0)<PREF_GACHA_VALUE_LIMITS[5];});
+  // If a strong ★5 remains drawable, first fill an empty ★5 slot and then upgrade a low-value ★5.
+  // Do not stop just because the deck already has one ★5 or already owns one upper-band ★5.
+  return hasWeakRank||rebuild||nearingExpiry||(hasUpperFiveTarget&&(hasLowValueFive||!hasUpperFive||ownedFiveCount<PREF_BATTLE_RANK5_LIMIT));
+}
+function prefAiShortlistGachaUnitInstances(region, limit=40, eligibleOverride=null) {
+  const eligible=Array.isArray(eligibleOverride)?eligibleOverride:prefEligibleGachaUnitInstances();if(eligible.length<=limit)return eligible;
+  const rows=[];
+  for(const inst of eligible){
+    const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);if(!card)continue;
+    const rank=prefRankStars(card),stats=card.stats||{};
+    const anchor=rank===5?PREF_GACHA_VALUE_LIMITS[5]:rank===4?PREF_GACHA_VALUE_LIMITS[4]:rank===3?3000000:1000000;
+    const valueSignal=Math.max(-2,Math.min(2,Math.log10(Math.max(1,prefCardValue(card))/Math.max(1,anchor))));
+    const quick=rank*10+(rank>=4?4:0)+(rank===5?5:0)+valueSignal*3.2+
+      Math.min(8,Number(stats.atk||0)/1200)+Math.min(6,Number(stats.hp||0)/6000)+
+      Math.min(4,(Array.isArray(card.skills)?card.skills.length:0)*0.35)+
+      (card.role==='attacker'?1.2:card.role==='controller'||card.role==='defender'?0.8:0);
+    rows.push({inst,card,rank,quick,profile:null});
+  }
+  rows.sort((a,b)=>b.quick-a.quick);const chosen=new Map();
+  const add=row=>{if(row&&chosen.size<limit)chosen.set(String(row.inst.id),row);};
+  rows.slice(0,Math.max(6,limit-18)).forEach(add);
+  for(const rank of [5,4,3])rows.filter(x=>x.rank===rank).slice(0,2).forEach(add);
+  for(const role of ['attacker','controller','defender'])rows.filter(x=>String(x.card.role||'')===role).slice(0,2).forEach(add);
+  const scan=rows.slice(0,Math.min(rows.length,Math.max(60,limit*2)));
+  for(const row of scan)row.profile=prefCardProfile(row.card);
+  for(const tag of ['ap_supply','damage_amp','attack_speed_buff','healing','shield_defense','status_debuff','status_condition','frontline_defender'])add(scan.find(x=>x.profile?.tags?.has(tag)));
+  return [...chosen.values()].sort((a,b)=>b.quick-a.quick).slice(0,limit).map(x=>x.inst);
+}
+function prefAiBestGachaUpgradePotential(region, limit=40, eligibleOverride=null) {
   const owned=prefOwnedUnits(region.id);
   if(owned.length<5)return Infinity;
-  const eligible=prefEligibleGachaUnitInstances();if(!eligible.length)return -Infinity;
+  // Full scoring of every drawable card was causing turn-start stalls as the custom card pool grew.
+  // Score a quality-diverse shortlist deeply; candidate coverage retains rank, role and combo enablers.
+  const eligible=prefAiShortlistGachaUnitInstances(region,limit,eligibleOverride);if(!eligible.length)return -Infinity;
   const current=owned.map(inst=>({inst,score:prefCardScoreForRegion(region,inst)})).sort((a,b)=>a.score-b.score);
   const weakest=current[0];if(!weakest)return -Infinity;
   const potentials=eligible.map(inst=>{
@@ -1891,17 +2092,16 @@ function prefAiBestGachaUpgradePotential(region) {
   const topCount=Math.max(1,Math.ceil(potentials.length*0.35));
   const topAverage=potentials.slice(0,topCount).reduce((a,b)=>a+b,0)/topCount;
   const overallAverage=potentials.reduce((a,b)=>a+b,0)/potentials.length;
-  // Strong potential cards count, but a single outlier in a huge pool cannot trigger constant gambling.
   return overallAverage*0.7+topAverage*0.3;
 }
 
-function prefAiMarketUtility(region,instance) {
+function prefAiMarketUtility(region,instance,baselineQuality=null) {
   const card=prefCardForInstance(instance?.id)||prefTemplate(instance?.templateId);if(!card)return -Infinity;
   const profile=prefAIProfileForRegion(region);const ownUnits=prefOwnedUnits(region.id);const ownMagics=prefOwnedMagics(region.id);
   const scoreOf=inst=>prefCardScoreForRegion(region,inst);
   const complement=instance.kind==='unit'?prefAiRosterComplementBonus(region,card):0;
   const candidateScore=prefCardIntrinsicScore(region,card)+prefCardStrategyScore(region,card)+prefCardPreferenceScore(region,card)+prefCardSynergyScore(region,card)+prefAIPlanFitScore(region,card)+complement;
-  let improvement=0;
+  let improvement=0,compositionDelta=0;
   if(instance.kind==='unit'){
     if(ownUnits.length<3) improvement=22+candidateScore*0.30+complement*0.35;
     else if(ownUnits.length<5){
@@ -1918,28 +2118,25 @@ function prefAiMarketUtility(region,instance) {
     if(!ownMagics.length)improvement=4+candidateScore*0.25+prefCardSynergyScore(region,card)*0.35;
     else {const avg=ownMagics.reduce((sum,x)=>sum+scoreOf(x),0)/Math.max(1,ownMagics.length);improvement=4+candidateScore*0.48-avg*0.28;}
   }
-  let compositionDelta=0;
-  if(instance.kind==='unit'&&ownUnits.length>=3){
-    const beforeQuality=prefAIQuickRosterQuality(region,ownUnits);
-    let afterUnits=null;
-    if(ownUnits.length<5)afterUnits=[...ownUnits,instance];
-    else {
-      const replacement=prefAiUnitReplacementChoice(region,ownUnits,instance);
-      if(!replacement||String(replacement)===String(instance.id))return -Infinity;
-      afterUnits=ownUnits.map(x=>String(x.id)===String(replacement)?instance:x);
-    }
-    compositionDelta=prefAIQuickRosterQuality(region,afterUnits)-beforeQuality;
-    if(ownUnits.length<5)improvement+=Math.max(-5,Math.min(8,compositionDelta*0.28));
-    else improvement=compositionDelta*0.9+complement*0.18;
+  // Incomplete rosters have very few candidates, so checking how a new card joins the team is cheap.
+  // For a full roster, do NOT run the full 5! replacement search for every market listing: candidate
+  // screening uses the intrinsic/role/synergy delta above, then the best few candidates get a full lineup check.
+  if(instance.kind==='unit'&&ownUnits.length>=3&&ownUnits.length<5){
+    const beforeQuality=Number.isFinite(baselineQuality)?baselineQuality:prefAIQuickRosterQuality(region,ownUnits);
+    const afterQuality=prefAIQuickRosterQuality(region,[...ownUnits,instance]);
+    compositionDelta=afterQuality-beforeQuality;
+    improvement+=Math.max(-5,Math.min(8,compositionDelta*0.28));
   }
   const cost=prefValueFromInstance(instance);const reserve=region.funds-cost;
   const shortage=instance.kind==='unit'&&ownUnits.length<5;
   // 高価なカードを一律に罰すると、資金が潤沢でも強い★5を選べない。
   // 価格ペナルティを価格そのものだけでなく、購入後資金に対する負担率で調整する。
   const spendRatio=cost/Math.max(1,Number(region.funds)||0);
-  const absolutePricePenalty=Math.log10(Math.max(1,cost/10000))*1.8;
-  const affordabilityFactor=0.22+0.78*Math.min(1,Math.max(0,spendRatio*3.5));
-  const pricePenalty=Math.min(12,absolutePricePenalty*affordabilityFactor);
+  // Purchase cost should matter, but a rich A/S rival must not reject a much stronger ★5
+  // merely because its price is high in absolute terms. Reserve checks above still protect solvency.
+  const absolutePricePenalty=Math.log10(1+Math.max(0,cost)/1000000)*0.9;
+  const affordabilityFactor=0.32+0.68*Math.min(1,Math.max(0,spendRatio*2.0));
+  const pricePenalty=Math.min(5.5,absolutePricePenalty*affordabilityFactor);
   const reservePenalty=reserve<2000000?14:reserve<10000000?(shortage?3:8):reserve<30000000?3:0;
   const rebuildBonus=region.aiMemory?.rebuildPending?.status==='pending'&&instance.kind==='unit'?Math.min(5,Math.max(0,compositionDelta)*0.25)+Math.min(2,prefRankStars(card)*0.35):0;
   return improvement-pricePenalty-reservePenalty+(shortage?8:0)+(profile.cardIQ/100)*2+rebuildBonus+prefCardEstimateError(profile.cardIQ);
@@ -1954,6 +2151,51 @@ function prefAiMarketReasons(region,instance) {
   if(!reasons.length)reasons.push('カード単体性能・価格・所持構成を総合評価');
   return reasons.slice(0,6);
 }
+function prefAiShortlistMarketUnitInstances(region, limit=36) {
+  if(!region||!campaignState)return [];
+  const owned=prefOwnedUnits(region.id),ownedTemplates=new Set(owned.map(x=>String(x.templateId))),funds=Number(region.funds)||0;
+  const fiveCount=prefOwnedFiveStarUnits(region.id).length,fiveLimit=prefFiveStarLimit(region);
+  const floor=prefAiUnitReserveFloor(region);
+  const otherOwners=new Set(prefOwnedInstancesAny().filter(x=>x.ownerId!==region.id&&!x.copyException).map(x=>String(x.templateId)));
+  const rows=[];
+  for(const inst of prefMarketListings('unit',false)){
+    if(!inst||inst.sellerRegionId===region.id)continue;
+    const templateId=String(inst.templateId||'');
+    if(ownedTemplates.has(templateId)||(!inst.copyException&&otherOwners.has(templateId)))continue;
+    const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);if(!card)continue;
+    const price=prefValueFromInstance(inst);if(price>funds)continue;
+    if(owned.length>=3&&funds-price<floor)continue;
+    const rank=prefRankStars(card);
+    // At full capacity a market ★5 can replace one of the owned ★5s; while slots are missing,
+    // do not exceed the rival's holder cap by taking a third ★5.
+    if(rank===5&&fiveCount>=fiveLimit&&owned.length<5)continue;
+    const p=card.stats||{},anchor=rank===5?PREF_GACHA_VALUE_LIMITS[5]:rank===4?PREF_GACHA_VALUE_LIMITS[4]:rank===3?3000000:1000000;
+    const valueSignal=Math.max(-2,Math.min(2,Math.log10(Math.max(1,prefCardValue(card))/Math.max(1,anchor))));
+    // Cheap first pass: rank and within-rank value dominate, with raw stats/skills as tie-breakers.
+    const quick=rank*10+(rank>=4?4:0)+(rank===5?5:0)+valueSignal*3.2+
+      Math.min(8,Number(p.atk||0)/1200)+Math.min(6,Number(p.hp||0)/6000)+
+      Math.min(4,(Array.isArray(card.skills)?card.skills.length:0)*0.35)+
+      (card.role==='attacker'?1.2:card.role==='controller'?0.8:card.role==='defender'?0.8:0);
+    rows.push({inst,card,rank,quick,profile:null});
+  }
+  rows.sort((a,b)=>b.quick-a.quick);
+  if(rows.length<=limit)return rows.map(x=>x.inst);
+  const chosen=new Map();
+  const add=row=>{if(row&&chosen.size<limit)chosen.set(String(row.inst.id),row);};
+  rows.slice(0,Math.max(6,limit-18)).forEach(add);
+  // Keep rank and declared-role coverage, so a strong synergy/support card is not discarded by raw stats.
+  for(const rank of [5,4,3])rows.filter(x=>x.rank===rank).slice(0,2).forEach(add);
+  for(const role of ['attacker','controller','defender'])rows.filter(x=>String(x.card.role||'')===role).slice(0,2).forEach(add);
+  // From the upper-quality screen, retain essential tactical enablers even if their own stats are modest.
+  const scan=rows.slice(0,Math.min(rows.length,Math.max(60,limit*2)));
+  for(const row of scan)row.profile=prefCardProfile(row.card);
+  for(const tag of ['ap_supply','damage_amp','attack_speed_buff','healing','shield_defense','status_debuff','status_condition','frontline_defender']){
+    const row=scan.find(x=>x.profile?.tags?.has(tag));add(row);
+  }
+  for(const row of rows)add(row);
+  return [...chosen.values()].sort((a,b)=>b.quick-a.quick).slice(0,limit).map(x=>x.inst);
+}
+
 function prefAiTryEconomy(region) {
   if(!region||region.isPlayer)return;
   region._aiEconomyPhase='初期構築計画';
@@ -1966,20 +2208,26 @@ function prefAiTryEconomy(region) {
     console.error(`[Prefecture] AI profile loading failed for ${region.id}; using conservative defaults`,err);
     profile={primaryStrategy:'adaptive',secondaryStrategies:[],cardIQ:50,tacticalIQ:50,mainAttrPriority:[],effectPriority:[]};
   }
-  let marketUnitPurchases=0,gachaAttempts=0,unitCountAtStart=prefOwnedUnits(region.id).length;
-  const maxMarketBuys=2;
+  let marketUnitPurchases=0,unitCountAtStart=prefOwnedUnits(region.id).length;
+  // At most five holder slots exist; do not impose another purchase-count limit.
 
   // First preference: buy a real market card when it fits the current deck and does not consume the reserve.
   // If fewer than five characters are owned, filling missing battle slots is valued above optional luxury buys.
   region._aiEconomyPhase='不足枠の市場補充';
   try {
-  while(prefOwnedUnits(region.id).length<5&&marketUnitPurchases<maxMarketBuys){
+  while(prefOwnedUnits(region.id).length<5){
     const currentUnits=prefOwnedUnits(region.id);
-    const marketUnits=prefMarketListings('unit',false)
-      .filter(inst=>prefAiCanBuyMarketUnit(region,inst))
-      .filter(inst=>!(prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))===5&&prefOwnedFiveStarUnits(region.id).length>=prefFiveStarLimit(region)))
-      .map(inst=>({inst,utility:prefAiMarketUtility(region,inst)}))
-      .filter(x=>x.utility>=-3)
+    // All refill candidates join the same current roster, so compute its baseline trio quality once.
+    const currentQuality=currentUnits.length>=3?prefAIQuickRosterQuality(region,currentUnits):null;
+    const marketShortlist=prefAiShortlistMarketUnitInstances(region,24);
+    const qualityFunds=['S','A','B'].includes(String(region.tier||''))&&Number(region.funds||0)>=PREF_GACHA.A.price+prefAiUnitReserveFloor(region);
+    const gachaHasFourPlus=qualityFunds&&prefEligibleGachaUnitInstances().some(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))>=4);
+    const marketHasFourPlus=qualityFunds&&marketShortlist.some(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))>=4&&prefAiCanBuyMarketUnit(region,inst));
+    const requireFourPlus=qualityFunds&&(gachaHasFourPlus||marketHasFourPlus);
+    const marketUnits=marketShortlist
+      .filter(inst=>!(requireFourPlus&&prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))<=3))
+      .map(inst=>({inst,utility:prefAiMarketUtility(region,inst,currentQuality)}))
+      .filter(x=>prefAiCanBuyMarketUnit(region,x.inst,x.utility)&&x.utility>=-3)
       .sort((a,b)=>b.utility-a.utility);
     const best=marketUnits[0];if(!best)break;
     const inst=best.inst,card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
@@ -2001,20 +2249,36 @@ function prefAiTryEconomy(region) {
     prefLog(`${region.prefecture}の市場補充評価に問題が発生したため、市場判断を切り上げてガチャ補充へ進みます。`,'warning');
   }
 
-  // If the market cannot complete the roster, use gacha with a bounded budget and repeat while a slot is missing.
+  // If the market cannot complete the roster, use gacha while funds and useful candidates remain.
   // B-rank gacha yields characters 80% of the time; C is the cheaper fallback (50%).
   region._aiEconomyPhase='不足枠のガチャ補充';
-  let attemptsLimit=Math.min(6,Math.max(2,5-prefOwnedUnits(region.id).length+3));
-  while(prefOwnedUnits(region.id).length<5&&gachaAttempts<attemptsLimit){
+  // No arbitrary pull-count cap. Every draw costs money, so affordability and available
+  // worthwhile cards terminate naturally, including repeated magic or weak results.
+  while(prefOwnedUnits(region.id).length<5){
     const available=prefEligibleGachaUnitInstances();if(!available.length)break;
-    const key=prefAiChooseGachaTier(region,false);if(!key)break;
+    const prioritizeQuality=prefAiShouldPrioritizeQualityGacha(region,null,available);
+    const hasHigherRankInPool=available.some(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))>=4);
+    const key=prefAiChooseGachaTier(region,prioritizeQuality);if(!key)break;
     const g=PREF_GACHA[key];const beforeCount=prefOwnedUnits(region.id).length;
-    const cost=g.price;prefBook(region.id,-cost,'gacha');gachaAttempts++;
+    const cost=g.price;prefBook(region.id,-cost,'gacha');
     region._aiPendingGachaDebit={amount:cost,stage:'不足枠補充'};
     const selected=prefResolveGachaTier(key);
     if(!selected){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
     if(selected.kind==='unit'&&selected.instance){
       const inst=selected.instance;const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
+      // Do not let a random low-rank outcome fill the final roster slot when this A/B/S rival
+      // can afford quality gacha and the drawable pool contains ★4+ characters. List and retry
+      // while funds and valuable pool remain; if no better pool exists, a ★3 remains valid.
+      if(prioritizeQuality&&hasHigherRankInPool&&prefRankStars(card)<4){
+        prefListInstance(inst,region.id,'ai-low-rank-draw-listing');
+        prefGrantGachaBundleMagic(region.id); // Every paid unit draw still grants its guaranteed magic.
+        delete region._aiPendingGachaDebit;
+        prefRecordAIThought(region,'ガチャ','低ランクの補充を見送り',[
+          'A/B/Sランクで資金に余裕があり、★4以上の排出候補も残っているため★3の補充を採用しない',
+          `${g.label}の費用は抽選どおり支払い、不要な結果は市場に出品。資金と候補がある間は補充を継続する`
+        ],{cardName:card?.name,rank:prefRankStars(card),gacha:key,rosterBefore:beforeCount,rosterAfter:beforeCount});
+        continue;
+      }
       const acquired=prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});
       if(acquired===false){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
       prefGrantGachaBundleMagic(region.id);
@@ -2030,14 +2294,8 @@ function prefAiTryEconomy(region) {
       try { prefRefreshAIPlan(region,'ガチャによるキャラ獲得',true); }
       catch(err) { console.error(`[Prefecture] AI plan refresh after gacha failed for ${region.id}`,err); }
     } else if(selected.kind==='magic') {
-      const templates=prefCardTemplates().filter(c=>c.cardType==='magic');
-      if(!templates.length){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
-      const t=prefRandom(templates),inst=t&&prefCreateInstance(t.id,'pending',null,{source:'ai-gacha'});
-      if(!inst){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
-      if(prefOwnedMagics(region.id).some(x=>String(x.templateId)===String(t.id)))prefListInstance(inst,region.id,'duplicate-gacha');
-      else {
-        const acquired=prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha'});
-        if(acquired===false){prefBook(region.id,cost,'gacha-refund');prefListInstance(inst,region.id,'ai-gacha-acquisition-failed');delete region._aiPendingGachaDebit;break;}
+      if(!prefAiReceiveDrawnMagic(region,selected,'ai-gacha')){
+        prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;
       }
       delete region._aiPendingGachaDebit;
       prefRecordAIThought(region,'ガチャ','キャラ以外の結果を受領',[
@@ -2050,18 +2308,18 @@ function prefAiTryEconomy(region) {
   }
 
   // At five characters, evaluate replacements instead of buying blindly. A high complement value can trigger
-  // deterministic market reinforcement; one affordable gacha attempt is allowed only when its pool has
-  // a meaningful chance of improving the weakest card or closing a tactical hole.
+  // deterministic market reinforcement; repeated draws are funded only when the pool has
+  // a meaningful upgrade opportunity and a sufficient cash reserve remains.
   region._aiEconomyPhase='5枚揃った後の市場・ガチャ改善';
   let units=prefOwnedUnits(region.id);
   if(units.length>=5){
     let marketUnits=[];
     try {
-      marketUnits=prefMarketListings('unit',false)
-        .filter(inst=>prefAiCanBuyMarketUnit(region,inst))
+      marketUnits=prefAiShortlistMarketUnitInstances(region,36)
         .map(inst=>({inst,utility:prefAiMarketUtility(region,inst)}))
-        .filter(x=>prefAiMarketUpgradeQualifies(region,x.inst,x.utility))
-        .sort((a,b)=>b.utility-a.utility);
+        .filter(x=>prefAiCanBuyMarketUnit(region,x.inst,x.utility)&&prefAiMarketUpgradeQualifies(region,x.inst,x.utility))
+        .sort((a,b)=>b.utility-a.utility)
+        .slice(0,4);
     } catch(err) {
       console.error(`[Prefecture] AI market upgrade scoring failed for ${region.id}; continuing gacha evaluation`,err);
       prefLog(`${region.prefecture}の市場でシナジー補強を評価できなかったため、ガチャ判断は継続します。`,'warning');
@@ -2086,56 +2344,73 @@ function prefAiTryEconomy(region) {
       prefRefreshAIPlan(region,'シナジー向上カードへ交換',true);boughtUpgrade=true;break;
     }
 
-    if(!boughtUpgrade){
-      let potential=-Infinity;
-      try { potential=prefAiBestGachaUpgradePotential(region); }
-      catch(err) { console.error(`[Prefecture] AI gacha upgrade scoring failed for ${region.id}`,err); }
+    // Continue only while a real upgrade remains affordable/likely. No artificial draw-count cap.
+    while(!boughtUpgrade){
       const eligible=prefEligibleGachaUnitInstances();
-      const key=prefAiChooseGachaTier(region,potential>=8);
-      const utilityGate=profile.primaryStrategy==='collector'?0.5:profile.cardIQ>=75?2.5:4.5;
-      if(eligible.length&&potential>=utilityGate&&key){
+      const qualityPriority=prefAiShouldPrioritizeQualityGacha(region,units,eligible);
+      const hasHigherRankInPool=eligible.some(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))>=4);
+      const key=prefAiChooseGachaTier(region,qualityPriority);
+      const utilityGate=2.5; // Every rival evaluates practical upgrade value without IQ-based blindness.
+      let potential=-Infinity;
+      // When a ★3 is present, the roster is rebuilding, or another good ★5 is available, quality
+      // gacha is already justified. Skip the expensive average-potential calculation in that case.
+      // Other tiers use a smaller shortlist; A/B/S use a broader one when no direct repair is needed.
+      if(!qualityPriority&&eligible.length&&key){
+        try { potential=prefAiBestGachaUpgradePotential(region,28,eligible); }
+        catch(err) { console.error(`[Prefecture] AI gacha upgrade scoring failed for ${region.id}`,err); }
+      }
+      if(!(eligible.length&&(potential>=utilityGate||qualityPriority)&&key))break;
+      {
         const g=PREF_GACHA[key],cost=g.price,before=units.length;prefBook(region.id,-cost,'gacha');
         region._aiPendingGachaDebit={amount:cost,stage:'シナジー補強'};
         const selected=prefResolveGachaTier(key);
-        if(!selected){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;}
+        if(!selected){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
         else if(selected.kind==='unit'&&selected.instance){
           const inst=selected.instance,card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
+          if(qualityPriority&&hasHigherRankInPool&&prefRankStars(card)<4){
+            prefListInstance(inst,region.id,'ai-low-rank-upgrade-listing');
+        prefGrantGachaBundleMagic(region.id); // Every paid unit draw still grants its guaranteed magic.
+            delete region._aiPendingGachaDebit;
+            prefRecordAIThought(region,'ガチャ','低ランクの強化候補を拒否',[
+              '★4以上の排出候補が残っており、上位ランクAIは★3で既存の★4以上を置き換えない',
+              '抽選費用は消費し、不要カードは市場へ出品する。翌週も高品質候補を評価する'
+            ],{cardName:card?.name,rank:prefRankStars(card),gacha:key,rosterBefore:units.length,rosterAfter:units.length});
+          } else {
           const replacement=prefAiUnitReplacementChoice(region,units,inst);
           if(replacement&&replacement!==inst.id){
             const old=campaignState.instances[replacement];if(old)prefListInstance(old,region.id,'ai-gacha-synergy-upgrade');
             const acquired=prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha-upgrade'});
-            if(acquired===false){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;}
+            if(acquired===false){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
             else {
               prefGrantGachaBundleMagic(region.id);
               delete region._aiPendingGachaDebit;
               prefRecordAIThought(region,'ガチャ','シナジー改善候補を抽選',[
-                `現デッキの期待補強値${potential.toFixed(1)}が基準${utilityGate.toFixed(1)}以上`,
+                qualityPriority?'先発補充・★3改善・敗北後再構築・★5強化の優先条件を満たした':`現デッキの期待補強値${potential.toFixed(1)}が基準${utilityGate.toFixed(1)}以上`,
                 `${g.label}を${prefFormatMoney(cost)}で利用し、獲得カードと最弱枠を比較`,
                 `採用できるカードが出たため、${prefCardForInstance(replacement)?.name||'既存カード'}と交換`
               ],{cardName:card?.name,rank:prefRankStars(card),gacha:key,potential,replaced:prefCardForInstance(replacement)?.name||replacement});
               prefLog(`${region.prefecture}がデッキ補強を狙ってガチャを利用し、シナジー候補「${card?.name||'キャラカード'}」を採用しました。`,'info');
               try { prefRefreshAIPlan(region,'ガチャでシナジー補強',true); }
               catch(err) { console.error(`[Prefecture] AI plan refresh after synergy gacha failed for ${region.id}`,err); }
+              boughtUpgrade=true; // objective fulfilled; remaining upgrades are re-evaluated on the next turn
             }
           }else{
-            // A non-upgrade draw is not allowed to displace a stronger card; do not charge for a rejected draw.
+            // Actual gacha draw is paid even when it cannot upgrade the roster.
+            // Listing preserves the result for the market rather than granting a free reroll.
             prefListInstance(inst,region.id,'ai-rejected-gacha-upgrade');
-            prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;
+            prefGrantGachaBundleMagic(region.id);
+            delete region._aiPendingGachaDebit;
+          }
           }
         }else if(selected.kind==='magic'){
-          const templates=prefCardTemplates().filter(c=>c.cardType==='magic');
-          if(templates.length){
-            const t=prefRandom(templates),inst=t&&prefCreateInstance(t.id,'pending',null,{source:'ai-gacha-upgrade'});
-            if(inst){
-              if(prefOwnedMagics(region.id).some(x=>String(x.templateId)===String(t.id)))prefListInstance(inst,region.id,'duplicate-gacha');
-              else prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha-upgrade'});
-              delete region._aiPendingGachaDebit;
-            }else{prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;}
-          }else{prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;}
+          if(!prefAiReceiveDrawnMagic(region,selected,'ai-gacha-upgrade')){
+            prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;
+          }
+          delete region._aiPendingGachaDebit;
           prefRecordAIThought(region,'ガチャ','シナジー補強を狙ったがマジック排出',[
             `現デッキの補強期待値${potential.toFixed(1)}を確認して抽選`,`${g.label}からマジックが排出されたため、キャラ編成は維持`
           ],{gacha:key,potential});
-        }else{prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;}
+        }else{prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
       }
     }
   }
@@ -2161,7 +2436,7 @@ function prefAiTryEconomy(region) {
       .map(inst=>({inst,utility:prefAiMarketUtility(region,inst)})).sort((a,b)=>b.utility-a.utility);
     const best=candidates[0];
     const floor=Math.min(10000000,Math.max(1000000,(Number(region.funds)||0)*0.05));
-    const threshold=profile.primaryStrategy==='collector'?7:profile.cardIQ>=75?10:12;
+    const threshold=11; // 戦闘効果に基づく最低効用は全代表に共通
     if(best&&best.utility>=threshold&&region.funds-prefValueFromInstance(best.inst)>=floor){
       const candidate=best.inst,card=prefCardForInstance(candidate.id)||prefTemplate(candidate.templateId),price=prefValueFromInstance(candidate),seller=candidate.sellerRegionId;
       prefBook(region.id,-price,'market-buy');if(seller)prefBook(seller,price,'market-sale');prefSetInstanceOwner(candidate,region.id,false);candidate.expiresAtAbs=null;
@@ -2351,10 +2626,11 @@ function prefAiEmergencyGachaRefill(region) {
   // Recovery path used only when the full AI economy planner throws. It deliberately avoids
   // market scoring and AI-plan helpers so a failure in those systems cannot suppress basic refill.
   if(!campaignState||!region||region.isPlayer)return 0;
-  let attempts=0,acquired=0;
-  while(prefOwnedUnits(region.id).length<5&&attempts<4){
+  let acquired=0;
+  while(prefOwnedUnits(region.id).length<5){
     const eligible=prefEligibleGachaUnitInstances();
     if(!eligible.length)break;
+    const hasHigherRankInPool=eligible.some(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))>=4);
     const units=prefOwnedUnits(region.id).length;
     const funds=Math.max(0,Number(region.funds)||0);
     const tier=String(region.tier||'E');
@@ -2377,15 +2653,25 @@ function prefAiEmergencyGachaRefill(region) {
     if(!selected||!['unit','magic'].includes(selected.kind))break;
     prefBook(region.id,-cost,'gacha');
     region._aiPendingGachaDebit={amount:cost,stage:'復旧ガチャ'};
-    attempts++;
     if(selected.kind==='unit'&&selected.instance){
       const inst=selected.instance;
+      const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
+      const qualityCanBeBought=['S','A','B'].includes(tier)&&funds>=PREF_GACHA.A.price+prefAiUnitReserveFloor(region);
+      if(qualityCanBeBought&&hasHigherRankInPool&&prefRankStars(card)<4){
+        prefListInstance(inst,region.id,'ai-low-rank-recovery-listing');
+        prefGrantGachaBundleMagic(region.id); // Every paid unit draw still grants its guaranteed magic.
+        delete region._aiPendingGachaDebit;
+        prefRecordAIThought(region,'ガチャ','復旧補充の低ランク候補を見送り',[
+          '通常の経済判断が失敗した場合でも、資金と★4以上の候補がある上位AIには★3を補充しない',
+          '抽選費用は消費し不要カードは市場へ。資金と候補がある間は再抽選する'
+        ],{cardName:card?.name,rank:prefRankStars(card),gacha:key,recovery:true,rosterBefore:units,rosterAfter:units});
+        continue;
+      }
       const got=prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha-recovery'});
       if(got===false){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
       prefGrantGachaBundleMagic(region.id);
       delete region._aiPendingGachaDebit;
       acquired++;
-      const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId);
       prefRecordAIThought(region,'ガチャ',`補充エラーから復旧し「${card?.name||'キャラカード'}」を獲得`,[
         '通常の市場・ガチャ判断で例外が発生したため、補充専用の安全経路を使用',
         `所持キャラ${units}/5枚から補充を再開`,
@@ -2394,15 +2680,8 @@ function prefAiEmergencyGachaRefill(region) {
       ],{cardName:card?.name,rank:prefRankStars(card),gacha:key,recovery:true,rosterBefore:units,rosterAfter:prefOwnedUnits(region.id).length});
       prefLog(`${region.prefecture}が補充判断の復旧処理で${PREF_GACHA[key].label}を利用し、キャラカードを獲得しました。`,'warning');
     } else {
-      const templates=prefCardTemplates().filter(c=>c.cardType==='magic');
-      if(!templates.length){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
-      const template=prefRandom(templates);
-      const inst=template&&prefCreateInstance(template.id,'pending',null,{source:'ai-gacha-recovery'});
-      if(!inst){prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;}
-      if(prefOwnedMagics(region.id).some(x=>String(x.templateId)===String(template.id)))prefListInstance(inst,region.id,'duplicate-gacha');
-      else {
-        const got=prefAcquireInstance(region.id,inst.id,{reason:'ai-gacha-recovery'});
-        if(got===false)prefListInstance(inst,region.id,'gacha-recovery-overflow');
+      if(!prefAiReceiveDrawnMagic(region,selected,'ai-gacha-recovery')){
+        prefBook(region.id,cost,'gacha-refund');delete region._aiPendingGachaDebit;break;
       }
       delete region._aiPendingGachaDebit;
       prefRecordAIThought(region,'ガチャ','復旧用ガチャでマジックが排出',[
@@ -2524,9 +2803,9 @@ async function prefPrepareTurnActionsInRankOrder(playerAction,tx) {
     }
     processed.add(id);tx.preparationProcessedIds=[...processed];tx.preparationIndex=i+1;
     prefSetPreparationProgress(processed.size,ordered.length,region.prefecture||id);
-    // Save each completed representative so an interrupted tab can resume without repeating
-    // already completed economy and command decisions; yielding keeps the progress UI responsive.
-    await prefSave();
+    // Save a compact checkpoint every four representatives instead of serializing the entire
+    // campaign state after each one. This keeps the UI responsive while limiting replay on interruption.
+    if(processed.size%4===0||i===ordered.length-1)await prefSave();
     await prefYieldToBrowser();
   }
   tx.preparationComplete=true;tx.stage='matching';delete tx.resumePlayerAction;
@@ -2668,7 +2947,7 @@ function prefEstimateBuildScenarios(region,activeCards,reserveCards,magicCards) 
   const mean=vals.reduce((sum,v,i)=>sum+v*weights[i],0)/totalWeight;
   const iq=Number(profile.cardIQ)||0;
   // Low card IQ has a noisier estimate and is less likely to recognise sophisticated lines.
-  const accuracy=0.55+0.45*iq/100;
+  const accuracy=0.93+0.07*iq/100;
   return {mean:mean*accuracy,scenarios:{burst:Number(burst.toFixed(2)),sustain:Number(sustainScore.toFixed(2)),chain:Number(chain.toFixed(2))}};
 }
 
@@ -2692,17 +2971,29 @@ function prefCardHasTeamBuff(card) {
   });
 }
 
+function prefRivalQualityRosterUnits(region, units) {
+  const roster=Array.isArray(units)?units:[];
+  if(!region||region.isPlayer)return roster.slice();
+  const strong=roster.filter(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))>=4);
+  const strongFiveCount=strong.filter(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))===5).length;
+  const legalStrongCount=strong.length-strongFiveCount+Math.min(strongFiveCount,PREF_BATTLE_RANK5_LIMIT);
+  // Only apply the quality floor when it still leaves three legal starters under the ★5 cap.
+  // If there are too many ★5s and not enough ★4 cards, keep the full roster as fallback material.
+  return legalStrongCount>=PREF_BATTLE_ACTIVE?strong:roster.slice();
+}
+
 function prefChooseRivalLoadout(regionId,opponentId=null) {
   const region=prefRegion(regionId);const units=prefOwnedUnits(regionId);if(!region||region.isPlayer)return prefDefaultLoadoutFallback(regionId);
   const profile=prefAIProfileForRegion(region);const cardById=id=>prefCardForInstance(id)||prefTemplate(campaignState.instances[id]?.templateId);
-  const cards=units.map(x=>({inst:x,card:cardById(x.id)})).filter(x=>x.card);
+  const rosterUnits=prefRivalQualityRosterUnits(region,units);
+  const cards=rosterUnits.map(x=>({inst:x,card:cardById(x.id)})).filter(x=>x.card);
   const mags=prefOwnedMagics(regionId).map(x=>cardById(x.id)).filter(Boolean);
   const opponentIntel=opponentId?prefGetOpponentIntel(region,opponentId):null;
   if(cards.length<=3){
     const active=cards.map(x=>x.inst.id);const reserve=[];
     prefRecordAIThought(region,'編成構築','出撃メンバーを選出',['所持キャラが3体以下のため、全員を出撃候補に設定',`カード選びの賢さ${profile.cardIQ}/100`,...(opponentIntel?.confidence>0.2?[`調査・対戦記憶を参照（信頼度${Math.round(opponentIntel.confidence*100)}%）`]:[])],{activeNames:active.map(id=>cardById(id)?.name||'キャラ'),opponentId:opponentId||null});
-    const normalized=prefNormalizeLoadoutSelection(active,reserve,units);
-    if(!prefCanFormLegalBattleSquad(units)){
+    const normalized=prefNormalizeLoadoutSelection(active,reserve,rosterUnits);
+    if(!prefCanFormLegalBattleSquad(rosterUnits)){
       try { prefLog(`${region.prefecture}は★5編成上限を守って先発3体を組めないため、キャラ補充が必要です。`,'warning'); } catch(_) {}
     }
     return normalized;
@@ -2712,7 +3003,10 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
   pick(cards,0,Math.min(3,cards.length),[]);
   const scoredBuilds=[];
   const cardProfile=new Map(cards.map(x=>[String(x.inst.id),prefCardProfile(x.card)]));
-  const cardScore=new Map(cards.map(x=>[String(x.inst.id),prefCardIntrinsicScore(region,x.card)+prefCardStrategyScore(region,x.card)+prefCardPreferenceScore(region,x.card)+prefAIPlanFitScore(region,x.card)]));
+  const topTier=['S','A','B'].includes(String(region.tier||''));
+  const ownedFiveCount=cards.filter(x=>(cardProfile.get(String(x.inst.id))||prefCardProfile(x.card)).rank===5).length;
+  const highValueFiveCount=cards.filter(x=>(cardProfile.get(String(x.inst.id))||prefCardProfile(x.card)).rank===5&&Number(x.card?.value||0)>=PREF_GACHA_VALUE_LIMITS[5]).length;
+  const cardScore=new Map(cards.map(x=>[String(x.inst.id),prefCardIntrinsicScore(region,x.card)+prefCardStrategyScore(region,x.card)+prefCardPreferenceScore(region,x.card)+prefAIPlanFitScore(region,x.card)+(topTier&&prefRankStars(x.card)===5&&Number(x.card.value||0)>=PREF_GACHA_VALUE_LIMITS[5]?4.5:0)]));
   const ownedControllerCount=cards.filter(x=>(cardProfile.get(String(x.inst.id))||prefCardProfile(x.card)).role==='controller').length;
   const teamBuffIds=new Set(cards.filter(x=>prefCardHasTeamBuff(x.card)).map(x=>String(x.inst.id)));
   const rankFiveCount=xs=>xs.reduce((sum,x)=>sum+(cardProfile.get(String(x.inst.id))?.rank===5?1:0),0);
@@ -2721,7 +3015,7 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     const ak=String(a?.id??a?.name??''),bk=String(b?.id??b?.name??'');
     const key=ak<bk?`${ak}\u0000${bk}`:`${bk}\u0000${ak}`;
     if(pairCache.has(key))return pairCache.get(key);
-    const value=prefPairSynergyRaw(a,b,profile)*(0.25+0.75*profile.cardIQ/100);pairCache.set(key,value);return value;
+    const value=prefPairSynergyRaw(a,b,profile)*(0.88+0.12*profile.cardIQ/100);pairCache.set(key,value);return value;
   };
   const cachedPair=(a,b)=>pair(a,b);
   function opponentCounterBonus(activeCards){
@@ -2744,6 +3038,14 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     const rp=cardProfile.get(String(reserveEntry.inst.id))||prefCardProfile(reserveEntry.card);
     const base=cardScore.get(String(reserveEntry.inst.id))||0;
     let value=base*0.22;
+    const reserveIsUpperFive=rp.rank===5&&Number(reserveEntry.card?.value||0)>=PREF_GACHA_VALUE_LIMITS[5];
+    const activeHasUpperFive=activeEntries.some(entry=>{
+      const card=entry.card||prefCardForInstance(entry.inst?.id)||prefTemplate(entry.inst?.templateId);
+      return prefRankStars(card)===5&&Number(card?.value||0)>=PREF_GACHA_VALUE_LIMITS[5];
+    });
+    if(topTier&&reserveIsUpperFive)value+=4.5;
+    if(topTier&&highValueFiveCount>0&&!activeHasUpperFive&&reserveIsUpperFive)value+=8.0;
+    if(topTier&&ownedFiveCount>=2&&rankFiveCount(activeEntries)<2&&rp.rank===5)value+=8.0;
     const roleSet=new Set(activeProfiles.map(x=>x.role).filter(Boolean));
     // Reserves are actual substitutions, not a score bonus for every unselected owned card.
     // A deploy-triggered passive is particularly useful when a reserve enters after a KO.
@@ -2821,6 +3123,7 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     const reserveHasFrontlineDefender=reserveProfiles.some(x=>x.tags.has('frontline_defender'));
     if(hasAttacker&&reserveHasFrontlineDefender&&!hasFrontlineDefender)score-=6.0;
     score+=reserveEntries.reduce((sum,entry)=>sum+(reserveRanked.find(x=>String(x.entry.inst.id)===String(entry.inst.id))?.value||0)*0.35,0);
+    if(topTier&&ownedFiveCount>=2)score+=Math.min(2,rankFiveCount(selected)+rankFiveCount(reserveEntries))*4.0;
     // Score only pairs actually co-deployed, with a slightly stronger emphasis on explicit synergy.
     for(let i=0;i<activeCards.length;i++)for(let j=i+1;j<activeCards.length;j++)score+=cachedPair(activeCards[i],activeCards[j])*1.28;
     mags.forEach(m=>activeCards.forEach(c=>score+=cachedPair(m,c)*0.75));
@@ -2840,7 +3143,7 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
   scoredBuilds.sort((a,b)=>b.score-a.score);
   // Keep the three highest-scoring builds; small randomness remains only among genuinely close candidates.
   const shortlist=scoredBuilds.slice(0,3);let best=shortlist[0];
-  if(shortlist.length>1){const top=shortlist[0].score;const near=shortlist.filter(x=>top-x.score<=2.0);if(near.length>1)best=near[Math.floor(Math.random()*near.length)];}
+  if(shortlist.length>1){const top=shortlist[0].score;const near=shortlist.filter(x=>top-x.score<=0.45);if(near.length>1)best=near[Math.floor(Math.random()*near.length)];}
   const fallback=best?null:prefEmergencyLoadout(regionId);
   const active=best?.active||fallback?.active||[];
   const reserve=best?.reserve||fallback?.reserve||[];
@@ -2849,7 +3152,7 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
   const reasons=[`カード選びの賢さ${profile.cardIQ}/100で構築候補を評価`,`主戦術「${(PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)||{}).label||'対応型'}」と副戦術を反映`,`先発3体の勝ち筋を先に評価：${chosenPlan?.title||'基礎性能と役割補完'}`,...(chosenPlan?.coreName?[`中心となる主力候補：「${chosenPlan.coreName}」`]:[]),...(chosenPlan?.reasons||[]),`控えは先発3枚の完成を優先したうえで、交代後の役割補充・登場時パッシブ・追加連携を比較`,`AP条件パッシブは有用性と必要APを見て、APを温存しやすい控え配置も評価`,...(reservedApThresholdCards.length?[`AP条件パッシブを持つ控え候補：${reservedApThresholdCards.join('、')}`]:[]),`候補${candidateSets.length}案を効果解析で評価し、上位${shortlist.length}案を3つの想定戦況（速攻・長期戦・連携成立）で平均比較`];
   if(opponentIntel?.confidence>0.15)reasons.push(`調査・対戦記憶の情報を対策に使用（信頼度${Math.round(opponentIntel.confidence*100)}%）`);
   prefRecordAIThought(region,'編成構築','出撃メンバーを選出',reasons,{activeNames:best?.activeNames||active.map(id=>cardById(id)?.name||'キャラ'),reserveNames:best?.reserveNames||reserve.map(id=>cardById(id)?.name||'キャラ'),apThresholdReserveNames:reservedApThresholdCards,score:best?.score,alternatives:shortlist.map(x=>({names:x.activeNames,reserveNames:x.reserveNames,roles:x.roleCoverage,score:Math.round(x.score*10)/10,scenarioMean:Math.round((x.scenarioMean||0)*10)/10,scenarios:x.scenarios,attributes:x.attrs,openingPlan:x.openingPlan})),openingPlan:chosenPlan||null,opponentId:opponentId||null,opponentIntelConfidence:opponentIntel?.confidence||0});
-  return prefNormalizeLoadoutSelection(active.slice(0,3),reserve.slice(0,2),units);
+  return prefNormalizeLoadoutSelection(active.slice(0,3),reserve.slice(0,2),rosterUnits);
 }
 function prefDefaultLoadoutFallback(regionId) {
   const units=prefOwnedUnits(regionId);const r=prefRegion(regionId);const saved=r?.lastLoadout||{};
@@ -2876,11 +3179,14 @@ function prefBattleOverrideForRegions(aId,bId,playerLoadout=null) {
   const unitsA=prefOwnedUnits(aId),unitsB=prefOwnedUnits(bId);
   const magsA=prefOwnedMagics(aId),magsB=prefOwnedMagics(bId);
   const loadA=playerLoadout||prefDefaultLoadout(aId,bId);const loadB=prefDefaultLoadout(bId,aId);
-  const legalA=prefNormalizeLoadoutSelection(loadA.active,loadA.reserve,unitsA);
-  const legalB=prefNormalizeLoadoutSelection(loadB.active,loadB.reserve,unitsB);
-  const selectedA=[...legalA.active,...legalA.reserve].filter(id=>unitsA.some(x=>x.id===id)).slice(0,5);
-  const selectedB=[...legalB.active,...legalB.reserve].filter(id=>unitsB.some(x=>x.id===id)).slice(0,5);
-  unitsB.forEach(x=>{if(selectedB.length<5&&!selectedB.includes(x.id)&&prefCountFiveStarIds([...selectedB,x.id],unitsB)<=PREF_BATTLE_RANK5_LIMIT)selectedB.push(x.id);});
+  const battleUnitsA=a.isPlayer?unitsA:prefRivalQualityRosterUnits(a,unitsA);
+  const battleUnitsB=b.isPlayer?unitsB:prefRivalQualityRosterUnits(b,unitsB);
+  const legalA=prefNormalizeLoadoutSelection(loadA.active,loadA.reserve,battleUnitsA);
+  const legalB=prefNormalizeLoadoutSelection(loadB.active,loadB.reserve,battleUnitsB);
+  const selectedA=[...legalA.active,...legalA.reserve].filter(id=>battleUnitsA.some(x=>x.id===id)).slice(0,5);
+  const selectedB=[...legalB.active,...legalB.reserve].filter(id=>battleUnitsB.some(x=>x.id===id)).slice(0,5);
+  battleUnitsA.forEach(x=>{if(selectedA.length<5&&!selectedA.includes(x.id)&&prefCountFiveStarIds([...selectedA,x.id],battleUnitsA)<=PREF_BATTLE_RANK5_LIMIT)selectedA.push(x.id);});
+  battleUnitsB.forEach(x=>{if(selectedB.length<5&&!selectedB.includes(x.id)&&prefCountFiveStarIds([...selectedB,x.id],battleUnitsB)<=PREF_BATTLE_RANK5_LIMIT)selectedB.push(x.id);});
   const activeA=legalA.active.filter(id=>selectedA.includes(id)).slice(0,3);
   while(activeA.length<Math.min(3,selectedA.length)){const id=selectedA.find(x=>!activeA.includes(x));if(!id)break;activeA.push(id);}
   const reserveA=selectedA.filter(id=>!activeA.includes(id)).slice(0,2);
@@ -3161,22 +3467,30 @@ async function prefContinueTurn() {
     document.getElementById('pref-turn-progress')?.classList.remove('hidden');
     prefTurnResolutionProgress(tx);
     let safety=0;
+    let actionsSinceCheckpoint=0;
+    const saveResolutionCheckpoint=async(force=false)=>{
+      actionsSinceCheckpoint++;
+      if(!force&&actionsSinceCheckpoint<3&&tx.resolutionIndex<queue.length)return;
+      await prefSave();
+      actionsSinceCheckpoint=0;
+      prefRenderDashboard();
+    };
     while(tx.resolutionIndex<queue.length && safety++<queue.length+2){
       const step=queue[tx.resolutionIndex];
       if(!step){tx.resolutionIndex++;continue;}
       if(step.status==='done'){tx.resolutionIndex++;continue;}
       if(step.type==='unmatched'){
-        step.status='done';tx.resolutionIndex++;prefTurnResolutionProgress(tx);await prefSave();continue;
+        step.status='done';tx.resolutionIndex++;prefTurnResolutionProgress(tx);await saveResolutionCheckpoint();continue;
       }
       if(step.type==='battle'){
         const pair=tx.pairs.find(item=>String(item.id)===String(step.pairId));
-        if(!pair){step.status='done';tx.resolutionIndex++;await prefSave();continue;}
+        if(!pair){step.status='done';tx.resolutionIndex++;await saveResolutionCheckpoint();continue;}
         if(pair.pendingSettlement){
           await prefSettlePendingPlayerBattle(pair,tx);
-          prefTurnResolutionProgress(tx);await prefSave();
+          prefTurnResolutionProgress(tx);await saveResolutionCheckpoint(true);
           continue;
         }
-        if(pair.status==='done'){step.status='done';tx.resolutionIndex++;prefTurnResolutionProgress(tx);await prefSave();continue;}
+        if(pair.status==='done'){step.status='done';tx.resolutionIndex++;prefTurnResolutionProgress(tx);await saveResolutionCheckpoint();continue;}
         if(pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID){
           tx.pairIndex=Math.max(0,tx.pairs.indexOf(pair));tx.currentPairId=pair.id;
           if(!tx.playerLoadoutConfirmed){await prefShowRankedPlayerBattlePreview(pair,tx);return;}
@@ -3184,11 +3498,12 @@ async function prefContinueTurn() {
           tx.stage='battles';prefHideTurnLoading();prefLaunchPlayerBattle(pair);return;
         }
         pair.status='simulating';step.status='processing';tx.currentPairId=pair.id;tx.pairIndex=Math.max(0,tx.pairs.indexOf(pair));
-        await prefSave();
+        // Persist resolved work in small batches. If interrupted mid-battle, the last checkpoint
+        // still contains a pending pair and can safely replay it without corrupting the settlement.
         const winner=await prefSimulateAiBattle(pair);
         pair.status='done';pair.winner=winner;pair.draw=winner==='draw';step.status='done';tx.currentPairId=null;
         tx.pairIndex=Math.max(tx.pairIndex,tx.pairs.indexOf(pair)+1);tx.resolutionIndex++;
-        prefTurnResolutionProgress(tx);await prefSave();prefRenderDashboard();
+        prefTurnResolutionProgress(tx);await saveResolutionCheckpoint();
         // Yield after each representative action so the progress display and UI stay responsive.
         await new Promise(resolve=>setTimeout(resolve,0));
         continue;
@@ -3196,7 +3511,7 @@ async function prefContinueTurn() {
       if(step.type==='investigate'){
         const regionId=String(step.regionId);
         const already=Array.isArray(tx.resolvedInvestigationIds)&&tx.resolvedInvestigationIds.includes(regionId);
-        step.status='processing';await prefSave();
+        step.status='processing';
         if(!already){
           try {
             const resolved=prefResolveInvestigationAction(tx,regionId,tx.actions?.[regionId]);
@@ -3210,13 +3525,13 @@ async function prefContinueTurn() {
           if(!tx.resolvedInvestigationIds.includes(regionId))tx.resolvedInvestigationIds.push(regionId);
         }
         step.status='done';tx.resolutionIndex++;
-        prefTurnResolutionProgress(tx);await prefSave();prefRenderDashboard();
+        prefTurnResolutionProgress(tx);await saveResolutionCheckpoint();
         await new Promise(resolve=>setTimeout(resolve,0));
         continue;
       }
       // Unknown queue entries are ignored safely rather than locking the campaign turn.
       console.warn('[Prefecture] unknown turn resolution entry; skipping',step);
-      step.status='done';tx.resolutionIndex++;await prefSave();
+      step.status='done';tx.resolutionIndex++;await saveResolutionCheckpoint();
     }
     if(tx.resolutionIndex<queue.length){
       // Avoid an infinite loop if a malformed queue was restored from an older save.

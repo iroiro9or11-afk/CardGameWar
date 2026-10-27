@@ -4145,12 +4145,12 @@
       return score;
     }
     function aiEvaluationError(side) {
-      const iq=getAiTacticalIQ(side);const maxError=(100-iq)*0.12;
+      const iq=getAiTacticalIQ(side);const maxError=(100-iq)*0.018;
       return (Math.random()-0.5)*maxError;
     }
     function aiPickWithinThree(scored,scoreKey='score') {
       if(!scored?.length)return null;const best=Math.max(...scored.map(x=>Number(x[scoreKey])||0));
-      const near=scored.filter(x=>best-(Number(x[scoreKey])||0)<=3);
+      const near=scored.filter(x=>best-(Number(x[scoreKey])||0)<=0.6);
       return near[Math.floor(Math.random()*near.length)]||scored[0];
     }
     function recordCampaignAiTurnPlan(side) {
@@ -5802,7 +5802,16 @@
         const candidateAdjustment=baseAdjustment-apOpportunity.total;
         return {c,adjustment,score:delta+candidateAdjustment+aiEvaluationError(side)};
       }).sort((a,b)=>b.score-a.score);
-      return scored.slice(0, Math.max(3,Math.min(7,3+Math.round(getAiTacticalIQ(side)*0.04)))).map(x=>({...x.c,__aiPlannerAdjustment:x.adjustment}));
+      const limit=Math.max(5,Math.min(9,5+Math.round(getAiTacticalIQ(side)*0.04)));
+      const chosen=[],usedCards=new Set();
+      // First keep the best target for EACH unique magic (and the do-not-use option).
+      // Otherwise seven target variants of a single spell can crowd out a decisive counterspell.
+      for(const row of scored){
+        const key=row.c.card?String(row.c.card.id):'no-magic';
+        if(!usedCards.has(key)){usedCards.add(key);chosen.push(row);if(chosen.length>=limit)break;}
+      }
+      for(const row of scored){if(chosen.length>=limit)break;if(!chosen.includes(row))chosen.push(row);}
+      return chosen.map(x=>({...x.c,__aiPlannerAdjustment:x.adjustment}));
     }
 
     function aiPlannerApplyCandidate(state, candidate) {
@@ -5824,7 +5833,9 @@
       const base = aiPlannerCreateState(side);
       const activeIds = aiPlannerActive(base, side).sort((a,b) => aiPlannerEffectiveSpeed(b) - aiPlannerEffectiveSpeed(a)).map(u => u.instanceId);
       const iq=getAiTacticalIQ(side);
-      const beamWidth = Math.max(8,Math.min(48,8+Math.round(iq*0.40)));
+      // Preserve multi-action lookahead for every rival while avoiding 48*actions repeated
+      // deep copies. Search breadth varies by IQ; baseline decision safety never does.
+      const beamWidth = Math.max(16,Math.min(29,16+Math.round(iq*0.13)));
       let beams = [{ state: base, plan: [], score: aiPlannerEvaluateState(base, side), adjustment:0 }];
 
       // マジックは共有APを消費するので、キャラより先に候補として組み込む。
