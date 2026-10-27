@@ -966,6 +966,36 @@
       }
       updatePreview();
     }
+    // スキル枠の上下移動。枠の入力値をいったんデータ化してから入れ替え、
+    // 発動条件・対象・追加効果・パッシブ設定を含めてスキル全体を移動する。
+    function moveEditorSkill(slotNumber, direction) {
+      const cards = [...document.querySelectorAll("#unit-skills-builder .skill-builder-card")];
+      const from = Number(slotNumber) - 1;
+      const to = from + Number(direction);
+      if (from < 0 || to < 0 || from >= cards.length || to >= cards.length) return;
+
+      const slotData = cards.map(card => {
+        const index = Number(card.dataset.index);
+        const type = card.querySelector(".skill-type-select")?.value || "none";
+        return type === "none" ? null : extractSkillDataFromUI(`s${index}`, type, false);
+      });
+      if (!slotData[from] && !slotData[to]) return;
+      [slotData[from], slotData[to]] = [slotData[to], slotData[from]];
+
+      cards.forEach((card, i) => {
+        const index = Number(card.dataset.index);
+        const skill = slotData[i];
+        const select = card.querySelector(".skill-type-select");
+        select.value = skill?.type || "none";
+        toggleSkillTypeUI(select);
+        if (skill) populateSkillEditor(`s${index}`, skill, skill.type, false);
+        const up = card.querySelector(".skill-move-up");
+        const down = card.querySelector(".skill-move-down");
+        if (up) up.disabled = i === 0;
+        if (down) down.disabled = i === cards.length - 1;
+      });
+      updatePreview();
+    }
 
     function generateSkillFormHTML(prefix, skillType, isMagic = false) {
       const isPassive = skillType === "passive";

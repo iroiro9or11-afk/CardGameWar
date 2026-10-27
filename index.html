@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.51</title>
+  <title>都道府県カード戦争 v1.0.54</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -307,7 +307,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.51</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.54</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -496,37 +496,56 @@
             </div>
             <!-- スキル設定 -->
             <div id="unit-skills-builder" class="space-y-4 border-t border-slate-800 pt-3">
-              <h3 class="text-xs font-bold text-amber-400">スキル設定</h3>
+              <h3 class="text-xs font-bold text-amber-400">スキル設定（最大4個・↑↓で順番変更）</h3>
               <div class="skill-builder-card bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-2" data-index="1">
-                <div class="flex justify-between items-center">
+                <div class="flex justify-between items-center gap-2">
                   <span class="text-xs font-bold text-amber-400">スキル 1</span>
-                  <select class="skill-type-select bg-slate-800 text-xs rounded px-2 py-1 font-bold" onchange="toggleSkillTypeUI(this)">
-                    <option value="active">アクティブ</option>
-                    <option value="passive">パッシブ</option>
-                    <option value="none">なし</option>
-                  </select>
+                  <div class="flex items-center gap-1">
+                    <button type="button" class="skill-move-up px-2 py-1 rounded bg-slate-800 text-xs disabled:opacity-30" title="1つ上へ" aria-label="スキル1を上へ" onclick="moveEditorSkill(1,-1)" disabled>↑</button>
+                    <button type="button" class="skill-move-down px-2 py-1 rounded bg-slate-800 text-xs" title="1つ下へ" aria-label="スキル1を下へ" onclick="moveEditorSkill(1,1)">↓</button>
+                    <select class="skill-type-select bg-slate-800 text-xs rounded px-2 py-1 font-bold" onchange="toggleSkillTypeUI(this)">
+                      <option value="active">アクティブ</option><option value="passive">パッシブ</option><option value="none">なし</option>
+                    </select>
+                  </div>
                 </div>
                 <div class="skill-form-container"></div>
               </div>
               <div class="skill-builder-card bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-2" data-index="2">
-                <div class="flex justify-between items-center">
+                <div class="flex justify-between items-center gap-2">
                   <span class="text-xs font-bold text-amber-400">スキル 2</span>
-                  <select class="skill-type-select bg-slate-800 text-xs rounded px-2 py-1 font-bold" onchange="toggleSkillTypeUI(this)">
-                    <option value="none">なし</option>
-                    <option value="active">アクティブ</option>
-                    <option value="passive">パッシブ</option>
-                  </select>
+                  <div class="flex items-center gap-1">
+                    <button type="button" class="skill-move-up px-2 py-1 rounded bg-slate-800 text-xs" title="1つ上へ" aria-label="スキル2を上へ" onclick="moveEditorSkill(2,-1)">↑</button>
+                    <button type="button" class="skill-move-down px-2 py-1 rounded bg-slate-800 text-xs" title="1つ下へ" aria-label="スキル2を下へ" onclick="moveEditorSkill(2,1)">↓</button>
+                    <select class="skill-type-select bg-slate-800 text-xs rounded px-2 py-1 font-bold" onchange="toggleSkillTypeUI(this)">
+                      <option value="none">なし</option><option value="active">アクティブ</option><option value="passive">パッシブ</option>
+                    </select>
+                  </div>
                 </div>
                 <div class="skill-form-container"></div>
               </div>
               <div class="skill-builder-card bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-2" data-index="3">
-                <div class="flex justify-between items-center">
+                <div class="flex justify-between items-center gap-2">
                   <span class="text-xs font-bold text-amber-400">スキル 3</span>
-                  <select class="skill-type-select bg-slate-800 text-xs rounded px-2 py-1 font-bold" onchange="toggleSkillTypeUI(this)">
-                    <option value="none">なし</option>
-                    <option value="active">アクティブ</option>
-                    <option value="passive">パッシブ</option>
-                  </select>
+                  <div class="flex items-center gap-1">
+                    <button type="button" class="skill-move-up px-2 py-1 rounded bg-slate-800 text-xs" title="1つ上へ" aria-label="スキル3を上へ" onclick="moveEditorSkill(3,-1)">↑</button>
+                    <button type="button" class="skill-move-down px-2 py-1 rounded bg-slate-800 text-xs" title="1つ下へ" aria-label="スキル3を下へ" onclick="moveEditorSkill(3,1)">↓</button>
+                    <select class="skill-type-select bg-slate-800 text-xs rounded px-2 py-1 font-bold" onchange="toggleSkillTypeUI(this)">
+                      <option value="none">なし</option><option value="active">アクティブ</option><option value="passive">パッシブ</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="skill-form-container"></div>
+              </div>
+              <div class="skill-builder-card bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-2" data-index="4">
+                <div class="flex justify-between items-center gap-2">
+                  <span class="text-xs font-bold text-amber-400">スキル 4</span>
+                  <div class="flex items-center gap-1">
+                    <button type="button" class="skill-move-up px-2 py-1 rounded bg-slate-800 text-xs" title="1つ上へ" aria-label="スキル4を上へ" onclick="moveEditorSkill(4,-1)">↑</button>
+                    <button type="button" class="skill-move-down px-2 py-1 rounded bg-slate-800 text-xs disabled:opacity-30" title="1つ下へ" aria-label="スキル4を下へ" onclick="moveEditorSkill(4,1)" disabled>↓</button>
+                    <select class="skill-type-select bg-slate-800 text-xs rounded px-2 py-1 font-bold" onchange="toggleSkillTypeUI(this)">
+                      <option value="none">なし</option><option value="active">アクティブ</option><option value="passive">パッシブ</option>
+                    </select>
+                  </div>
                 </div>
                 <div class="skill-form-container"></div>
               </div>
@@ -2083,6 +2102,36 @@
       }
       updatePreview();
     }
+    // スキル枠の上下移動。枠の入力値をいったんデータ化してから入れ替え、
+    // 発動条件・対象・追加効果・パッシブ設定を含めてスキル全体を移動する。
+    function moveEditorSkill(slotNumber, direction) {
+      const cards = [...document.querySelectorAll("#unit-skills-builder .skill-builder-card")];
+      const from = Number(slotNumber) - 1;
+      const to = from + Number(direction);
+      if (from < 0 || to < 0 || from >= cards.length || to >= cards.length) return;
+
+      const slotData = cards.map(card => {
+        const index = Number(card.dataset.index);
+        const type = card.querySelector(".skill-type-select")?.value || "none";
+        return type === "none" ? null : extractSkillDataFromUI(`s${index}`, type, false);
+      });
+      if (!slotData[from] && !slotData[to]) return;
+      [slotData[from], slotData[to]] = [slotData[to], slotData[from]];
+
+      cards.forEach((card, i) => {
+        const index = Number(card.dataset.index);
+        const skill = slotData[i];
+        const select = card.querySelector(".skill-type-select");
+        select.value = skill?.type || "none";
+        toggleSkillTypeUI(select);
+        if (skill) populateSkillEditor(`s${index}`, skill, skill.type, false);
+        const up = card.querySelector(".skill-move-up");
+        const down = card.querySelector(".skill-move-down");
+        if (up) up.disabled = i === 0;
+        if (down) down.disabled = i === cards.length - 1;
+      });
+      updatePreview();
+    }
 
     function generateSkillFormHTML(prefix, skillType, isMagic = false) {
       const isPassive = skillType === "passive";
@@ -2992,7 +3041,7 @@
         const payload = {
           format: 'prefecture-card-war-card-data',
           formatVersion: 1,
-          gameVersion: '1.0.43',
+          gameVersion: '1.0.54',
           exportedAt: exportedAt.toISOString(),
           intendedUse: 'このJSONと同じバージョンのゲームZIPを参照し、カードの性能・スキル・効果条件・組み合わせを検証する',
           imagesIncluded: false,
@@ -3015,13 +3064,13 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.51-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.54-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
         window.setTimeout(() => URL.revokeObjectURL(objectUrl), 15000);
-        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.51 ZIP と一緒にChatGPTへアップロードしてください。`);
+        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.54 ZIP と一緒にChatGPTへアップロードしてください。`);
       } catch (error) {
         console.error('[CardDataExport] カードデータの書き出しに失敗しました', error);
         alert(`カードデータの書き出しに失敗しました。\n${String(error?.message || error)}`);
