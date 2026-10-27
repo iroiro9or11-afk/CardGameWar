@@ -229,7 +229,14 @@
         if (!cardLongPressActive || !cardLongPressId) return;
         cardLongPressTriggered = true;
         suppressCardClickUntil = Date.now() + 1000;
-        openCardDetail(cardLongPressId, { readOnly: cardLongPressReadOnly });
+        try {
+          const campaignInstanceExists = typeof campaignState !== 'undefined' && !!campaignState?.instances?.[cardLongPressId];
+          if (campaignInstanceExists && typeof prefOpenCardDetail === 'function') prefOpenCardDetail(cardLongPressId);
+          else openCardDetail(cardLongPressId, { readOnly: cardLongPressReadOnly });
+        } catch (detailError) {
+          console.warn('Long-press card detail fallback:', detailError);
+          openCardDetail(cardLongPressId, { readOnly: cardLongPressReadOnly });
+        }
       }, 500);
     }
 
@@ -2918,7 +2925,7 @@
     function storySetDraftDeploymentSlot(id,slot){storyEnsureDraft();storyDraftNormalizeDeployment();const d=storyModeDraft.playerDeployment;d.active=d.active.filter(x=>String(x)!==String(id));d.reserve=d.reserve.filter(x=>String(x)!==String(id));const n=Math.max(1,Math.min(3,parseInt(String(slot).replace(/\D/g,''),10)||1));if(String(slot).startsWith('active'))d.active.splice(n-1,0,id);else d.reserve.splice(Math.min(1,parseInt(String(slot).replace(/\D/g,''),10)-1),0,id);storyDraftNormalizeDeployment();saveStoryModeDraft();renderStoryMode();}
     function storyResetDraftDeck(){storyEnsureDraft();storyModeDraft.playerDeck={unitIds:[...storyModeDraft.initialUnitIds],magicIds:[...storyModeDraft.initialMagicIds]};storyModeDraft.playerDeployment={active:storyModeDraft.initialUnitIds.slice(0,3),reserve:storyModeDraft.initialUnitIds.slice(3,5)};saveStoryModeDraft();renderStoryMode();}
 
-    function storyRenderCompactCard(c,type='unit'){const img=getCardImage(c);const label=type==='unit'?'キャラ':'マジック';return `<div class="rounded-lg border border-slate-700 bg-slate-900 p-1 text-center"><div class="h-14 sm:h-16 overflow-hidden rounded-md bg-slate-950">${img?`<img src="${img}" class="w-full h-full object-cover" onerror="this.style.display='none'">`:''}</div><div class="text-[8px] sm:text-[9px] font-black text-slate-200 mt-1 truncate">${storyEscapeHtml(c.name||label)}</div></div>`;}
+    function storyRenderCompactCard(c,type='unit'){const img=getCardImage(c);const label=type==='unit'?'キャラ':'マジック';return `<div data-card-id="${storyEscapeHtml(c.id)}" data-story-readonly-card="true" class="rounded-lg border border-slate-700 bg-slate-900 p-1 text-center cursor-pointer"><div class="h-14 sm:h-16 overflow-hidden rounded-md bg-slate-950">${img?`<img src="${img}" class="w-full h-full object-cover" onerror="this.style.display='none'">`:''}</div><div class="text-[8px] sm:text-[9px] font-black text-slate-200 mt-1 truncate">${storyEscapeHtml(c.name||label)}</div></div>`;}
     // 対戦準備画面と同じ getCardHTML を使い、ストーリーの自分／相手のデッキも通常カードサイズで表示する。
     function storyRenderFullCard(c,readOnly=false){
       if(!c)return '';
@@ -5188,6 +5195,119 @@
       return Math.min(1050, bonus);
     }
 
+    // 先発3枚の連携を戦闘中にも実行する。残りの味方の攻撃・利用可能APを概算し、
+    // 行動後に敵を集中攻撃で倒せる状況へ変わる手を候補選別時から残す。
+    function aiPlannerBestDamageAgainstTarget(state, ally, target, apBudget) {
+      if (!state || !ally || !target || ally.currentHp <= 0 || target.currentHp <= 0) return {damage:0,cost:0};
+      const rawAttack=Math.max(0,Math.round(aiPlannerEffectiveAtk(ally)*0.8));
+      let best={damage:aiPlannerDamageAfterCut(target,rawAttack),cost:0};
+      for(const skill of ally.skills||[]){
+        if(skill?.type!=='active'||!aiPlannerCondition(skill.selfCond,ally,state))continue;
+        const cost=Math.max(0,Number(skill.cost)||0)+(aiPlannerHasStatus(ally,'pressure')?5:0);
+        if(cost>apBudget)continue;
+        const targetType=String(skill.targetType||'');
+        if(!/enemy/.test(targetType)&&!['all_enemy','select_enemy_1'].includes(targetType))continue;
+        if(skill.targetCond&&!aiPlannerTargetCondition(target,skill.targetCond))continue;
+        const effect=skill.mainEffect||{};const type=String(effect.type||'');const val=Number(effect.val)||0;let raw=0;
+        if(type==='dmg_atk_ratio'||type==='dmg_atk_ratio_pierce')raw=Math.round(aiPlannerEffectiveAtk(ally)*val/100);
+        else if(type==='dmg_max_hp_ratio')raw=Math.round(Number(ally.maxHp||0)*val/100);
+        else if(type==='dmg_fixed'||type==='dmg_fixed_pierce')raw=Math.max(0,val);
+        else continue;
+        const damage=['dmg_atk_ratio_pierce','dmg_fixed_pierce'].includes(type)?Math.max(0,raw):aiPlannerDamageAfterCut(target,raw);
+        if(damage>best.damage)best={damage,cost};
+      }
+      return best;
+    }
+    function aiPlannerTeamLethalComboBonus(beforeState, afterState, side, futureActorIds=[]) {
+      if(!Array.isArray(futureActorIds)||!futureActorIds.length)return 0;
+      const enemySide=side==='player'?'enemy':'player';
+      let bonus=0;
+      const forecast=(state,target)=>{
+        const apKey=side==='player'?'playerAp':'enemyAp';let budget=Math.max(0,Number(state?.[apKey])||0),damage=0;
+        for(const id of futureActorIds){
+          const ally=aiPlannerFindUnit(state,id);if(!ally||ally.side!==side||ally.currentHp<=0)continue;
+          const option=aiPlannerBestDamageAgainstTarget(state,ally,target,budget);
+          damage+=Math.max(0,option.damage);budget=Math.max(0,budget-Math.max(0,option.cost));
+        }
+        return damage;
+      };
+      for(const beforeTarget of aiPlannerActive(beforeState,enemySide)){
+        const afterTarget=aiPlannerFindUnit(afterState,beforeTarget.instanceId);
+        if(!afterTarget||afterTarget.currentHp<=0)continue;
+        const shield=unit=>(unit.shields||[]).reduce((sum,x)=>sum+Math.max(0,Number(x.remaining??x.amount)||0),0);
+        const needBefore=Math.max(1,beforeTarget.currentHp+shield(beforeTarget));
+        const needAfter=Math.max(1,afterTarget.currentHp+shield(afterTarget));
+        const damageBefore=forecast(beforeState,beforeTarget),damageAfter=forecast(afterState,afterTarget);
+        const canBefore=damageBefore>=needBefore,canAfter=damageAfter>=needAfter;
+        if(!canBefore&&canAfter)bonus+=Math.min(620,380+aiPlannerUnitStrategicValue(afterTarget)*0.22);
+        else if(damageBefore/needBefore<0.8&&damageAfter/needAfter>=0.8)bonus+=110;
+      }
+      return Math.min(900,bonus);
+    }
+    // 継続ダメージの価値は相手の回復力で変わる。回復役が健在なら、
+    // 非致死の削りだけにAPを使う手を少し抑え、回復役への圧力や撃破圏への集中を優先する。
+    function aiPlannerRecoveryPressureAdjustment(beforeState, afterState, side, result) {
+      const dealt=Math.max(0,Number(result?.damage)||0);if(dealt<=0||(Number(result?.kills)||0)>0)return 0;
+      const enemySide=side==='player'?'enemy':'player';
+      const beforeEnemies=aiPlannerActive(beforeState,enemySide),afterById=new Map(aiPlannerActive(afterState,enemySide).map(u=>[String(u.instanceId),u]));
+      const damaged=beforeEnemies.filter(u=>{const a=afterById.get(String(u.instanceId));return a&&a.currentHp<u.currentHp&&a.currentHp>0;});
+      if(!damaged.length)return 0;
+      const healers=beforeEnemies.filter(u=>(u.skills||[]).some(sk=>sk?.type==='active'&&['heal_fixed','heal_max_hp_ratio'].includes(String(sk.mainEffect?.type||''))));
+      const enemyMagicHand=enemySide==='player'?(battleState.magicHand||[]):(battleState.enemyMagicHand||[]);
+      const enemyApKey=enemySide==='player'?'playerAp':'enemyAp';
+      const enemyCanUseHealMagic=enemyMagicHand.some(card=>{
+        const eff=card?.effect||{},main=eff.mainEffect||{};
+        const unused=!(enemySide==='player'?battleState.usedMagicCardIds:battleState.enemyUsedMagicCardIds)?.has?.(card?.id);
+        return unused&&Number(eff.cost||0)<=Math.min(100,(Number(beforeState?.[enemyApKey])||0)+20)&&['heal_fixed','heal_max_hp_ratio'].includes(String(main.type||''));
+      });
+      if(!healers.length&&!enemyCanUseHealMagic)return Math.min(125,dealt*0.055);
+      const damagedHealer=damaged.some(u=>healers.some(h=>String(h.instanceId)===String(u.instanceId)));
+      const teamCanFinish=damaged.some(u=>{const a=afterById.get(String(u.instanceId));return a&&a.currentHp/Math.max(1,a.maxHp)<=0.22;});
+      if(damagedHealer)return Math.min(150,dealt*0.045);
+      if(teamCanFinish)return 0;
+      return -Math.min(230,dealt*(healers.length?0.085:0.045));
+    }
+
+    // 行動値の増減は数値そのものではなく、残り行動の順番を変えるかで評価する。
+    // この探索でまだ行動していない味方だけを対象にし、既に先手を取れている相手への
+    // 過剰な行動値バフは小さく減点する。
+    function aiPlannerActionOrderImpactBonus(beforeState, afterState, side, candidate, futureActorIds=[]) {
+      const enemySide=side==='player'?'enemy':'player';
+      const future=new Set((futureActorIds||[]).map(String));
+      if(!future.size)return 0;
+      const ownBefore=aiPlannerActive(beforeState,side).filter(u=>future.has(String(u.instanceId))&&u.currentHp>0);
+      const ownAfterById=new Map(aiPlannerActive(afterState,side).map(u=>[String(u.instanceId),u]));
+      const enemiesBefore=aiPlannerActive(beforeState,enemySide).filter(u=>u.currentHp>0);
+      const enemiesAfterById=new Map(aiPlannerActive(afterState,enemySide).map(u=>[String(u.instanceId),u]));
+      let crossings=0,threatBonus=0,totalSpeedGain=0;
+      for(const oldAlly of ownBefore){
+        const newAlly=ownAfterById.get(String(oldAlly.instanceId));if(!newAlly||newAlly.currentHp<=0)continue;
+        const oldSpeed=aiPlannerEffectiveSpeed(oldAlly),newSpeed=aiPlannerEffectiveSpeed(newAlly);
+        totalSpeedGain+=Math.max(0,newSpeed-oldSpeed);
+        for(const oldEnemy of enemiesBefore){
+          const newEnemy=enemiesAfterById.get(String(oldEnemy.instanceId));if(!newEnemy||newEnemy.currentHp<=0)continue;
+          const beforeAhead=oldSpeed>aiPlannerEffectiveSpeed(oldEnemy);
+          const afterAhead=newSpeed>aiPlannerEffectiveSpeed(newEnemy);
+          if(!beforeAhead&&afterAhead){
+            crossings++;
+            const role=newAlly.role||inferUnitRoleFromSkills(newAlly.skills||[],{hp:newAlly.maxHp,atk:newAlly.atk,priority:newAlly.priority});
+            const attackValue=Math.max(0,Number(newAlly.atk)||0)*(role==='attacker'?0.045:role==='controller'?0.025:0.018);
+            threatBonus+=Math.min(105,52+attackValue+(newAlly.currentHp/Math.max(1,newAlly.maxHp)<0.45?18:0));
+          }
+        }
+      }
+      // Only count actionable crossings. A large +speed that does not change any remaining
+      // ally/enemy ordering is not treated as equivalent to an actual tempo swing.
+      if(crossings)return Math.min(360,threatBonus);
+      const mainType=String(candidate?.skill?.mainEffect?.type||candidate?.card?.effect?.mainEffect?.type||'');
+      const subType=String(candidate?.skill?.subEffect?.type||candidate?.card?.effect?.subEffect?.type||'');
+      if((mainType==='mod_speed'||subType==='mod_speed')&&totalSpeedGain>0){
+        const alreadyAhead=ownBefore.length>0&&ownBefore.every(ally=>enemiesBefore.every(enemy=>aiPlannerEffectiveSpeed(ally)>aiPlannerEffectiveSpeed(enemy)));
+        return -Math.min(alreadyAhead?55:32,totalSpeedGain*(alreadyAhead?0.18:0.09));
+      }
+      return 0;
+    }
+
     function aiPlannerRoleActionAdjustment(beforeState, afterState, side, candidate, actor, result) {
       if (!candidate || candidate.type !== 'skill' || !actor || !candidate.skill) return 0;
       const role = isValidUnitRole(actor.role) ? actor.role : inferUnitRoleFromSkills(actor.skills || [], {hp:actor.maxHp, atk:actor.atk, priority:actor.priority});
@@ -5573,12 +5693,15 @@
         const effectType=String(c.skill?.mainEffect?.type||'');
         const checksThreshold=['mod_atk_ratio','mod_atk_val','mod_speed','speed','atk_ratio','status_apply','damage_taken_ratio','damage_cut_ratio','dmg_cut','dmg_atk_ratio','dmg_fixed','dmg_fixed_pierce'].includes(effectType);
         const comboThreshold=checksThreshold?aiPlannerThresholdComboBonus(state,copy,side):0;
+        const teamLethalCombo=aiPlannerTeamLethalComboBonus(state,copy,side,futureActorIds);
+        const recoveryPressure=aiPlannerRecoveryPressureAdjustment(state,copy,side,r);
+        const actionOrderImpact=aiPlannerActionOrderImpactBonus(state,copy,side,c,futureActorIds);
         const repeatBuffPenalty=aiPlannerRepeatedPermanentBuffPenalty(state,actor,c);
         const controlRiskPenalty=aiPlannerFriendlyControlRiskPenalty(state,actor,c);
         const healControlPenalty=aiPlannerHealControlTradeoffPenalty(state,actor,c);
         const apOpportunity=aiPlannerApOpportunityPenalty(state,side,actor,c,copy,futureActorIds);
         const damageBonus=aiPlannerDirectDamageScoreBonus(r);
-        const baseAdjustment=strat+tactical+selfHarm+roleAdjustment+comboThreshold+damageBonus-repeatBuffPenalty-controlRiskPenalty-healControlPenalty;
+        const baseAdjustment=strat+tactical+selfHarm+roleAdjustment+comboThreshold+teamLethalCombo+recoveryPressure+actionOrderImpact+damageBonus-repeatBuffPenalty-controlRiskPenalty-healControlPenalty;
         // Full AP opportunity cost prunes a bad early support action, but current-turn denial
         // is already reflected when later actors choose their actual action. Only next-turn AP
         // breakpoints are carried into the final whole-plan score.
@@ -5671,7 +5794,10 @@
         const controlRiskPenalty=c.card?aiPlannerFriendlyControlRiskPenalty(state,magicActor,c,c.card.effect):0;
         const repeatBuffPenalty=c.card?aiPlannerRepeatedPermanentBuffPenalty(state,magicActor,c):0;
         const damageBonus=aiPlannerDirectDamageScoreBonus(actionResult);
-        const baseAdjustment=strat+damageBonus-controlRiskPenalty-repeatBuffPenalty;
+        const teamLethalCombo=aiPlannerTeamLethalComboBonus(state,copy,side,futureActorIds);
+        const recoveryPressure=aiPlannerRecoveryPressureAdjustment(state,copy,side,actionResult);
+        const actionOrderImpact=aiPlannerActionOrderImpactBonus(state,copy,side,c,futureActorIds);
+        const baseAdjustment=strat+damageBonus+teamLethalCombo+recoveryPressure+actionOrderImpact-controlRiskPenalty-repeatBuffPenalty;
         const adjustment=baseAdjustment-apOpportunity.nextTurnLoss;
         const candidateAdjustment=baseAdjustment-apOpportunity.total;
         return {c,adjustment,score:delta+candidateAdjustment+aiEvaluationError(side)};
@@ -6145,9 +6271,12 @@
           await sleep(650);
         }
 
-        // マジック（最遅）の処理後、毒→ターン終了パッシブの順。
-        try { await processEndTurnAbnormalitiesOffline(); }
-        catch (e) { console.error('abnormality end error:', e); }
+        // すでに通常行動で決着している場合、毒・火傷やターン終了効果を後から発動させない。
+        // 結果画面を出したあとに状態異常の演出が重なるのを防ぐ。
+        if (!checkBattleEnd()) {
+          try { await processEndTurnAbnormalitiesOffline(); }
+          catch (e) { console.error('abnormality end error:', e); }
+        }
         // Do not fire end-of-turn passives after a terminal KO/turn-limit result.
         const endedBeforeTurnEndPassives=checkBattleEnd(true);
         if (!endedBeforeTurnEndPassives) {
@@ -6917,14 +7046,18 @@
     }
 
     async function processEndTurnAbnormalitiesOffline() {
-      [...battleState.playerUnits,...battleState.enemyUnits].forEach(u=>{
-        if(u.currentHp<=0||!u.isActive)return;
-        if((u.statuses||[]).some(x=>x.type==='poison'&&durationActive(x.duration))){
+      // forEach では非同期ポップアップを待てず、決着後も後続の状態異常を処理してしまう。
+      // 順番に解決し、決着がついた時点で残りのターン終了効果を打ち切る。
+      for (const u of [...battleState.playerUnits,...battleState.enemyUnits]) {
+        if (battleState.resultWinner || u.currentHp<=0 || !u.isActive) continue;
+        if ((u.statuses||[]).some(x=>x.type==='poison'&&durationActive(x.duration))) {
           const before=u.currentHp; dealDamage(u,Math.round(u.maxHp*0.10),true,true); const dmg=before-u.currentHp;
           logBattle(`☠️ ${u.name} は毒で ${dmg} ダメージ！`);
-          showActionPopup(u,'毒',{cardType:'unit',name:u.name,image:getCardImage(u)||u.image,hp:u.maxHp,atk:getEffectiveAtk(u),prio:getEffectiveSpeed(u)},{target:u.name,effect:'最大HPの10%ダメージ',result:`${dmg} ダメージ${u.currentHp<=0?'／撃破！':''}`,targetEntity:u,targetHpBefore:{current:before,max:u.maxHp},targetHpAfter:{current:u.currentHp,max:u.maxHp},description:'毒：ターン終了間際に最大HPの10%のダメージ。シールドを貫通する。'});
+          await showActionPopup(u,'毒',{cardType:'unit',name:u.name,id:u.cardId,image:getCardImage(u)||u.image,hp:u.maxHp,atk:getEffectiveAtk(u),prio:getEffectiveSpeed(u)},{target:u.name,effect:'最大HPの10%ダメージ',result:`${dmg} ダメージ${u.currentHp<=0?'／撃破！':''}`,targetEntity:u,targetHpBefore:{current:before,max:u.maxHp},targetHpAfter:{current:u.currentHp,max:u.maxHp},description:'毒：最大HPの10%のダメージ。シールドを貫通する。'});
           if(dmg>0) triggerPassiveEvent('hp_decrease',u);
           if(u.currentHp<=0&&before>0){triggerPassiveEvent('death',u);triggerAllyDeathPassives(u.side, u);}
+          await actionPopupQueue;
+          if (checkBattleEnd()) return;
         }
         if (u.currentHp > 0 && (u.statuses||[]).some(x=>x.type==='burn'&&durationActive(x.duration))) {
           const before=u.currentHp;
@@ -6932,10 +7065,12 @@
           dealDamage(u,amount,true,true);
           const dmg=before-u.currentHp;
           logBattle(`🔥 ${u.name} は火傷で ${dmg} ダメージ！（HP1未満にならない）`);
-          showActionPopup(u,'火傷',{cardType:'unit',name:u.name,image:getCardImage(u)||u.image,hp:u.maxHp,atk:getEffectiveAtk(u),prio:getEffectiveSpeed(u)},{target:u.name,effect:'現在HPの12%ダメージ（シールド貫通）',result:`${dmg} ダメージ${u.currentHp<=1?'（HP1で踏みとどまった）':''}`,targetEntity:u,targetHpBefore:{current:before,max:u.maxHp},targetHpAfter:{current:u.currentHp,max:u.maxHp},description:'火傷：ターン終了時に現在HPの12%のダメージ。シールドを貫通し、火傷ではHPが1未満にならない。'});
+          await showActionPopup(u,'火傷',{cardType:'unit',name:u.name,id:u.cardId,image:getCardImage(u)||u.image,hp:u.maxHp,atk:getEffectiveAtk(u),prio:getEffectiveSpeed(u)},{target:u.name,effect:'現在HPの12%ダメージ（シールド貫通）',result:`${dmg} ダメージ${u.currentHp<=1?'（HP1で踏みとどまった）':''}`,targetEntity:u,targetHpBefore:{current:before,max:u.maxHp},targetHpAfter:{current:u.currentHp,max:u.maxHp},description:'火傷：ターン終了時に現在HPの12%ダメージ。シールドを貫通し、火傷ではHPが1未満にならない。'});
           if(dmg>0) triggerPassiveEvent('hp_decrease',u);
+          await actionPopupQueue;
+          if (checkBattleEnd()) return;
         }
-      });
+      }
     }
 
     function processBuffDurations(timing) {
@@ -7103,6 +7238,8 @@
         if(popupActorImg){
           const actorDead=(info.actorHpAfter?.current??actor?.currentHp??1)<=0;
           popupActorImg.classList.toggle('popup-dead-image',actorDead);
+          const actorDetailId=actor?.cardId||actor?.cardTemplateId||(cardData?.cardType==='magic'?cardData?.id:null);
+          if(actorDetailId)popupActorImg.setAttribute('data-card-id',String(actorDetailId));else popupActorImg.removeAttribute('data-card-id');
           popupActorImg.onerror=()=>{popupActorImg.onerror=null;popupActorImg.src=createDummyCardImage("👤",actorIsPlayer?"#075985":"#9f1239");};
           popupActorImg.src=actor?.image||actor?.iconImage||getCardImage(cardData)||createDummyCardImage(actorIsPlayer?"👤":"👹",actorIsPlayer?"#075985":"#9f1239");
         }
@@ -7150,6 +7287,8 @@
             const img=document.createElement('img');img.className='w-full h-full object-cover';img.alt=entity.name||'対象';
             const hpAfter=detail.hpAfter||{current:entity.currentHp,max:entity.maxHp};
             const dead=Number(hpAfter?.current??entity.currentHp??1)<=0;img.classList.toggle('popup-dead-image',dead);
+            const detailId=entity.cardId||entity.cardTemplateId;
+            if(detailId)img.setAttribute('data-card-id',String(detailId));
             img.onerror=()=>{img.onerror=null;img.src=createDummyCardImage(isPlayerTarget?'👤':'👹',isPlayerTarget?'#075985':'#9f1239');};
             img.src=entity.image||entity.iconImage||getCardImage(entity)||createDummyCardImage(isPlayerTarget?'👤':'👹',isPlayerTarget?'#075985':'#9f1239');imgBox.appendChild(img);card.appendChild(imgBox);
             const name=document.createElement('div');name.className=`mt-1 text-[10px] sm:text-xs font-black break-words ${isPlayerTarget?'text-cyan-200':'text-rose-200'}`;name.textContent=entity.name||`対象${index+1}`;card.appendChild(name);
@@ -7168,7 +7307,7 @@
           const beforeSnap=single?.hpBefore||info.targetHpBefore,afterSnap=single?.hpAfter||info.targetHpAfter;
           if(singleTarget){
             if(targetPlaceholder){targetPlaceholder.classList.add('hidden');targetPlaceholder.classList.remove('flex');}
-            if(targetImg){targetImg.classList.remove('hidden');const targetDead=(afterSnap?.current??singleTarget.currentHp??1)<=0;targetImg.classList.toggle('popup-dead-image',targetDead);targetImg.onerror=()=>{targetImg.onerror=null;targetImg.classList.add('hidden');if(targetPlaceholder){targetPlaceholder.classList.remove('hidden');targetPlaceholder.classList.add('flex');}};targetImg.src=singleTarget.image||singleTarget.iconImage||getCardImage(singleTarget)||createDummyCardImage(targetIsPlayer?'👤':'👹',targetIsPlayer?'#075985':'#9f1239');}
+            if(targetImg){targetImg.classList.remove('hidden');const detailId=singleTarget.cardId||singleTarget.cardTemplateId;if(detailId)targetImg.setAttribute('data-card-id',String(detailId));else targetImg.removeAttribute('data-card-id');const targetDead=(afterSnap?.current??singleTarget.currentHp??1)<=0;targetImg.classList.toggle('popup-dead-image',targetDead);targetImg.onerror=()=>{targetImg.onerror=null;targetImg.classList.add('hidden');if(targetPlaceholder){targetPlaceholder.classList.remove('hidden');targetPlaceholder.classList.add('flex');}};targetImg.src=singleTarget.image||singleTarget.iconImage||getCardImage(singleTarget)||createDummyCardImage(targetIsPlayer?'👤':'👹',targetIsPlayer?'#075985':'#9f1239');}
             const targetName=document.getElementById('popup-target-name');if(targetName)targetName.innerText=singleTarget.name||(targetIsPlayer?'プレイヤー':'対象');
             setHp('target',beforeSnap,afterSnap,singleTarget);
           }else{

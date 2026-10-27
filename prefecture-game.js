@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.53 — revised gacha odds, surrender and lab demo improvements */
+/* 都道府県カード戦争 v1.0.56 — battle-end, card detail, gacha capacity and defeat-loss fixes */
 'use strict';
 
 let campaignState = null;
@@ -328,6 +328,57 @@ function prefPairSynergyRaw(cardA,cardB,profile) {
   }
   return Math.min(14,pair);
 }
+// 先発3枚を「強いカード3枚」ではなく、1つの勝ち筋として評価する。
+// 役割の数合わせだけではなく、主力が必要とする支援が実際にそろうかを評価する。
+function prefAIActiveTrioPlanEvaluation(activeCards, activeProfiles, profile) {
+  const cards=(activeCards||[]).filter(Boolean),ps=(activeProfiles||cards.map(prefCardProfile));
+  if(!cards.length)return {score:-20,coreName:'',title:'有効な勝ち筋なし',reasons:['先発カードが不足']};
+  const has=(p,t)=>!!p?.tags?.has(t);
+  const directDamage=p=>has(p,'damage')||has(p,'hp_scaling_damage')||has(p,'attack_role')||p?.role==='attacker';
+  const teamBuff=card=>typeof prefCardHasTeamBuff==='function'&&prefCardHasTeamBuff(card);
+  let best=null;
+  for(let i=0;i<cards.length;i++){
+    const core=cards[i],cp=ps[i]||prefCardProfile(core);let score=0;const reasons=[];
+    const coreDamage=directDamage(cp);
+    if(coreDamage)score+=6.0;
+    if(has(cp,'hp_scaling_damage'))score+=5.5;
+    if(has(cp,'permanent_self_buff'))score+=2.8;
+    if(cp.maxCost>=25||has(cp,'heavy_cost'))score+=2.0;
+    if(cp.rank===5)score+=1.0;
+    let hasAp=false,hasProtection=false,hasAmplifier=false,hasConditionSetup=false,hasTeamBuff=false,hasDamageBuddy=false;
+    for(let j=0;j<cards.length;j++){
+      if(i===j)continue;
+      const support=cards[j],sp=ps[j]||prefCardProfile(support);
+      if(has(sp,'ap_supply')&&(cp.maxCost>=18||has(cp,'heavy_cost'))){score+=8.5;hasAp=true;reasons.push(`${support.name||'支援役'}が主力のAP需要を補う`);}
+      if((has(sp,'damage_amp')||has(sp,'attack_speed_buff'))&&coreDamage){score+=has(sp,'damage_amp')?6.5:4.0;hasAmplifier=true;reasons.push(`${support.name||'支援役'}が主力の火力を伸ばす`);}
+      if(teamBuff(support)&&coreDamage){score+=5.0;hasTeamBuff=true;reasons.push(`${support.name||'支援役'}の全体強化を先発で活用できる`);}
+      if(has(cp,'status_condition')&&has(sp,'status_debuff')){score+=7.5;hasConditionSetup=true;reasons.push('状態異常の付与から条件効果へつなぐ');}
+      if(has(cp,'status_debuff')&&has(sp,'status_condition')){score+=5.0;hasConditionSetup=true;}
+      if(has(cp,'hp_scaling_damage')&&(has(sp,'healing')||has(sp,'damage_amp'))){score+=7.0;hasAmplifier=true;reasons.push('HP参照火力を回復・与ダメージ強化で支える');}
+      if((has(sp,'frontline_defender')||sp.role==='defender')&&coreDamage){score+=has(sp,'frontline_defender')?6.5:3.2;hasProtection=true;reasons.push(`${support.name||'ディフェンダー'}が主力の生存時間を確保する`);}
+      if(has(sp,'healing')||has(sp,'shield_defense'))hasProtection=true;
+      if(directDamage(sp)&&coreDamage)hasDamageBuddy=true;
+    }
+    if((cp.maxCost>=25||has(cp,'heavy_cost'))&&!hasAp){score-=4.5;reasons.push('高コスト技を支えるAP供給が不足');}
+    if(has(cp,'permanent_self_buff')&&!hasProtection){score-=2.8;reasons.push('永続強化の準備中に主力を守る手段が不足');}
+    if(coreDamage&&!hasProtection&&cards.length>=3)score-=1.8;
+    if(has(cp,'status_condition')&&!hasConditionSetup)score-=4.0;
+    if(!coreDamage)score-=2.5;
+    if(hasTeamBuff)score+=0.5;
+    if(hasDamageBuddy)score+=1.2;
+    // 同程度の候補なら、カードIQの高いAIほど支援関係を重く評価する。
+    score*=0.78+0.22*(Number(profile?.cardIQ)||0)/100;
+    if(!best||score>best.score)best={score,coreName:String(core.name||'主力候補'),title:has(cp,'hp_scaling_damage')?'HP参照火力を中心とした耐久連携':has(cp,'status_condition')?'状態異常・条件効果コンボ':(cp.maxCost>=25||has(cp,'heavy_cost'))?'高コスト主力をAP支援で通す':hasTeamBuff?'全体強化から主力火力へつなぐ':coreDamage?'主力火力＋生存支援':'基礎性能を中心とした構成',reasons:[...new Set(reasons)].slice(0,5)};
+  }
+  const roles=new Set(ps.map(p=>p.role).filter(Boolean));
+  let score=best?.score||0;
+  if(roles.has('attacker')&&roles.has('defender'))score+=3.0;
+  if(roles.has('attacker')&&roles.has('controller'))score+=2.5;
+  if(roles.has('defender')&&roles.has('controller'))score+=1.5;
+  if(roles.has('attacker')&&roles.has('defender')&&roles.has('controller'))score+=2.0;
+  if(!ps.some(directDamage))score-=8.0;
+  return {...(best||{coreName:'',title:'勝ち筋未確立',reasons:[]}),score:Number(score.toFixed(2)),roles:[...roles]};
+}
 function prefCardEstimateError(cardIQ) {return (Math.random()-0.5)*(100-prefClamp(cardIQ,0,100))/100*4;}
 function prefCardSynergyScore(region,card,extraCards=[],includeOwned=true) {
   if(!region||!card)return 0;
@@ -543,15 +594,29 @@ function prefEmergencyLoadout(regionId) {
 function prefAiUnitReplacementChoice(region, units, incomingInst) {
   const incoming=prefCardForInstance(incomingInst?.id)||prefTemplate(incomingInst?.templateId);
   const fives=(units||[]).filter(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))===5);
-  if(incoming&&prefRankStars(incoming)===5&&fives.length>=prefFiveStarLimit(region))return prefAiReplacementChoice(region,fives,incomingInst);
-  // Rival holders have a separate owned-card limit. Do not voluntarily replace that last ★5 with a lower-rank
-  // card during normal market/gacha optimization; losing it in battle remains a real game outcome.
-  if(region&&!region.isPlayer&&fives.length>0&&incoming&&prefRankStars(incoming)<5){
+  if(!incoming)return incomingInst?.id||null;
+  let replaceable=(units||[]).slice();
+  if(prefRankStars(incoming)===5&&fives.length>=prefFiveStarLimit(region))replaceable=fives;
+  // ライバルが保有する★5は、より高い質の★5と比較するとき以外は維持する。
+  else if(region&&!region.isPlayer&&fives.length>0&&prefRankStars(incoming)<5){
     const nonFives=(units||[]).filter(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))!==5);
-    if(nonFives.length)return prefAiReplacementChoice(region,nonFives,incomingInst);
+    if(nonFives.length)replaceable=nonFives;
+    else return incomingInst?.id||null;
+  }
+  if(region&&!region.isPlayer&&replaceable.length){
+    // 単体評価が最低のカードを機械的に捨てず、交換後に成立する最良の先発3枚と控えまで比較する。
+    const before=prefAIQuickRosterQuality(region,units);let bestId=null,bestDelta=-Infinity;
+    for(const old of replaceable){
+      const afterUnits=(units||[]).map(x=>String(x.id)===String(old.id)?incomingInst:x);
+      const delta=prefAIQuickRosterQuality(region,afterUnits)-before;
+      if(delta>bestDelta){bestDelta=delta;bestId=old.id;}
+    }
+    const iq=Number(prefAIProfileForRegion(region).cardIQ)||0;
+    const minGain=iq>=75?0.8:iq>=45?1.8:3.0;
+    if(bestId&&bestDelta>=minGain)return bestId;
     return incomingInst?.id||null;
   }
-  return prefAiReplacementChoice(region,units,incomingInst);
+  return prefAiReplacementChoice(region,replaceable,incomingInst);
 }
 function prefEnforceOwnedStar5Caps() {
   if(!campaignState?.regions)return false;let changed=false,filledRivals=0;
@@ -1060,6 +1125,37 @@ function prefCardScoreForRegion(region, inst) {
   return score + prefCardEstimateError(profile.cardIQ);
 }
 
+function prefAIQuickRosterQuality(region, unitInstances) {
+  const profile=prefAIProfileForRegion(region);
+  const entries=(unitInstances||[]).map(inst=>({inst,card:prefCardForInstance(inst?.id)||prefTemplate(inst?.templateId)})).filter(x=>x.card);
+  if(!entries.length)return -1000;
+  const cp=new Map(entries.map(x=>[String(x.inst.id),prefCardProfile(x.card)]));
+  const base=new Map(entries.map(x=>[String(x.inst.id),prefCardIntrinsicScore(region,x.card)+prefCardStrategyScore(region,x.card)+prefCardPreferenceScore(region,x.card)+prefAIPlanFitScore(region,x.card)]));
+  const combos=[];
+  for(let i=0;i<entries.length;i++)for(let j=i+1;j<entries.length;j++)for(let k=j+1;k<entries.length;k++){
+    const group=[entries[i],entries[j],entries[k]],profiles=group.map(x=>cp.get(String(x.inst.id))||prefCardProfile(x.card));
+    if(profiles.filter(x=>x.rank===5).length>PREF_BATTLE_RANK5_LIMIT)continue;
+    let score=group.reduce((sum,x)=>sum+(base.get(String(x.inst.id))||0),0);
+    for(let a=0;a<group.length;a++)for(let b=a+1;b<group.length;b++)score+=prefPairSynergyRaw(group[a].card,group[b].card,profile)*(0.25+0.75*profile.cardIQ/100)*1.25;
+    const plan=prefAIActiveTrioPlanEvaluation(group.map(x=>x.card),profiles,profile);score+=plan.score;
+    const roles=new Set(profiles.map(x=>x.role));
+    if(roles.has('attacker'))score+=2.8;if(roles.has('defender'))score+=3;if(roles.has('controller'))score+=2.6;
+    const ids=new Set(group.map(x=>String(x.inst.id)));
+    const reserves=entries.filter(x=>!ids.has(String(x.inst.id))).map(x=>({x,p:cp.get(String(x.inst.id))||prefCardProfile(x.card),base:base.get(String(x.inst.id))||0}));
+    let reserveFiveCount=profiles.filter(x=>x.rank===5).length;
+    reserves.sort((a,b)=>{
+      const value=o=>o.base*0.22+Math.min(5,o.p.deployPassiveValue*0.85)+group.reduce((sum,g)=>sum+prefPairSynergyRaw(o.x.card,g.card,profile)*0.20,0)+((roles.has(o.p.role)&&['attacker','defender'].includes(o.p.role))?1.3:0);
+      return value(b)-value(a);
+    });
+    const legalReserves=[];
+    for(const item of reserves){if(legalReserves.length>=2)break;if(item.p.rank===5&&reserveFiveCount>=PREF_BATTLE_RANK5_LIMIT)continue;legalReserves.push(item);if(item.p.rank===5)reserveFiveCount++;}
+    score+=legalReserves.reduce((sum,x)=>sum+x.base*0.12+Math.min(2,x.p.deployPassiveValue*0.25),0);
+    combos.push({score,plan});
+  }
+  if(!combos.length)return entries.reduce((sum,x)=>sum+(base.get(String(x.inst.id))||0),0);
+  combos.sort((a,b)=>b.score-a.score);
+  return combos[0].score;
+}
 function prefAiReplacementChoice(region, unitInstances, incomingInst) {
   if(!unitInstances.length)return null;
   const personality=region.personality||'careful';
@@ -1145,7 +1241,7 @@ function prefShowReplaceModal() {
     :isMagic?`新しいマジックカード「<b class="text-amber-200">${prefEsc(card.name||'新カード')}</b>」を受け取りました。マジックカードは最大${PREF_MAGIC_LIMIT}枚です。市場へ出品するカードを選んでください。新カードを選ぶと、新カード自体を出品します。`
     :`新しいキャラカード「<b class="text-amber-200">${prefEsc(card.name||'新カード')}</b>」を獲得しました。市場へ出すカードを選んでください。新しいカードを選ぶと、今回は受け取らずに市場へ出品します。`;
   const warning=!isMagic&&allOwned.length<=3?'<div class="mt-3 rounded-lg bg-rose-950/60 border border-rose-500/40 p-3 text-xs text-rose-200">キャラカードが3枚未満になると対戦できません。先に補充してください。</div>':'';
-  prefShowModal(title,`<p class="text-sm text-slate-300 mb-3">${intro}</p><div class="max-h-[58vh] overflow-y-auto pr-1"><div class="grid grid-cols-3 sm:grid-cols-5 gap-2">${entries.map(x=>`<button data-pref-action="replace-held" data-id="${prefEsc(x.id)}" class="min-w-0 rounded-lg border ${x.incoming?'border-amber-500 bg-amber-950/30':'border-slate-700 bg-slate-900'} p-1 hover:border-amber-400"><div class="pointer-events-none">${prefCardDisplay(x.id,{small:true})}</div><div class="text-[10px] ${x.incoming?'text-amber-200':'text-rose-300'} font-black mt-1">${x.incoming?'新カードを市場へ':'これを市場へ'}</div></button>`).join('')}</div></div>${warning}`,[]);
+  prefShowModal(title,`<p class="text-sm text-slate-300 mb-3">${intro}</p><div class="max-h-[62vh] overflow-y-auto pr-1"><div class="grid grid-cols-2 sm:grid-cols-4 gap-3">${entries.map(x=>`<button data-pref-action="replace-held" data-id="${prefEsc(x.id)}" class="min-w-0 rounded-lg border ${x.incoming?'border-amber-500 bg-amber-950/30':'border-slate-700 bg-slate-900'} p-1 hover:border-amber-400"><div class="pointer-events-none">${prefCardDisplay(x.id,{small:true})}</div><div class="text-[10px] ${x.incoming?'text-amber-200':'text-rose-300'} font-black mt-1">${x.incoming?'新カードを市場へ':'これを市場へ'}</div></button>`).join('')}</div></div>${warning}`,[]);
   document.getElementById('pref-modal-close-btn')?.classList.add('hidden');
 }
 function prefStartNextQueuedAcquisition() {
@@ -1154,8 +1250,19 @@ function prefStartNextQueuedAcquisition() {
   while(queue.length){
     const id=queue.shift(),inst=campaignState.instances?.[id];
     if(!inst||inst.zone!=='pending')continue;
-    campaignState.pendingAcquisition={kind:inst.kind,instanceId:id,regionId:PREF_PLAYER_ID,reason:inst.capacityQueueReason||'initial-capacity'};
-    prefSave().catch(console.error);prefShowReplaceModal();return;
+    // キューに入っているカードも、表示直前に重複・所持上限を現在の状態で再判定する。
+    // 先に出たキャラカードの交換が終わるまで待っていた抱き合わせマジックは、
+    // マジック所持数が50枚未満なら交換を求めず、そのまま受け取れるようにする。
+    const result=prefAcquireInstance(PREF_PLAYER_ID,id,{reason:inst.capacityQueueReason||'gacha-bundle',deferCapacityModal:true});
+    if(result==='pending'){
+      // prefAcquireInstance が実際に上限超過を確認した場合だけ交換画面を出す。
+      if(!campaignState.pendingAcquisition){
+        campaignState.pendingAcquisition={kind:inst.kind,instanceId:id,regionId:PREF_PLAYER_ID,reason:inst.capacityQueueReason||'initial-capacity'};
+      }
+      campaignState.pendingAcquisitionQueue=queue;
+      prefSave().catch(console.error);prefShowReplaceModal();return;
+    }
+    // 重複は市場へ、上限内のカードは所持へ移動済み。次の待機カードも確認する。
   }
   campaignState.pendingAcquisitionQueue=[];
   prefSave().catch(console.error);
@@ -1448,7 +1555,7 @@ function prefShowReplaceListingConfirm(id) {
   const inst=campaignState?.instances?.[id];const card=prefCardForInstance(id);if(!inst||!card)return;
   const count=inst.kind==='unit'?prefOwnedUnits(PREF_PLAYER_ID).length:prefOwnedMagics(PREF_PLAYER_ID).length;
   const warning=inst.kind==='unit'&&count<=3?'<div class="mt-3 rounded-lg bg-rose-950/60 border border-rose-500/40 p-3 text-xs text-rose-200">キャラカードが3枚未満になると対戦できません。対戦コマンドを選ぶとゲームオーバーになります。先にガチャや市場で補充してください。</div>':'';
-  prefShowModal('カードを市場へ出品',`<div class="flex gap-4 items-start"><div class="w-28 shrink-0">${prefCardDisplay(id,{small:true})}</div><div class="min-w-0"><div class="font-black text-white">${prefEsc(card.name)}</div><div class="text-sm text-emerald-200 mt-2">出品価格：${prefFormatMoney(prefCardValue(card))}</div><p class="text-xs text-slate-400 mt-2">出品中はキャラカードの所持期限が進みません。5ターン以内に購入されなければ、キャラはガチャへ戻り、マジックは市場から消えます。</p>${warning}</div></div>`,[{label:'キャンセル',action:'close-modal',style:'slate'},{label:'出品する',action:'confirm-list-card',id,style:'primary'}]);
+  prefShowModal('カードを市場へ出品',`<div class="flex flex-col sm:flex-row gap-4 items-start"><div class="w-36 sm:w-44 shrink-0 mx-auto sm:mx-0">${prefCardDisplay(id,{small:true})}</div><div class="min-w-0 w-full"><div class="font-black text-white">${prefEsc(card.name)}</div><div class="text-sm text-emerald-200 mt-2">出品価格：${prefFormatMoney(prefCardValue(card))}</div><p class="text-xs text-slate-400 mt-2">出品中はキャラカードの所持期限が進みません。5ターン以内に購入されなければ、キャラはガチャへ戻り、マジックは市場から消えます。</p>${warning}</div></div>`,[{label:'キャンセル',action:'close-modal',style:'slate'},{label:'出品する',action:'confirm-list-card',id,style:'primary'}]);
 }
 function prefListPlayerCard(id) {
   const inst=campaignState?.instances?.[id];if(!inst||inst.zone!=='owner'||inst.ownerId!==PREF_PLAYER_ID)return;
@@ -1478,7 +1585,7 @@ function prefConfirmPurchaseDialog(id) {
   const inst=campaignState?.instances?.[id];const card=prefCardForInstance(id)||prefTemplate(inst?.templateId);if(!inst||inst.zone!=='market'||!card)return;
   const p=prefPlayerRegion();const price=prefCardValue(card);const duplicate=inst.kind==='magic'&&prefOwnedMagics(PREF_PLAYER_ID).some(x=>String(x.templateId)===String(inst.templateId));
   const duplicateUnit=inst.kind==='unit'&&prefOwnedUnits(PREF_PLAYER_ID).some(x=>String(x.templateId)===String(inst.templateId));
-  prefShowModal('カード購入の確認',`<div class="flex gap-4 items-start"><div class="w-28 shrink-0">${prefCardDisplay(id,{small:true})}</div><div class="min-w-0"><div class="font-black text-white">${prefEsc(card.name)}</div><div class="text-xl font-black text-emerald-200 mt-2">${prefFormatMoney(price)}</div><div class="text-xs text-slate-400 mt-2">購入後の所持資金：${prefFormatMoney((p.funds||0)-price)}</div>${duplicate?'<p class="text-rose-300 text-xs mt-2">同じマジックカードをすでに所持しているため購入できません。</p>':''}${duplicateUnit?'<p class="text-rose-300 text-xs mt-2">同じキャラカードを所持しているため購入できません。</p>':''}${p.funds<price?'<p class="text-rose-300 text-xs mt-2">資金が不足しています。</p>':''}</div></div>`,[{label:'キャンセル',action:'close-modal',style:'slate'},...(duplicate||duplicateUnit||p.funds<price?[]:[{label:'購入する',action:'confirm-buy-card',id,style:'primary'}])]);
+  prefShowModal('カード購入の確認',`<div class="flex flex-col sm:flex-row gap-4 items-start"><div class="w-36 sm:w-44 shrink-0 mx-auto sm:mx-0">${prefCardDisplay(id,{small:true})}</div><div class="min-w-0 w-full"><div class="font-black text-white">${prefEsc(card.name)}</div><div class="text-xl font-black text-emerald-200 mt-2">${prefFormatMoney(price)}</div><div class="text-xs text-slate-400 mt-2">購入後の所持資金：${prefFormatMoney((p.funds||0)-price)}</div>${duplicate?'<p class="text-rose-300 text-xs mt-2">同じマジックカードをすでに所持しているため購入できません。</p>':''}${duplicateUnit?'<p class="text-rose-300 text-xs mt-2">同じキャラカードを所持しているため購入できません。</p>':''}${p.funds<price?'<p class="text-rose-300 text-xs mt-2">資金が不足しています。</p>':''}</div></div>`,[{label:'キャンセル',action:'close-modal',style:'slate'},...(duplicate||duplicateUnit||p.funds<price?[]:[{label:'購入する',action:'confirm-buy-card',id,style:'primary'}])]);
 }
 async function prefBuyCard(id) {
   const inst=campaignState?.instances?.[id];const card=prefCardForInstance(id)||prefTemplate(inst?.templateId);const p=prefPlayerRegion();
@@ -1544,8 +1651,9 @@ async function prefPullGacha(key) {
   const fallback=selected.fallback?`<p class="text-xs text-amber-200 mt-2">希望ランクのカードが残っていないため、${selected.noUnits?'マジックカードに切り替えました':`★${selected.rank}で代用しました`}。</p>`:'';
   const zone=campaignState.instances[resultCard?.id]?.zone;
   const bundledMagic=campaignState.logs?.slice(-5).find(x=>String(x.message||x.text||'').includes('抱き合わせでマジックカード'))?.message||'';const location=zone==='market'?'<p class="text-xs text-cyan-200 mt-2">重複のため市場へ自動出品されました。</p>':zone==='pending'?`<p class="text-xs text-amber-200 mt-2">所持上限${resultCard?.kind==='magic'?`（マジック${PREF_MAGIC_LIMIT}枚）`:''}のため、既存カードまたは新カードを選んで市場へ出品してください。</p>`:'';
-  const cardBlock=c?`<div class="grid grid-cols-2 gap-3 mt-3 items-start"><div><div class="text-[10px] text-amber-200 font-black mb-1">${c?.cardType==='magic'?'確率枠のマジックカード':'キャラカード'}</div><div class="mx-auto w-full max-w-[11rem]">${prefCardDisplay(resultCard.id,{small:true})}</div><div class="text-center mt-2"><div class="font-black text-white text-sm">${prefEsc(c.name)}</div><div class="text-emerald-200 font-black mt-1">価値 ${prefFormatMoney(prefCardValue(c))}</div></div></div>${bundledMagicInstance?(()=>{const mc=prefCardForInstance(bundledMagicInstance.id)||prefTemplate(bundledMagicInstance.templateId);return `<div><div class="text-[10px] text-violet-200 font-black mb-1">確定マジック</div><div class="mx-auto w-full max-w-[11rem]">${prefCardDisplay(bundledMagicInstance.id,{small:true})}</div><div class="text-center mt-2"><div class="font-black text-white text-sm">${prefEsc(mc?.name||'マジックカード')}</div><div class="text-emerald-200 font-black mt-1">価値 ${prefFormatMoney(prefCardValue(mc))}</div></div></div>`;})():''}</div><div class="text-[10px] text-slate-500 mt-2">カード画像をタップすると詳細を確認できます</div>`:'<p class="text-slate-400 text-sm">カードの登録データが見つかりませんでした。</p>';
-  prefShowModal('✨ ガチャ結果',`<div class="text-center"><div class="inline-flex px-3 py-1 rounded-full bg-violet-950 border border-violet-500/50 text-violet-200 text-xs font-black">${prefEsc(g.label)} · ${prefFormatMoney(g.price)}</div><div class="text-4xl mt-3 animate-pulse">${c?.cardType==='magic'?'📜':'🌟'}</div>${cardBlock}${fallback}${location}</div>`,[{label:'結果を閉じる',action:'gacha-result-close'},{label:'続けて引く',action:'gacha-pull-again',id:key,style:'primary'}]);
+  const cardBlock=c?`<div class="grid grid-cols-2 gap-3 mt-3 items-start"><div><div class="text-[10px] text-amber-200 font-black mb-1">${c?.cardType==='magic'?'確率枠のマジックカード':'キャラカード'}</div><div class="mx-auto w-full max-w-[14rem]">${prefCardDisplay(resultCard.id,{small:true})}</div><div class="text-center mt-2"><div class="font-black text-white text-sm">${prefEsc(c.name)}</div><div class="text-emerald-200 font-black mt-1">価値 ${prefFormatMoney(prefCardValue(c))}</div></div></div>${bundledMagicInstance?(()=>{const mc=prefCardForInstance(bundledMagicInstance.id)||prefTemplate(bundledMagicInstance.templateId);return `<div><div class="text-[10px] text-violet-200 font-black mb-1">確定マジック</div><div class="mx-auto w-full max-w-[14rem]">${prefCardDisplay(bundledMagicInstance.id,{small:true})}</div><div class="text-center mt-2"><div class="font-black text-white text-sm">${prefEsc(mc?.name||'マジックカード')}</div><div class="text-emerald-200 font-black mt-1">価値 ${prefFormatMoney(prefCardValue(mc))}</div></div></div>`;})():''}</div><div class="text-[10px] text-slate-500 mt-2">カード画像をタップすると詳細を確認できます</div>`:'<p class="text-slate-400 text-sm">カードの登録データが見つかりませんでした。</p>';
+  const fundsAfterGacha=prefFormatMoney(prefPlayerRegion()?.funds||0);
+  prefShowModal('✨ ガチャ結果',`<div class="text-center"><div class="inline-flex px-3 py-1 rounded-full bg-violet-950 border border-violet-500/50 text-violet-200 text-xs font-black">${prefEsc(g.label)} · ${prefFormatMoney(g.price)}</div><div class="mt-3 mx-auto inline-flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-950/50 px-4 py-2 text-sm"><span class="text-emerald-300">現在資金</span><b class="text-white text-lg">${fundsAfterGacha}</b></div><div class="text-4xl mt-3 animate-pulse">${c?.cardType==='magic'?'📜':'🌟'}</div>${cardBlock}${fallback}${location}</div>`,[{label:'結果を閉じる',action:'gacha-result-close'},{label:'続けて引く',action:'gacha-pull-again',id:key,style:'primary'}]);
 }
 
 function prefShowBattleSelection(finalizing=false) {
@@ -1672,7 +1780,12 @@ function prefAiRosterComplementBonus(region,card) {
   if(cp.tags.has('hp_scaling_damage')&&hasAny(['healing','damage_amp']))bonus+=7.0;
   if(cp.tags.has('damage_amp')&&has('hp_scaling_damage'))bonus+=6.0;
   if(cp.tags.has('healing')&&has('hp_scaling_damage'))bonus+=4.5;
-  if(cp.tags.has('ap_supply')&&profiles.some(p=>p.maxCost>=25||p.tags.has('heavy_cost')))bonus+=5.5;
+  if(cp.tags.has('ap_supply')&&profiles.some(p=>p.maxCost>=18||p.tags.has('heavy_cost')))bonus+=7.0;
+  if(cp.tags.has('damage_amp')&&has('damage'))bonus+=7.0;
+  if(cp.tags.has('attack_speed_buff')&&hasAny(['damage','attack_role']))bonus+=4.5;
+  if(cp.tags.has('damage')&&hasAny(['damage_amp','attack_speed_buff']))bonus+=6.0;
+  if(prefCardHasTeamBuff(card)&&hasAny(['damage','attack_role']))bonus+=5.5;
+  if(cp.tags.has('permanent_self_buff')&&hasAny(['healing','shield_defense','taunt_protection']))bonus+=3.5;
   if(cp.tags.has('status_debuff')&&has('status_condition'))bonus+=5.0;
   if(cp.tags.has('status_condition')&&has('status_debuff'))bonus+=5.0;
   if((cp.tags.has('healing')||cp.tags.has('shield_defense'))&&!hasAny(['healing','shield_defense']))bonus+=3.5;
@@ -1684,6 +1797,8 @@ function prefAiRosterComplementBonus(region,card) {
   if(profile.mainAttrPriority?.length && profile.mainAttrPriority.slice(0,3).includes(cp.mainAttr))bonus+=1.5;
   // Avoid awarding the full completion bonus to redundant filler when five useful roles already exist.
   if(roster.length>=4&&bonus>0)bonus*=0.8;
+  // A recent defeat makes structural repairs more valuable than preserving a familiar roster.
+  if(region.aiMemory?.rebuildPending?.status==='pending'&&bonus>0)bonus*=1.22;
   return bonus;
 }
 function prefAiMarketUpgradeQualifies(region,instance,utility) {
@@ -1698,12 +1813,14 @@ function prefAiMarketUpgradeQualifies(region,instance,utility) {
 function prefAiUnitReserveFloor(region) {
   const funds=Math.max(0,Number(region?.funds)||0);
   const owned=prefOwnedUnits(region?.id).length;
-  // Keep roughly half of the current rank's periodic funding as a soft rebuild reserve.
-  // Existing cash above that reserve is intentionally available for frequent gacha pulls.
+  // 資金の半分を固定で抱え込むと、S/Aランクでも強力なカードへ投資できない。
+  // 年間支援額は目安として残しつつ、実残高の15%程度をソフトな予備費にする。
+  // 所持3枚未満の緊急補充では資金不足による行き詰まりを避ける。
   const funding=Number(PREF_FUNDING_BY_TIER[region?.supportTier||region?.tier||'E']||PREF_FUNDING_BY_TIER.E)||0;
-  const rankReserve=funding*0.5;
+  const rankReserve=funding*0.15;
+  const cashReserve=Math.min(funds*0.15,rankReserve);
   const emergencyFloor=owned<3?Math.min(2000000,funds*0.08):Math.min(3000000,funds*0.05);
-  return Math.min(funds,Math.max(rankReserve,emergencyFloor));
+  return Math.min(funds,Math.max(cashReserve,emergencyFloor));
 }
 function prefAiCanBuyMarketUnit(region,instance,utility=null) {
   if(!region||!instance||instance.kind!=='unit'||instance.zone!=='market'||instance.sellerRegionId===region.id)return false;
@@ -1784,11 +1901,31 @@ function prefAiMarketUtility(region,instance) {
     if(!ownMagics.length)improvement=4+candidateScore*0.25+prefCardSynergyScore(region,card)*0.35;
     else {const avg=ownMagics.reduce((sum,x)=>sum+scoreOf(x),0)/Math.max(1,ownMagics.length);improvement=4+candidateScore*0.48-avg*0.28;}
   }
+  let compositionDelta=0;
+  if(instance.kind==='unit'&&ownUnits.length>=3){
+    const beforeQuality=prefAIQuickRosterQuality(region,ownUnits);
+    let afterUnits=null;
+    if(ownUnits.length<5)afterUnits=[...ownUnits,instance];
+    else {
+      const replacement=prefAiUnitReplacementChoice(region,ownUnits,instance);
+      if(!replacement||String(replacement)===String(instance.id))return -Infinity;
+      afterUnits=ownUnits.map(x=>String(x.id)===String(replacement)?instance:x);
+    }
+    compositionDelta=prefAIQuickRosterQuality(region,afterUnits)-beforeQuality;
+    if(ownUnits.length<5)improvement+=Math.max(-5,Math.min(8,compositionDelta*0.28));
+    else improvement=compositionDelta*0.9+complement*0.18;
+  }
   const cost=prefValueFromInstance(instance);const reserve=region.funds-cost;
   const shortage=instance.kind==='unit'&&ownUnits.length<5;
-  const pricePenalty=Math.min(12,Math.log10(Math.max(1,cost/10000))*1.8);
+  // 高価なカードを一律に罰すると、資金が潤沢でも強い★5を選べない。
+  // 価格ペナルティを価格そのものだけでなく、購入後資金に対する負担率で調整する。
+  const spendRatio=cost/Math.max(1,Number(region.funds)||0);
+  const absolutePricePenalty=Math.log10(Math.max(1,cost/10000))*1.8;
+  const affordabilityFactor=0.22+0.78*Math.min(1,Math.max(0,spendRatio*3.5));
+  const pricePenalty=Math.min(12,absolutePricePenalty*affordabilityFactor);
   const reservePenalty=reserve<2000000?14:reserve<10000000?(shortage?3:8):reserve<30000000?3:0;
-  return improvement-pricePenalty-reservePenalty+(shortage?8:0)+(profile.cardIQ/100)*2+prefCardEstimateError(profile.cardIQ);
+  const rebuildBonus=region.aiMemory?.rebuildPending?.status==='pending'&&instance.kind==='unit'?Math.min(5,Math.max(0,compositionDelta)*0.25)+Math.min(2,prefRankStars(card)*0.35):0;
+  return improvement-pricePenalty-reservePenalty+(shortage?8:0)+(profile.cardIQ/100)*2+rebuildBonus+prefCardEstimateError(profile.cardIQ);
 }
 function prefAiMarketReasons(region,instance) {
   const card=prefCardForInstance(instance?.id)||prefTemplate(instance?.templateId);const profile=prefAIProfileForRegion(region);const cp=prefCardProfile(card);const reasons=[];
@@ -1833,6 +1970,7 @@ function prefAiTryEconomy(region) {
     const price=prefValueFromInstance(inst),seller=inst.sellerRegionId;
     const reasons=prefAiMarketReasons(region,inst);
     reasons.push(`所持キャラ${currentUnits.length}/5枚の不足を補い、シナジー効用${best.utility.toFixed(1)}・価格${prefFormatMoney(price)}・購入後資金を比較`);
+    if(region.aiMemory?.rebuildPending?.status==='pending')reasons.push('敗北後の再構築中：単なる穴埋めではなく、交換後の先発3枚の勝ち筋と控えまで比較');
     prefBook(region.id,-price,'market-buy');if(seller)prefBook(seller,price,'market-sale');
     prefSetInstanceOwner(inst,region.id,true);inst.expiresAtAbs=prefAbsTurn()+PREF_CARD_LIFETIME;
     prefRecordAIThought(region,'カード購入',`市場で「${card?.name||'キャラカード'}」を購入`,reasons,{cardName:card?.name,price,utility:best.utility,rosterBefore:currentUnits.length,rosterAfter:prefOwnedUnits(region.id).length});
@@ -1899,7 +2037,7 @@ function prefAiTryEconomy(region) {
   // a meaningful chance of improving the weakest card or closing a tactical hole.
   region._aiEconomyPhase='5枚揃った後の市場・ガチャ改善';
   let units=prefOwnedUnits(region.id);
-  if(units.length>=5&&unitCountAtStart>=5){
+  if(units.length>=5){
     let marketUnits=[];
     try {
       marketUnits=prefMarketListings('unit',false)
@@ -1985,6 +2123,17 @@ function prefAiTryEconomy(region) {
     }
   }
 
+  // 敗北でカードを失った場合も、補充だけで終了せず、同じターンの経済処理内で5枚全体の再構築・置換候補を評価する。
+  const rebuild=region.aiMemory?.rebuildPending;
+  if(rebuild?.status==='pending'&&prefOwnedUnits(region.id).length>=5){
+    prefRecordAIThought(region,'敗北後の再構築','敗北とカード損失を受けて編成を再評価',[
+      `前回の敗北で失ったカード：${(rebuild.destroyedCards||[]).map(x=>x.name||'キャラカード').join('、')||'記録なし'}`,
+      '補充枠を埋めるだけでなく、先発3枚の勝ち筋・AP需要・役割相性を再評価',
+      '単体性能だけでなく、交換後の最良の先発3枚と控え2枚を比較',
+      `資金残高：${prefFormatMoney(region.funds||0)}。購入は勝ち筋の改善と購入後の資金を併せて判断`
+    ],{opponentId:rebuild.opponentId||null,destroyedCards:rebuild.destroyedCards||[],funds:Number(region.funds)||0,rosterNames:prefOwnedUnits(region.id).map(x=>(prefCardForInstance(x.id)||prefTemplate(x.templateId))?.name||'キャラ')});
+    rebuild.status='evaluated';rebuild.evaluatedAtAbs=prefAbsTurn();
+  }
   // Magic buying is secondary to the five-character battle roster, but still uses synergy and a cash reserve.
   region._aiEconomyPhase='マジック市場の補強';
   units=prefOwnedUnits(region.id);
@@ -2540,6 +2689,8 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     const hasAttacker=activeRoles.has('attacker'),hasController=activeRoles.has('controller'),hasDefender=activeRoles.has('defender');
     const hasFrontlineDefender=activeProfiles.some(x=>x.tags.has('frontline_defender'));
     let score=activeScore;
+    const openingPlan=prefAIActiveTrioPlanEvaluation(activeCards,activeProfiles,profile);
+    score+=openingPlan.score;
     if(activeTeamBuffControllers)score+=activeTeamBuffControllers*(7.5+(ownedControllerCount<=1?5.0:ownedControllerCount<=2?2.5:0));
     // Make the first three slots a coherent opening team. Prefer an attacker, a defender/healer,
     // and a controller/support when suitably strong cards exist, without banning all-attacker rush builds.
@@ -2597,7 +2748,7 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     const buildQuality=0.50+profile.cardIQ/200;
     const scenarioEstimate=prefEstimateBuildScenarios(region,activeCards,reserveCards,mags);
     score=score*buildQuality+scenarioEstimate.mean*0.45+opponentCounterBonus(activeCards)+prefCardEstimateError(profile.cardIQ);
-    scoredBuilds.push({active:activeIds,reserve:reserveEntries.map(x=>x.inst.id),score,scenarioMean:scenarioEstimate.mean,scenarios:scenarioEstimate.scenarios,activeNames:activeCards.map(c=>c.name||'キャラ'),reserveNames:reserveCards.map(c=>c.name||'キャラ'),attrs:[...attrs],roleCoverage:[...activeRoles]});
+    scoredBuilds.push({active:activeIds,reserve:reserveEntries.map(x=>x.inst.id),score,scenarioMean:scenarioEstimate.mean,scenarios:scenarioEstimate.scenarios,activeNames:activeCards.map(c=>c.name||'キャラ'),reserveNames:reserveCards.map(c=>c.name||'キャラ'),attrs:[...attrs],roleCoverage:[...activeRoles],openingPlan:{title:openingPlan.title,coreName:openingPlan.coreName,score:openingPlan.score,reasons:openingPlan.reasons}});
   }
   scoredBuilds.sort((a,b)=>b.score-a.score);
   // Keep the three highest-scoring builds; small randomness remains only among genuinely close candidates.
@@ -2607,9 +2758,10 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
   const active=best?.active||fallback?.active||[];
   const reserve=best?.reserve||fallback?.reserve||[];
   const reservedApThresholdCards=reserve.filter(id=>prefCardProfile(cardById(id)).apThresholdPassiveValue>=3).map(id=>cardById(id)?.name||'AP条件パッシブ持ち');
-  const reasons=[`カード選びの賢さ${profile.cardIQ}/100で構築候補を評価`,`主戦術「${(PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)||{}).label||'対応型'}」と副戦術を反映`,`先発3体は攻撃・防御回復・サポートの役割補完と、同時に場へ出るカード間の連携を重視`,`ターン開始・ターン終了などの繰り返しパッシブは、先発に置いた場合の発動機会を加点`,`控えは実際に採用する2枚だけを比較し、登場時パッシブと第2アタッカー・第2ディフェンダーの補充価値を評価`,`AP条件パッシブは有用性と必要APを見て、APを温存しやすい控え配置も評価`,...(reservedApThresholdCards.length?[`AP条件パッシブを持つ控え候補：${reservedApThresholdCards.join('、')}`]:[]),`候補${candidateSets.length}案を効果解析で評価し、上位${shortlist.length}案を3つの想定戦況（速攻・長期戦・連携成立）で平均比較`];
+  const chosenPlan=best?.openingPlan;
+  const reasons=[`カード選びの賢さ${profile.cardIQ}/100で構築候補を評価`,`主戦術「${(PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)||{}).label||'対応型'}」と副戦術を反映`,`先発3体の勝ち筋を先に評価：${chosenPlan?.title||'基礎性能と役割補完'}`,...(chosenPlan?.coreName?[`中心となる主力候補：「${chosenPlan.coreName}」`]:[]),...(chosenPlan?.reasons||[]),`控えは先発3枚の完成を優先したうえで、交代後の役割補充・登場時パッシブ・追加連携を比較`,`AP条件パッシブは有用性と必要APを見て、APを温存しやすい控え配置も評価`,...(reservedApThresholdCards.length?[`AP条件パッシブを持つ控え候補：${reservedApThresholdCards.join('、')}`]:[]),`候補${candidateSets.length}案を効果解析で評価し、上位${shortlist.length}案を3つの想定戦況（速攻・長期戦・連携成立）で平均比較`];
   if(opponentIntel?.confidence>0.15)reasons.push(`調査・対戦記憶の情報を対策に使用（信頼度${Math.round(opponentIntel.confidence*100)}%）`);
-  prefRecordAIThought(region,'編成構築','出撃メンバーを選出',reasons,{activeNames:best?.activeNames||active.map(id=>cardById(id)?.name||'キャラ'),reserveNames:best?.reserveNames||reserve.map(id=>cardById(id)?.name||'キャラ'),apThresholdReserveNames:reservedApThresholdCards,score:best?.score,alternatives:shortlist.map(x=>({names:x.activeNames,reserveNames:x.reserveNames,roles:x.roleCoverage,score:Math.round(x.score*10)/10,scenarioMean:Math.round((x.scenarioMean||0)*10)/10,scenarios:x.scenarios,attributes:x.attrs})),opponentId:opponentId||null,opponentIntelConfidence:opponentIntel?.confidence||0});
+  prefRecordAIThought(region,'編成構築','出撃メンバーを選出',reasons,{activeNames:best?.activeNames||active.map(id=>cardById(id)?.name||'キャラ'),reserveNames:best?.reserveNames||reserve.map(id=>cardById(id)?.name||'キャラ'),apThresholdReserveNames:reservedApThresholdCards,score:best?.score,alternatives:shortlist.map(x=>({names:x.activeNames,reserveNames:x.reserveNames,roles:x.roleCoverage,score:Math.round(x.score*10)/10,scenarioMean:Math.round((x.scenarioMean||0)*10)/10,scenarios:x.scenarios,attributes:x.attrs,openingPlan:x.openingPlan})),openingPlan:chosenPlan||null,opponentId:opponentId||null,opponentIntelConfidence:opponentIntel?.confidence||0});
   return prefNormalizeLoadoutSelection(active.slice(0,3),reserve.slice(0,2),units);
 }
 function prefDefaultLoadoutFallback(regionId) {
@@ -2641,7 +2793,7 @@ function prefBattleOverrideForRegions(aId,bId,playerLoadout=null) {
   const legalB=prefNormalizeLoadoutSelection(loadB.active,loadB.reserve,unitsB);
   const selectedA=[...legalA.active,...legalA.reserve].filter(id=>unitsA.some(x=>x.id===id)).slice(0,5);
   const selectedB=[...legalB.active,...legalB.reserve].filter(id=>unitsB.some(x=>x.id===id)).slice(0,5);
-  unitsB.forEach(x=>{if(selectedB.length<5&&!selectedB.includes(x.id)&&prefCountFiveStarIds([...selectedB,x.id],unitsB)<=1)selectedB.push(x.id);});
+  unitsB.forEach(x=>{if(selectedB.length<5&&!selectedB.includes(x.id)&&prefCountFiveStarIds([...selectedB,x.id],unitsB)<=PREF_BATTLE_RANK5_LIMIT)selectedB.push(x.id);});
   const activeA=legalA.active.filter(id=>selectedA.includes(id)).slice(0,3);
   while(activeA.length<Math.min(3,selectedA.length)){const id=selectedA.find(x=>!activeA.includes(x));if(!id)break;activeA.push(id);}
   const reserveA=selectedA.filter(id=>!activeA.includes(id)).slice(0,2);
@@ -2662,7 +2814,7 @@ function prefConsumeMagic(regionId, ids) {
 }
 function prefRandomDestroyUnits(regionId, candidateIds) {
   const valid=(candidateIds||[]).filter(id=>{const inst=campaignState.instances[id];return inst&&inst.zone==='owner'&&inst.ownerId===regionId&&inst.kind==='unit';});
-  const destroyed=prefShuffle(valid).slice(0,Math.min(2,valid.length));
+  const destroyed=prefShuffle(valid).slice(0,Math.min(3,valid.length));
   destroyed.forEach(id=>{const card=prefCardForInstance(id);prefSendToGacha(campaignState.instances[id],'battle-loss');prefLog(`${prefRegion(regionId)?.prefecture||regionId}の「${card?.name||'キャラカード'}」が敗北により破壊され、ガチャへ戻りました。`,'warning');});
   return destroyed;
 }
@@ -2689,6 +2841,7 @@ async function prefApplyBattleOutcome(aId,bId,engineResult,selectedA,selectedB,s
   const result=['player','enemy','draw'].includes(rawResult)?rawResult:'draw';let winnerId=null,loserId=null;
   if(result==='player'){winnerId=aId;loserId=bId;}else if(result==='enemy'){winnerId=bId;loserId=aId;}
   if(result==='draw'){
+    if(aId===PREF_PLAYER_ID||bId===PREF_PLAYER_ID){campaignState.lastPlayerBattleDestroyed=[];campaignState.lastPlayerBattleDestroyedIds=[];}
     a.yearStats.draws=(a.yearStats.draws||0)+1;b.yearStats.draws=(b.yearStats.draws||0)+1;
     a.allTimeStats.draws=(a.allTimeStats.draws||0)+1;b.allTimeStats.draws=(b.allTimeStats.draws||0)+1;
     a.yearStats.battles=(a.yearStats.battles||0)+1;b.yearStats.battles=(b.yearStats.battles||0)+1;
@@ -2706,7 +2859,22 @@ async function prefApplyBattleOutcome(aId,bId,engineResult,selectedA,selectedB,s
     let destroyed=[];
     try{destroyed=prefRandomDestroyUnits(loserId,loserDeck)||[];}
     catch(err){console.error('[Prefecture] card destruction follow-up failed; battle result was retained',err);}
-    if(loserId===PREF_PLAYER_ID)campaignState.lastPlayerBattleDestroyed=destroyed.map(id=>prefTemplate(campaignState.instances[id]?.templateId)?.name||'キャラカード');else campaignState.lastPlayerBattleDestroyed=[];
+    if(loserId!==PREF_PLAYER_ID){
+      const defeated=prefRegion(loserId);
+      if(defeated){
+        defeated.aiMemory=defeated.aiMemory&&typeof defeated.aiMemory==='object'?defeated.aiMemory:{opponents:{},decisions:[]};
+        defeated.aiMemory.rebuildPending={status:'pending',createdAtAbs:prefAbsTurn(),opponentId:winnerId,destroyedCards:destroyed.map(id=>{const card=prefCardForInstance(id)||prefTemplate(campaignState.instances[id]?.templateId);return {name:String(card?.name||'キャラカード'),rank:prefRankStars(card),role:prefCardProfile(card).role,templateId:String(card?.id||'')};})};
+        prefRecordAIThought(defeated,'敗北後の再構築準備','カード損失を検知し、次の経済行動で編成を見直す',[
+          `対戦相手：${prefRegion(winnerId)?.prefecture||winnerId}`,
+          `破壊されたカード：${defeated.aiMemory.rebuildPending.destroyedCards.map(x=>x.name).join('、')||'なし'}`,
+          '敗北後は残存カードを無条件に固定せず、勝ち筋を成立させるために必要な交換・補充を比較する'
+        ],{opponentId:winnerId,destroyedCards:defeated.aiMemory.rebuildPending.destroyedCards,selectedCount:(loserDeck||[]).length});
+      }
+    }
+    if(loserId===PREF_PLAYER_ID){
+      campaignState.lastPlayerBattleDestroyed=destroyed.map(id=>{const card=prefCardForInstance(id)||prefTemplate(campaignState.instances[id]?.templateId);return card?.name||'キャラカード';});
+      campaignState.lastPlayerBattleDestroyedIds=destroyed.slice();
+    }else{campaignState.lastPlayerBattleDestroyed=[];campaignState.lastPlayerBattleDestroyedIds=[];}
     try{prefLog(`${w.prefecture}が${l.prefecture}に勝利。${prefFormatMoney(amount)}を獲得しました。${l.prefecture}は${prefFormatMoney(amount)}を支払い、キャラカード${destroyed.length}枚を失いました。`,'success');}catch(err){console.warn('[Prefecture] match log update failed',err);}
   }
   // Mark the core settlement before optional analytics. If a later step fails, retrying this
@@ -3208,7 +3376,13 @@ showBattleResultModal = function(winner) {
   title.innerText=winner==='player'?'🎉 京都府の勝利！':winner==='enemy'?'💀 京都府の敗北':'🤝 引き分け';
   title.className=`text-4xl sm:text-6xl font-black leading-tight ${winner==='player'?'text-emerald-300':winner==='enemy'?'text-rose-300':'text-amber-300'}`;
   const settlementPending=!!campaignState?.turnProcessing?.pairs?.some(pair=>pair?.pendingSettlement&&pair.status!=='done');
-  message.innerText=settlementPending?'戦闘は終了しましたが、結果の精算が未完了です。「次へ」を押すと保存済み結果の精算を再試行します。':'対戦結果を記録しました。敗北時は出場したキャラカードからランダムに2枚が破壊され、使用したマジックカードは消費されます。';
+  message.innerText=settlementPending?'戦闘は終了しましたが、結果の精算が未完了です。「次へ」を押すと保存済み結果の精算を再試行します。':'対戦結果を記録しました。敗北時は出場したキャラカードからランダムに3枚が破壊され、ガチャへ戻ります。使用したマジックカードは消費されます。';
+  if(!settlementPending&&winner==='enemy'&&reward&&Array.isArray(campaignState?.lastPlayerBattleDestroyedIds)&&campaignState.lastPlayerBattleDestroyedIds.length){
+    const lostIds=campaignState.lastPlayerBattleDestroyedIds;
+    const lostNames=Array.isArray(campaignState.lastPlayerBattleDestroyed)?campaignState.lastPlayerBattleDestroyed:[];
+    reward.classList.remove('hidden');
+    reward.innerHTML=`<div class="text-xl sm:text-2xl font-black text-rose-300 mb-2">💔 敗北により失ったカード</div><div class="text-sm sm:text-base text-slate-200 mb-4 font-bold">以下のキャラカード${lostIds.length}枚は所持から失われ、ガチャに戻りました。</div><div class="grid grid-cols-3 gap-3 sm:gap-4">${lostIds.map((id,index)=>{const inst=campaignState.instances?.[id];const card=prefCardForInstance(id)||prefTemplate(inst?.templateId);const name=lostNames[index]||card?.name||'キャラカード';return `<div class="min-w-0"><div class="mb-1 text-center text-xs sm:text-sm font-black text-rose-200">${index+1}. ${prefEsc(name)}</div>${prefCardDisplay(id,{small:true})}</div>`;}).join('')}</div>`;
+  }
   const rematch=document.getElementById('battle-result-rematch'),back=document.getElementById('battle-result-back');
   if(rematch){rematch.classList.add('hidden');rematch.onclick=null;}
   if(back){back.classList.remove('hidden');back.innerText='次へ：残りの代表を処理';back.onclick=()=>{modal.classList.add('hidden');battleExecutionRunning=false;switchView('prefecture');prefContinueTurn();};}
