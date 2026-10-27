@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.56 — battle-end, card detail, gacha capacity and defeat-loss fixes */
+/* 都道府県カード戦争 v1.0.58 — responsive progress UI for campaign turn processing */
 'use strict';
 
 let campaignState = null;
@@ -619,30 +619,47 @@ function prefAiUnitReplacementChoice(region, units, incomingInst) {
   return prefAiReplacementChoice(region,replaceable,incomingInst);
 }
 function prefEnforceOwnedStar5Caps() {
-  if(!campaignState?.regions)return false;let changed=false,filledRivals=0;
-  const rank5Templates=prefCardTemplates().filter(c=>c.cardType==='unit'&&prefRankStars(c)===5);
-  for(const region of Object.values(campaignState.regions)){
-    let fives=prefOwnedFiveStarUnits(region.id);const limit=prefFiveStarLimit(region);
-    if(fives.length>limit){
-      fives.sort((a,b)=>{const ca=prefCardForInstance(a.id)||prefTemplate(a.templateId),cb=prefCardForInstance(b.id)||prefTemplate(b.templateId);return prefCardValue(cb)-prefCardValue(ca)||Number(cb?.stats?.atk||0)-Number(ca?.stats?.atk||0);});
-      fives.slice(limit).forEach(inst=>prefListInstance(inst,region.id,'star5-cap-migration'));
+  if(!campaignState?.regions)return false;
+  let changed=false,listedExcess=0,revertedLegacyGrants=0;
+
+  // v1.0.52-era migration accidentally handed a free ★5 to every rival with none
+  // whenever an existing campaign was loaded. Reclaim only instances carrying that
+  // explicit source marker; legitimate initial/gacha/market acquisitions are untouched.
+  // Return the erroneous copies to the shared gacha pool and mark them as handled so this
+  // repair is idempotent across subsequent loads.
+  for(const inst of Object.values(campaignState.instances||{})){
+    if(inst?.source==='star5-holder-migration' && inst.zone!=='consumed'){
+      prefSendToGacha(inst,'reverted-legacy-star5-holder-migration');
+      inst.source='legacy-star5-holder-migration-reverted';
+      inst.copyException=false;
+      revertedLegacyGrants++;
       changed=true;
     }
-    // Under the new starting rule, each rival has one ★5 slot. Older saves may have zero, so
-    // replace the weakest lower-rank card with a copy of an existing ★5 template when available.
-    if(!region.isPlayer&&prefOwnedFiveStarUnits(region.id).length===0&&rank5Templates.length){
-      const owned=prefOwnedUnits(region.id);
-      if(owned.length>=PREF_RIVAL_UNIT_LIMIT){
-        const weakest=owned.filter(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))!==5)
-          .sort((a,b)=>prefCardValue(prefCardForInstance(a.id)||prefTemplate(a.templateId))-prefCardValue(prefCardForInstance(b.id)||prefTemplate(b.templateId)))[0];
-        if(weakest)prefListInstance(weakest,region.id,'star5-holder-migration');
-      }
-      const template=prefRandom(rank5Templates);
-      prefCreateInstance(template.id,'owner',region.id,{source:'star5-holder-migration',copyException:true});
-      filledRivals++;changed=true;
+  }
+
+  // Keep the holder-limit migration only: it lists excess ★5s from old saves but never
+  // creates or distributes new cards. The battle deck's separate cap remains two ★5s.
+  for(const region of Object.values(campaignState.regions)){
+    let fives=prefOwnedFiveStarUnits(region.id);
+    const limit=prefFiveStarLimit(region);
+    if(fives.length>limit){
+      fives.sort((a,b)=>{
+        const ca=prefCardForInstance(a.id)||prefTemplate(a.templateId);
+        const cb=prefCardForInstance(b.id)||prefTemplate(b.templateId);
+        return prefCardValue(cb)-prefCardValue(ca)||Number(cb?.stats?.atk||0)-Number(ca?.stats?.atk||0);
+      });
+      const excess=fives.slice(limit);
+      excess.forEach(inst=>prefListInstance(inst,region.id,'star5-cap-migration'));
+      listedExcess+=excess.length;
+      changed=true;
     }
   }
-  if(changed)prefLog(`旧セーブを★5所持ルールへ移行しました。超過分を市場へ出品し、${filledRivals}人のライバルに★5カードを補充しました。`,'info');
+  if(revertedLegacyGrants||listedExcess){
+    const parts=[];
+    if(revertedLegacyGrants)parts.push(`誤配布された★5カード${revertedLegacyGrants}枚をガチャへ戻しました`);
+    if(listedExcess)parts.push(`旧セーブの★5所持上限超過${listedExcess}枚を市場へ出品しました`);
+    prefLog(`${parts.join('。')}。新たな★5カードの自動配布は行いません。`,'info');
+  }
   return changed;
 }
 function prefRegion(regionId) { return campaignState?.regions?.[regionId] || null; }
@@ -2204,13 +2221,64 @@ function prefEnsureTurnResolutionQueue(tx) {
   tx.resolutionIndex=next<0?tx.resolutionQueue.length:next;
   return tx.resolutionQueue;
 }
+function prefEnsureTurnLoadingOverlay() {
+  let overlay=document.getElementById('pref-turn-loading-overlay');
+  if(overlay)return overlay;
+  overlay=document.createElement('div');
+  overlay.id='pref-turn-loading-overlay';
+  overlay.className='hidden';
+  overlay.style.position='fixed';overlay.style.inset='0';overlay.style.zIndex='110';
+  overlay.setAttribute('role','status');
+  overlay.setAttribute('aria-live','polite');
+  overlay.innerHTML=`<div class="w-full max-w-md rounded-2xl border-2 border-amber-500/60 bg-slate-900 p-6 sm:p-8 text-center shadow-2xl">
+    <div id="pref-turn-loading-spinner" aria-hidden="true"></div>
+    <h2 id="pref-turn-loading-title" class="mt-5 text-xl sm:text-2xl font-black text-amber-200">ターン処理中</h2>
+    <p id="pref-turn-loading-text" class="mt-3 text-sm leading-relaxed text-slate-200">AI代表の行動を準備しています…</p>
+    <div id="pref-turn-loading-track"><div id="pref-turn-loading-bar" style="width:2%"></div></div>
+    <p class="mt-3 text-[11px] text-slate-400">処理中です。画面を閉じず、そのままお待ちください。</p>
+  </div>`;
+  document.body.appendChild(overlay);
+  return overlay;
+}
+function prefShowTurnLoading(title='ターン処理中',text='AI代表の行動を準備しています…',percent=2) {
+  const overlay=prefEnsureTurnLoadingOverlay();
+  overlay.classList.remove('hidden');
+  const titleEl=document.getElementById('pref-turn-loading-title');
+  const textEl=document.getElementById('pref-turn-loading-text');
+  const bar=document.getElementById('pref-turn-loading-bar');
+  if(titleEl)titleEl.textContent=String(title||'ターン処理中');
+  if(textEl)textEl.textContent=String(text||'処理しています…');
+  if(bar)bar.style.width=`${Math.max(2,Math.min(100,Number(percent)||2))}%`;
+}
+function prefHideTurnLoading() {
+  document.getElementById('pref-turn-loading-overlay')?.classList.add('hidden');
+}
+function prefSetPreparationProgress(index,total,regionName='') {
+  const safeTotal=Math.max(1,Number(total)||1),safeIndex=Math.max(0,Math.min(safeTotal,Number(index)||0));
+  const percent=4+(safeIndex/safeTotal)*28;
+  const where=regionName?`対象代表：${regionName}`:'AIの準備を開始しています';
+  prefShowTurnLoading('全代表の行動を準備中',`市場・ガチャ・対戦・調査方針を計算しています（${safeIndex}/${safeTotal}代表） · ${where}`,percent);
+  const panelText=document.getElementById('pref-turn-progress-text');
+  const panelBar=document.getElementById('pref-turn-progress-bar');
+  if(panelText)panelText.textContent=`AI代表の判断を準備中：${safeIndex}/${safeTotal}${regionName?`（${regionName}）`:''}`;
+  if(panelBar)panelBar.style.width=`${Math.round(safeIndex/safeTotal*30)}%`;
+}
+async function prefYieldToBrowser() {
+  await new Promise(resolve=>setTimeout(resolve,0));
+}
+
 function prefTurnResolutionProgress(tx) {
   const queue=Array.isArray(tx?.resolutionQueue)?tx.resolutionQueue:[];
   const done=queue.filter(step=>step.status==='done').length;
   const progress=Math.round(done/Math.max(1,queue.length)*100);
   const bar=document.getElementById('pref-turn-progress-bar'),txt=document.getElementById('pref-turn-progress-text');
   if(bar)bar.style.width=`${progress}%`;
-  if(txt)txt.textContent=`順位順の行動処理 ${done}/${queue.length} 件を処理しました。`;
+  const message=`順位順の対戦・調査処理 ${done}/${queue.length} 件を処理しました。`;
+  if(txt)txt.textContent=message;
+  const txStage=campaignState?.turnProcessing?.stage;
+  if(txStage && txStage!=='player-preview' && txStage!=='awaiting-capacity'){
+    prefShowTurnLoading('対戦・調査を順番に処理中',message,35+progress*0.62);
+  }
   return {done,total:queue.length,progress};
 }
 function prefNextTurnResolution(tx) {
@@ -2422,10 +2490,14 @@ async function prefPrepareTurnActionsInRankOrder(playerAction,tx) {
   tx.preparationProcessedIds=Array.isArray(tx.preparationProcessedIds)?tx.preparationProcessedIds.map(String):[];
   const processed=new Set(tx.preparationProcessedIds);
   const start=Math.max(0,Number(tx.preparationIndex)||0);
+  prefShowTurnLoading('全代表の行動を準備中',`市場・ガチャ・対戦・調査方針を計算しています（${processed.size}/${ordered.length}代表）`,4+(processed.size/Math.max(1,ordered.length))*28);
   for(let i=start;i<ordered.length;i++){
     const region=ordered[i],id=String(region.id);
     if(processed.has(id))continue;
     tx.preparationIndex=i;
+    prefSetPreparationProgress(processed.size,ordered.length,region.prefecture||id);
+    // Yield before the relatively expensive per-region AI calculation so the loader paints.
+    await prefYieldToBrowser();
     // Each representative finishes their configured auto-buy, discretionary market/gacha
     // evaluation, and command selection before the next-ranked representative starts.
     let autoBuyResult=false;
@@ -2436,7 +2508,7 @@ async function prefPrepareTurnActionsInRankOrder(playerAction,tx) {
     }
     if(autoBuyResult==='pending'){
       tx.stage='awaiting-capacity';tx.resumePlayerAction=playerAction;tx.preparationIndex=i;
-      await prefSave();prefSyncCampaignClones();prefRenderAll();prefShowReplaceModal();return false;
+      await prefSave();prefSyncCampaignClones();prefRenderAll();prefHideTurnLoading();prefShowReplaceModal();return false;
     }
     if(!region.isPlayer&&id!==String(PREF_PLAYER_ID)){
       try { tx.preparedActions[id]=prefGetAiTurnAction(region); }
@@ -2451,9 +2523,16 @@ async function prefPrepareTurnActionsInRankOrder(playerAction,tx) {
       }
     }
     processed.add(id);tx.preparationProcessedIds=[...processed];tx.preparationIndex=i+1;
+    prefSetPreparationProgress(processed.size,ordered.length,region.prefecture||id);
+    // Save each completed representative so an interrupted tab can resume without repeating
+    // already completed economy and command decisions; yielding keeps the progress UI responsive.
+    await prefSave();
+    await prefYieldToBrowser();
   }
   tx.preparationComplete=true;tx.stage='matching';delete tx.resumePlayerAction;
   await prefSave();
+  prefShowTurnLoading('対戦相手と処理順を確定中','全代表の判断が終わりました。対戦相手・調査処理の順番を確定しています…',34);
+  await prefYieldToBrowser();
   return true;
 }
 async function prefStartTurnAfterAutoBuy(playerAction,tx) {
@@ -2480,7 +2559,12 @@ async function prefBeginTurn(playerAction) {
   const tx={id:generateUniqueId('prefturn'),year:campaignState.year,week:campaignState.week,absoluteTurn:prefAbsTurn(),stage:'matching',actions:{[PREF_PLAYER_ID]:playerAction},pairs:[],pairIndex:0,unmatched:null,investigationResult:null,startedAt:Date.now()};
   campaignState.turnProcessing=tx;campaignState.draftLoadout=null;
   if(playerAction.type==='battle') p.lastLoadout=JSON.parse(JSON.stringify(playerAction.loadout||{active:[],reserve:[]}));
+  // Render a visible busy state immediately; previously the UI was refreshed only after
+  // all 47 representatives had completed their synchronous AI economy/command calculations.
+  prefRenderDashboard();
+  prefSetPreparationProgress(0,prefTurnOrderRegions().length,'開始準備');
   await prefSave();
+  await prefYieldToBrowser();
   await prefStartTurnAfterAutoBuy(playerAction,tx);
 }
 
@@ -2506,6 +2590,8 @@ async function prefFinishTurnInitialization(playerAction,tx) {
   if(!campaignState||campaignState.turnProcessing!==tx)return;
   prefInitializeTurnResolution(tx,playerAction);
   await prefSave();prefRenderAll();
+  prefShowTurnLoading('対戦・調査の処理を開始','代表の行動を順位順に処理しています…',35);
+  await prefYieldToBrowser();
   // All pairings are now fixed. The joint battle/investigation actions are resolved in the same rank order.
   await prefContinueTurn();
 }
@@ -2518,6 +2604,7 @@ async function prefShowRankedPlayerBattlePreview(pair,tx) {
   campaignState.draftLoadout=JSON.parse(JSON.stringify(playerAction.loadout||prefDefaultLoadout(PREF_PLAYER_ID)));
   tx.stage='player-preview';tx.currentPairId=pair.id;tx.pairIndex=Math.max(0,tx.pairs.indexOf(pair));
   tx.playerLoadoutConfirmed=false;
+  prefHideTurnLoading();
   await prefSave();prefRenderDashboard();prefEnsurePreviewResumeButton();
   document.getElementById('pref-turn-progress')?.classList.remove('hidden');
   const opponentIconUrl=prefRegionIconUrl(opponent);
@@ -3052,6 +3139,10 @@ async function prefContinueTurn() {
   if(!campaignState?.turnProcessing)return;
   prefProcessingPromise=(async()=>{
     const tx=campaignState.turnProcessing;
+    if(tx.stage==='player-preview'||tx.stage==='awaiting-capacity')prefHideTurnLoading();
+    else if(tx.stage==='matching')prefShowTurnLoading('全代表の行動を準備中','AI代表の市場・ガチャ判断と対戦・調査方針を準備しています…',4);
+    else if(tx.stage==='settling')prefShowTurnLoading('ターン結果を確定中','対戦結果・資金・カード・ランキングを保存しています…',97);
+    else prefShowTurnLoading('対戦・調査を順番に処理中','代表の行動を順位順に処理しています…',35);
     if(tx.stage==='matching'){
       const playerAction=tx.resumePlayerAction||tx.actions?.[PREF_PLAYER_ID]||{type:'investigate',target:prefTurnOrderRegions().find(r=>r.id!==PREF_PLAYER_ID)?.id||PREF_PLAYER_ID,topic:'cards'};
       const ready=await prefPrepareTurnActionsInRankOrder(playerAction,tx);
@@ -3090,7 +3181,7 @@ async function prefContinueTurn() {
           tx.pairIndex=Math.max(0,tx.pairs.indexOf(pair));tx.currentPairId=pair.id;
           if(!tx.playerLoadoutConfirmed){await prefShowRankedPlayerBattlePreview(pair,tx);return;}
           if(pair.status==='player-running'&&!campaignBattlePending)pair.status='pending';
-          tx.stage='battles';prefLaunchPlayerBattle(pair);return;
+          tx.stage='battles';prefHideTurnLoading();prefLaunchPlayerBattle(pair);return;
         }
         pair.status='simulating';step.status='processing';tx.currentPairId=pair.id;tx.pairIndex=Math.max(0,tx.pairs.indexOf(pair));
         await prefSave();
@@ -3136,12 +3227,17 @@ async function prefContinueTurn() {
     tx.investigationsResolved=true;tx.stage='settling';tx.currentPairId=null;
     await prefSave();await prefCompleteTurn(tx);
   })().catch(err=>{
+    prefHideTurnLoading();
     console.error('[Prefecture] turn processing error',err);
     const tx=campaignState?.turnProcessing;
     const action=tx?.actions?.[PREF_PLAYER_ID]?.type||'不明';
     const step=tx?.resolutionQueue?.[tx.resolutionIndex];
     prefShowModal('ターン処理を復旧できませんでした',`保存済みの結果は保持されています。現在の処理：${prefEsc(step?.type==='battle'?'対戦':step?.type==='investigate'?'調査':action)}／順位順 ${Number(tx?.resolutionIndex||0)+1} 件目。ゲーム画面の「ターン処理を再開する」から再開できます。<pre class="text-[10px] text-rose-200 whitespace-pre-wrap mt-2">${prefEsc(err?.stack||err?.message||String(err))}</pre>`,[{label:'閉じる',action:'close-modal',style:'slate'},{label:'保存済み処理を再開',action:'resume-turn-processing',style:'primary'}]);
-  }).finally(()=>{prefProcessingPromise=null;});
+  }).finally(()=>{
+    prefProcessingPromise=null;
+    const stage=campaignState?.turnProcessing?.stage;
+    if(!campaignState?.turnProcessing||stage==='player-preview'||stage==='awaiting-capacity')prefHideTurnLoading();
+  });
   return prefProcessingPromise;
 }
 
@@ -3318,7 +3414,8 @@ async function prefHandleClick(action,id,button) {
     prefPlayerRegion().lastLoadout=JSON.parse(JSON.stringify(loadout));campaignState.lastLoadout=JSON.parse(JSON.stringify(loadout));
     tx.playerLoadoutConfirmed=true;tx.stage='battles';tx.pairIndex=Math.max(0,tx.pairIndex||0);campaignState.draftLoadout=null;
     document.getElementById('pref-battle-selection')?.classList.add('hidden');document.getElementById('pref-turn-progress')?.classList.remove('hidden');
-    await prefSave();prefEnsurePreviewResumeButton();prefRenderDashboard();await prefContinueTurn();return;
+    prefShowTurnLoading('対戦・調査を再開中','確定した編成で対戦し、その後の代表の行動を順位順に処理しています…',35);
+    await prefSave();prefEnsurePreviewResumeButton();prefRenderDashboard();await prefYieldToBrowser();await prefContinueTurn();return;
   }
   if(action==='confirm-battle'){
     const draft=campaignState?.draftLoadout,units=prefOwnedUnits(PREF_PLAYER_ID);if(!draft||draft.active.length!==3){prefShowModal('出撃メンバーを確認','出撃するキャラカードを3体選択してください。',[{label:'戻る',action:'close-modal',style:'primary'}]);return;}
@@ -3345,6 +3442,7 @@ document.addEventListener('click',event=>{
   const action=button.dataset.prefAction,id=button.dataset.id;
   if(button.disabled)return;
   prefHandleClick(action,id,button).catch(err=>{
+    prefHideTurnLoading();
     console.error(`[Prefecture] action failed (${action})`,err);
     const tx=campaignState?.turnProcessing;
     const labels={'choose-battle':'対戦コマンド','confirm-battle':'対戦開始','choose-investigation':'調査コマンド','confirm-investigation':'調査実行','confirm-final-loadout':'出撃編成の確定','confirm-buy-card':'市場購入','pull-gacha':'ガチャ'};

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.56</title>
+  <title>都道府県カード戦争 v1.0.58</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     .card-aspect { aspect-ratio: 3 / 4; }
@@ -16,6 +16,14 @@
     .glow-amber { box-shadow: 0 0 15px rgba(245, 158, 11, 0.7); border-color: #f59e0b !important; }
     .glow-purple { box-shadow: 0 0 15px rgba(168, 85, 247, 0.7); border-color: #a855f7 !important; }
 
+    #pref-turn-loading-overlay { position:fixed; inset:0; z-index:110; display:flex; align-items:center; justify-content:center; padding:16px; background:rgba(2,6,23,.92); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
+    #pref-turn-loading-overlay.hidden { display:none !important; }
+    #pref-turn-loading-overlay > div { width:100%; max-width:440px; padding:24px; text-align:center; border:2px solid rgba(245,158,11,.62); border-radius:18px; background:#0f172a; box-shadow:0 24px 70px rgba(0,0,0,.6); }
+    #pref-turn-loading-spinner { width:48px; height:48px; margin:0 auto; border:4px solid #fbbf24; border-top-color:transparent; border-radius:50%; animation:pref-turn-spin .85s linear infinite; }
+    #pref-turn-loading-track { height:10px; margin-top:20px; overflow:hidden; border-radius:9999px; background:#1e293b; }
+    #pref-turn-loading-bar { height:100%; width:2%; border-radius:9999px; background:#fbbf24; transition:width .2s ease; }
+    @keyframes pref-turn-spin { to { transform: rotate(360deg); } }
+    .pref-turn-loading-spinner { animation: pref-turn-spin .85s linear infinite; }
     @keyframes pop-up {
       0% { transform: scale(0.8); opacity: 0; }
       50% { transform: scale(1.05); opacity: 1; }
@@ -307,7 +315,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.56</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.58</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -355,7 +363,7 @@
             </div>
             <div id="pref-battle-selection" class="hidden mt-4 rounded-xl border border-rose-500/40 bg-slate-950 p-3 sm:p-4"></div>
             <div id="pref-investigation-selection" class="hidden mt-4 rounded-xl border border-cyan-500/40 bg-slate-950 p-3 sm:p-4"></div>
-            <div id="pref-turn-progress" class="hidden mt-4 rounded-xl border border-amber-500/40 bg-amber-950/20 p-4"><div class="font-black text-amber-200">ターン処理中</div><div id="pref-turn-progress-text" class="text-xs text-slate-300 mt-1">AI代表の行動を処理しています…</div><div class="mt-3 h-2 bg-slate-800 rounded-full overflow-hidden"><div id="pref-turn-progress-bar" class="h-full bg-amber-400 w-1/4 transition-all"></div></div></div>
+            <div id="pref-turn-progress" class="hidden mt-4 rounded-xl border border-amber-500/40 bg-amber-950/20 p-4"><div class="font-black text-amber-200">ターン処理中</div><div id="pref-turn-progress-text" class="text-xs text-slate-300 mt-1">全47都道府県のAIが市場・ガチャ・対戦・調査方針を準備しています…</div><div class="mt-3 h-2 bg-slate-800 rounded-full overflow-hidden"><div id="pref-turn-progress-bar" class="h-full bg-amber-400 w-1/4 transition-all"></div></div></div>
           </div>
           <div class="lg:col-span-2 rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5">
             <div class="flex justify-between items-center"><h3 class="font-black text-white">今週の状況</h3><span class="text-[10px] text-slate-500">京都府</span></div>
@@ -3048,7 +3056,7 @@
         const payload = {
           format: 'prefecture-card-war-card-data',
           formatVersion: 1,
-          gameVersion: '1.0.56',
+          gameVersion: '1.0.58',
           exportedAt: exportedAt.toISOString(),
           intendedUse: 'このJSONと同じバージョンのゲームZIPを参照し、カードの性能・スキル・効果条件・組み合わせを検証する',
           imagesIncluded: false,
@@ -3071,13 +3079,13 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.56-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.58-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
         window.setTimeout(() => URL.revokeObjectURL(objectUrl), 15000);
-        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.56 ZIP と一緒にChatGPTへアップロードしてください。`);
+        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.58 ZIP と一緒にChatGPTへアップロードしてください。`);
       } catch (error) {
         console.error('[CardDataExport] カードデータの書き出しに失敗しました', error);
         alert(`カードデータの書き出しに失敗しました。\n${String(error?.message || error)}`);
