@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.62 — verified post-battle continuation and opening-synergy loadout scoring */
+/* 都道府県カード戦争 v1.0.64 —年度資金繰越・資金マイナス時の即時代表交代 */
 'use strict';
 
 let campaignState = null;
@@ -20,14 +20,14 @@ const PREF_CARD_PROFILE_CACHE = new WeakMap();
 const PREF_STATE_KEY = 'prefecture_campaign_state_v1';
 const PREF_PLAYER_ID = '京都府';
 const PREF_UNIT_LIMIT = 10;
-const PREF_MAGIC_LIMIT = 50;
+const PREF_MAGIC_LIMIT = 30;
 const PREF_RIVAL_UNIT_LIMIT = 5;
 const PREF_PLAYER_UNIT_LIMIT = 10;
 const PREF_PLAYER_RANK5_LIMIT = 4;
 const PREF_RIVAL_RANK5_LIMIT = 2;
 const PREF_MAX_BATTLE_UNITS = 5;
-const PREF_BATTLE_ACTIVE = 3;
-// Game-mode battle roster limit (active 3 + reserves up to 2). Holder limits are separate.
+const PREF_BATTLE_ACTIVE = 4;
+// Game-mode battle roster limit (active 4 + reserve up to 1). Holder limits are separate.
 const PREF_BATTLE_RANK5_LIMIT = 2;
 const PREF_CARD_LIFETIME = 52;
 const PREF_MARKET_LIFETIME = 5;
@@ -367,7 +367,7 @@ function prefPairSynergyRaw(cardA,cardB,profile) {
   }
   return Math.min(14,pair);
 }
-// 先発3枚を「強いカード3枚」ではなく、1つの勝ち筋として評価する。
+// 先発4枚を「強いカード3枚」ではなく、1つの勝ち筋として評価する。
 // 役割の数合わせだけではなく、主力が必要とする支援が実際にそろうかを評価する。
 function prefAIActiveTrioPlanEvaluation(activeCards, activeProfiles, profile) {
   const cards=(activeCards||[]).filter(Boolean),ps=(activeProfiles||cards.map(prefCardProfile));
@@ -644,7 +644,7 @@ function prefNormalizeLoadoutSelection(activeIds, reserveIds, units) {
     target.push(inst.id);seen.add(key);if(isFive)fiveCount++;
   };
   (activeIds||[]).forEach(id=>add(id,active,PREF_BATTLE_ACTIVE));
-  (reserveIds||[]).forEach(id=>add(id,reserve,2));
+  (reserveIds||[]).forEach(id=>add(id,reserve,1));
   // A legacy/invalid saved roster may exceed the shared two-★5 battle cap. If an entry is
   // rejected, promote a legal reserve into the field before searching unassigned cards.
   while(active.length<PREF_BATTLE_ACTIVE&&reserve.length){
@@ -655,15 +655,15 @@ function prefNormalizeLoadoutSelection(activeIds, reserveIds, units) {
   }
   // Fill the field first with non-★5 units while respecting the shared two-★5 battle cap.
   const remaining=(units||[]).filter(x=>!seen.has(String(x.id)));
-  while(active.length<3){let i=remaining.findIndex(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))!==5);if(i<0&&fiveCount<PREF_BATTLE_RANK5_LIMIT)i=remaining.findIndex(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))===5);if(i<0)break;const inst=remaining.splice(i,1)[0];add(inst.id,active,3);}
-  while(reserve.length<2){let i=remaining.findIndex(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))!==5);if(i<0&&fiveCount<PREF_BATTLE_RANK5_LIMIT)i=remaining.findIndex(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))===5);if(i<0)break;const inst=remaining.splice(i,1)[0];add(inst.id,reserve,2);}
+  while(active.length<PREF_BATTLE_ACTIVE){let i=remaining.findIndex(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))!==5);if(i<0&&fiveCount<PREF_BATTLE_RANK5_LIMIT)i=remaining.findIndex(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))===5);if(i<0)break;const inst=remaining.splice(i,1)[0];add(inst.id,active,PREF_BATTLE_ACTIVE);}
+  while(reserve.length<1){let i=remaining.findIndex(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))!==5);if(i<0&&fiveCount<PREF_BATTLE_RANK5_LIMIT)i=remaining.findIndex(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))===5);if(i<0)break;const inst=remaining.splice(i,1)[0];add(inst.id,reserve,1);}
   return {active,reserve};
 }
 function prefBuildAutoLoadout(units) {
   const ranked=(units||[]).slice().sort((a,b)=>{const ca=prefCardForInstance(a.id)||prefTemplate(a.templateId),cb=prefCardForInstance(b.id)||prefTemplate(b.templateId);return prefRankStars(cb)-prefRankStars(ca)||prefCardValue(cb)-prefCardValue(ca);});
   const selected=[];let fiveCount=0;
   for(const inst of ranked){const card=prefCardForInstance(inst.id)||prefTemplate(inst.templateId),five=prefRankStars(card)===5;if(five&&fiveCount>=PREF_BATTLE_RANK5_LIMIT)continue;selected.push(inst.id);if(five)fiveCount++;if(selected.length>=5)break;}
-  return prefNormalizeLoadoutSelection(selected.slice(0,3),selected.slice(3,5),units);
+  return prefNormalizeLoadoutSelection(selected.slice(0,PREF_BATTLE_ACTIVE),selected.slice(PREF_BATTLE_ACTIVE,5),units);
 }
 function prefLegalBattleUnitCount(units) {
   const cards=(units||[]).map(inst=>prefCardForInstance(inst?.id)||prefTemplate(inst?.templateId)).filter(Boolean);
@@ -1004,7 +1004,7 @@ function prefCreateNewCampaign() {
   const allUnitTemplates=templates.filter(c=>c.cardType==='unit');
   const units=allUnitTemplates.filter(c=>prefRankStars(c)>=3);
   const magics=templates.filter(c=>c.cardType==='magic');
-  if(units.length<3) { alert('ゲームモードでは★3以上のキャラカードのみ使用できます。★3以上のキャラカードを3枚以上作成してください。'); return null; }
+  if(units.length<PREF_BATTLE_ACTIVE) { alert('ゲームモードでは★3以上のキャラカードのみ使用できます。★3以上のキャラカードを4枚以上作成してください。'); return null; }
   if(!magics.length) { alert('先にマジックカードを1枚以上作成してください。'); return null; }
   // discard the old campaign copies first; never touch the created card library in IndexedDB.
   allCards=allCards.filter(c=>!c.campaignInstance);
@@ -1042,7 +1042,7 @@ function prefCreateNewCampaign() {
     state.regions[row.prefecture]=region;
     (pool.assigned[row.prefecture]||[]).forEach(inst=>{inst.ownerId=row.prefecture;inst.zone='owner';inst.acquiredAtAbs=1;inst.expiresAtAbs=1+PREF_CARD_LIFETIME;});
   }
-  // Player receives up to 50 magic cards at campaign start. If the library contains more, each extra
+  // Player receives up to 30 magic cards at campaign start. If the library contains more, each extra
   // card is queued as a pending acquisition so the player can choose which owned magic to list, just
   // like normal capacity overflow. Rivals continue to start with a small no-duplicate selection.
   state.pendingAcquisitionQueue=[];
@@ -1072,6 +1072,9 @@ async function prefLoadState() {
   campaignState=rec?.value||null;
   if(campaignState && (!campaignState.regions || !campaignState.instances)) campaignState=null;
   if(campaignState){
+    // Restore an old save safely: outstanding negative balances are resolved before
+    // any turn can advance or the next funding week can add income.
+    for(const region of Object.values(campaignState.regions))prefResolveNegativeFunds(region,'load-recovery');
     campaignState.pendingAcquisitionQueue=Array.isArray(campaignState.pendingAcquisitionQueue)?campaignState.pendingAcquisitionQueue:[];
     campaignState.pendingGachaContinueKey=campaignState.pendingGachaContinueKey||null;
     // Migrate older saves that granted every authored magic card to the player before the 50-card cap.
@@ -1224,6 +1227,9 @@ function prefBook(regionId, delta, reason='income', noAllTime=false) {
   if(reason==='market-sale')r.yearStats.marketIncome=(r.yearStats.marketIncome||0)+Math.max(0,delta);
   if(reason==='market-buy')r.yearStats.marketExpense=(r.yearStats.marketExpense||0)+Math.max(0,-delta);
   if(reason==='aid')r.yearStats.aidIncome=(r.yearStats.aidIncome||0)+Math.max(0,delta);
+  // Battle-loss is settled as one transaction (money + card loss + match record).
+  // All other money changes resolve insolvency immediately at this posting.
+  if(reason!=='battle-loss')prefResolveNegativeFunds(r,reason);
 }
 function prefApplyFundingIfNeeded() {
   if(!campaignState)return;
@@ -1256,6 +1262,10 @@ function prefExpireOwnedUnits() {
 }
 function prefOpenWeek() {
   if(!campaignState)return;
+  // Never allow the next scheduled subsidy to silently rescue a bankrupt
+  // representative, even when recovering an older saved turn.
+  for(const region of Object.values(campaignState.regions||{}))prefResolveNegativeFunds(region,'week-start');
+  if(campaignState.gameOver)return;
   prefExpireMarket(); prefExpireOwnedUnits(); prefApplyFundingIfNeeded();
   prefTurnStartAbs=prefAbsTurn();
 }
@@ -1314,8 +1324,8 @@ function prefAIQuickRosterQuality(region, unitInstances) {
   const cp=new Map(entries.map(x=>[String(x.inst.id),prefCardProfile(x.card)]));
   const base=new Map(entries.map(x=>[String(x.inst.id),prefCardIntrinsicScore(region,x.card)+prefCardStrategyScore(region,x.card)+prefCardPreferenceScore(region,x.card)+prefAIPlanFitScore(region,x.card)]));
   const combos=[];
-  for(let i=0;i<entries.length;i++)for(let j=i+1;j<entries.length;j++)for(let k=j+1;k<entries.length;k++){
-    const group=[entries[i],entries[j],entries[k]],profiles=group.map(x=>cp.get(String(x.inst.id))||prefCardProfile(x.card));
+  for(let i=0;i<entries.length;i++)for(let j=i+1;j<entries.length;j++)for(let k=j+1;k<entries.length;k++)for(let z=k+1;z<entries.length;z++){
+    const group=[entries[i],entries[j],entries[k],entries[z]],profiles=group.map(x=>cp.get(String(x.inst.id))||prefCardProfile(x.card));
     if(profiles.filter(x=>x.rank===5).length>PREF_BATTLE_RANK5_LIMIT)continue;
     let score=group.reduce((sum,x)=>sum+(base.get(String(x.inst.id))||0),0);
     for(let a=0;a<group.length;a++)for(let b=a+1;b<group.length;b++)score+=prefPairSynergyRaw(group[a].card,group[b].card,profile)*(0.88+0.12*profile.cardIQ/100)*1.25;
@@ -1335,7 +1345,7 @@ function prefAIQuickRosterQuality(region, unitInstances) {
       return value(b)-value(a);
     });
     const legalReserves=[];
-    for(const item of reserves){if(legalReserves.length>=2)break;if(item.p.rank===5&&reserveFiveCount>=PREF_BATTLE_RANK5_LIMIT)continue;legalReserves.push(item);if(item.p.rank===5)reserveFiveCount++;}
+    for(const item of reserves){if(legalReserves.length>=1)break;if(item.p.rank===5&&reserveFiveCount>=PREF_BATTLE_RANK5_LIMIT)continue;legalReserves.push(item);if(item.p.rank===5)reserveFiveCount++;}
     score+=legalReserves.reduce((sum,x)=>sum+x.base*0.12+Math.min(2,x.p.deployPassiveValue*0.25),0);
     combos.push({score,plan});
   }
@@ -1383,7 +1393,7 @@ function prefAcquireInstance(regionId, instId, options={}) {
         return 'pending';
       }
       const replacement=prefAiMagicReplacementChoice(region,ownedMagics,inst);
-      if(replacement===instId){prefListInstance(inst,regionId,'ai-rejected-magic');prefRecordAIThought(region,'マジック構築','新しいマジックの採用を見送り',['マジック所持上限50枚のため既存カードと比較','新カードの推定価値が最も弱い所持カードを下回った']);return true;}
+      if(replacement===instId){prefListInstance(inst,regionId,'ai-rejected-magic');prefRecordAIThought(region,'マジック構築','新しいマジックの採用を見送り',['マジック所持上限30枚のため既存カードと比較','新カードの推定価値が最も弱い所持カードを下回った']);return true;}
       const old=campaignState.instances[replacement];if(old)prefListInstance(old,regionId,'ai-magic-replacement');
     }
     prefSetInstanceOwner(inst,regionId,false);inst.expiresAtAbs=null;
@@ -1427,12 +1437,12 @@ function prefShowReplaceModal() {
   const isMagic=kind==='magic';
   if(!inst||!card){campaignState.pendingAcquisition=null;return;}
   const entries=[...owned.map(x=>({id:x.id,card:prefCardForInstance(x.id)||prefTemplate(x.templateId),incoming:false})),{id:inst.id,card,incoming:true}];
-  const title=isMagic?'マジックカードが上限50枚です':pending.reason==='rank5-limit'?'★5カードは所持上限です':'カードホルダーがいっぱいです';
+  const title=isMagic?'マジックカードが上限30枚です':pending.reason==='rank5-limit'?'★5カードは所持上限です':'カードホルダーがいっぱいです';
   const intro=pending.reason==='rank5-limit'
     ?`★5キャラ「<b class="text-amber-200">${prefEsc(card.name||'新カード')}</b>」を獲得しましたが、自分の★5所持上限は${prefFiveStarLimit(prefRegion(pending.regionId||PREF_PLAYER_ID))}枚です。★5カードだけから市場へ出品する1枚を選んでください。新カードを選ぶと新カード自体を市場へ出品します。`
     :isMagic?`新しいマジックカード「<b class="text-amber-200">${prefEsc(card.name||'新カード')}</b>」を受け取りました。マジックカードは最大${PREF_MAGIC_LIMIT}枚です。市場へ出品するカードを選んでください。新カードを選ぶと、新カード自体を出品します。`
     :`新しいキャラカード「<b class="text-amber-200">${prefEsc(card.name||'新カード')}</b>」を獲得しました。市場へ出すカードを選んでください。新しいカードを選ぶと、今回は受け取らずに市場へ出品します。`;
-  const warning=!isMagic&&allOwned.length<=3?'<div class="mt-3 rounded-lg bg-rose-950/60 border border-rose-500/40 p-3 text-xs text-rose-200">キャラカードが3枚未満になると対戦できません。先に補充してください。</div>':'';
+  const warning=!isMagic&&allOwned.length<=PREF_BATTLE_ACTIVE?'<div class="mt-3 rounded-lg bg-rose-950/60 border border-rose-500/40 p-3 text-xs text-rose-200">キャラカードが4枚未満になると対戦できません。先に補充してください。</div>':'';
   prefShowModal(title,`<p class="text-sm text-slate-300 mb-3">${intro}</p><div class="max-h-[62vh] overflow-y-auto pr-1"><div class="grid grid-cols-2 sm:grid-cols-4 gap-3">${entries.map(x=>`<button data-pref-action="replace-held" data-id="${prefEsc(x.id)}" class="min-w-0 rounded-lg border ${x.incoming?'border-amber-500 bg-amber-950/30':'border-slate-700 bg-slate-900'} p-1 hover:border-amber-400"><div class="pointer-events-none">${prefCardDisplay(x.id,{small:true})}</div><div class="text-[10px] ${x.incoming?'text-amber-200':'text-rose-300'} font-black mt-1">${x.incoming?'新カードを市場へ':'これを市場へ'}</div></button>`).join('')}</div></div>${warning}`,[]);
   document.getElementById('pref-modal-close-btn')?.classList.add('hidden');
 }
@@ -1444,7 +1454,7 @@ function prefStartNextQueuedAcquisition() {
     if(!inst||inst.zone!=='pending')continue;
     // キューに入っているカードも、表示直前に重複・所持上限を現在の状態で再判定する。
     // 先に出たキャラカードの交換が終わるまで待っていた抱き合わせマジックは、
-    // マジック所持数が50枚未満なら交換を求めず、そのまま受け取れるようにする。
+    // マジック所持数が30枚未満なら交換を求めず、そのまま受け取れるようにする。
     const result=prefAcquireInstance(PREF_PLAYER_ID,id,{reason:inst.capacityQueueReason||'gacha-bundle',deferCapacityModal:true});
     if(result==='pending'){
       // prefAcquireInstance が実際に上限超過を確認した場合だけ交換画面を出す。
@@ -1540,7 +1550,7 @@ function prefRenderDashboard() {
   ].join('');
   const battleBtn=document.querySelector('[data-pref-action="choose-battle"]');const investBtn=document.querySelector('[data-pref-action="choose-investigation"]');
   const lastBattle=p.lastBattleAbs>0 && p.lastBattleAbs===prefAbsTurn()-1;const mustBattle=(p.nonBattleStreak||0)>=3;
-  if(battleBtn){battleBtn.disabled=lastBattle;battleBtn.classList.toggle('opacity-40',battleBtn.disabled);battleBtn.classList.toggle('cursor-not-allowed',battleBtn.disabled);battleBtn.innerHTML=`<div class="text-2xl">⚔️</div><div class="font-black text-rose-200 mt-2">対戦コマンド</div><div class="text-xs text-slate-400 mt-1">先に対戦相手を決め、その後で編成を確定</div><div class="text-[10px] text-rose-300 mt-3">${lastBattle?'連戦禁止：今週は対戦できません':prefOwnedUnits(PREF_PLAYER_ID).length<3?'キャラカード3枚未満：補充せず対戦を選ぶとゲームオーバー':'4ターンに1回以上の対戦が必要'}</div>`;}
+  if(battleBtn){battleBtn.disabled=lastBattle;battleBtn.classList.toggle('opacity-40',battleBtn.disabled);battleBtn.classList.toggle('cursor-not-allowed',battleBtn.disabled);battleBtn.innerHTML=`<div class="text-2xl">⚔️</div><div class="font-black text-rose-200 mt-2">対戦コマンド</div><div class="text-xs text-slate-400 mt-1">先に対戦相手を決め、その後で編成を確定</div><div class="text-[10px] text-rose-300 mt-3">${lastBattle?'連戦禁止：今週は対戦できません':prefOwnedUnits(PREF_PLAYER_ID).length<PREF_BATTLE_ACTIVE?'キャラカード4枚未満：補充せず対戦を選ぶとゲームオーバー':'4ターンに1回以上の対戦が必要'}</div>`;}
   if(investBtn){investBtn.disabled=mustBattle;investBtn.classList.toggle('opacity-40',mustBattle);investBtn.classList.toggle('cursor-not-allowed',mustBattle);investBtn.innerHTML=`<div class="text-2xl">🔎</div><div class="font-black text-cyan-200 mt-2">調査コマンド</div><div class="text-xs text-slate-400 mt-1">他の代表のカードや行動傾向を調査</div><div class="text-[10px] text-cyan-300 mt-3">${mustBattle?'3ターン連続未対戦：今週は対戦必須':'成功率は相手とのランク差で変動'}</div>`;}
   const summary=document.getElementById('pref-week-summary');
   if(summary){summary.innerHTML=`<div class="flex justify-between gap-2"><span class="text-slate-400">代表</span><b class="text-white">${prefEsc(p.repName)}</b></div><div class="flex justify-between gap-2"><span class="text-slate-400">所持キャラ</span><b class="text-amber-200">${units.length} / 10枚</b></div><div class="flex justify-between gap-2"><span class="text-slate-400">マジック</span><b class="text-violet-200">${magics.length}枚</b></div><div class="flex justify-between gap-2"><span class="text-slate-400">連続未対戦</span><b class="${mustBattle?'text-rose-300':'text-white'}">${p.nonBattleStreak||0} / 3ターン</b></div><div class="flex justify-between gap-2"><span class="text-slate-400">通算成績</span><b class="text-white">${p.allTimeStats.wins||0}勝 ${p.allTimeStats.draws||0}分 ${p.allTimeStats.losses||0}敗</b></div><p class="text-[10px] leading-relaxed text-slate-500 border-t border-slate-800 pt-2 mt-2">次年度の資金提供額は、今年度最終ランキングのランクにより決定します。</p>`;}
@@ -1746,7 +1756,7 @@ function prefOpenCardDetail(id) {
 function prefShowReplaceListingConfirm(id) {
   const inst=campaignState?.instances?.[id];const card=prefCardForInstance(id);if(!inst||!card)return;
   const count=inst.kind==='unit'?prefOwnedUnits(PREF_PLAYER_ID).length:prefOwnedMagics(PREF_PLAYER_ID).length;
-  const warning=inst.kind==='unit'&&count<=3?'<div class="mt-3 rounded-lg bg-rose-950/60 border border-rose-500/40 p-3 text-xs text-rose-200">キャラカードが3枚未満になると対戦できません。対戦コマンドを選ぶとゲームオーバーになります。先にガチャや市場で補充してください。</div>':'';
+  const warning=inst.kind==='unit'&&count<=PREF_BATTLE_ACTIVE?'<div class="mt-3 rounded-lg bg-rose-950/60 border border-rose-500/40 p-3 text-xs text-rose-200">キャラカードが4枚未満になると対戦できません。対戦コマンドを選ぶとゲームオーバーになります。先にガチャや市場で補充してください。</div>':'';
   prefShowModal('カードを市場へ出品',`<div class="flex flex-col sm:flex-row gap-4 items-start"><div class="w-36 sm:w-44 shrink-0 mx-auto sm:mx-0">${prefCardDisplay(id,{small:true})}</div><div class="min-w-0 w-full"><div class="font-black text-white">${prefEsc(card.name)}</div><div class="text-sm text-emerald-200 mt-2">出品価格：${prefFormatMoney(prefCardValue(card))}</div><p class="text-xs text-slate-400 mt-2">出品中はキャラカードの所持期限が進みません。5ターン以内に購入されなければ、キャラはガチャへ戻り、マジックは市場から消えます。</p>${warning}</div></div>`,[{label:'キャンセル',action:'close-modal',style:'slate'},{label:'出品する',action:'confirm-list-card',id,style:'primary'}]);
 }
 function prefListPlayerCard(id) {
@@ -1851,18 +1861,18 @@ async function prefPullGacha(key) {
 function prefShowBattleSelection(finalizing=false) {
   if(!campaignState)return;
   const p=prefPlayerRegion();const units=prefOwnedUnits(PREF_PLAYER_ID);
-  if(units.length<3){prefTriggerGameOver('キャラカードが3枚未満の状態で対戦コマンドを選択しました。');return;}
-  if(!prefCanFormLegalBattleSquad(units)){prefShowModal('先発メンバーが不足しています','現在の所持カードでは、ゲームモードの★5編成上限を守って先発3体を組めません。★5以外のキャラカードを補充するか、★5カードを市場へ出品してください。',[{label:'閉じる',action:'close-modal',style:'primary'}]);return;}
+  if(units.length<PREF_BATTLE_ACTIVE){prefTriggerGameOver('キャラカードが4枚未満の状態で対戦コマンドを選択しました。');return;}
+  if(!prefCanFormLegalBattleSquad(units)){prefShowModal('先発メンバーが不足しています','現在の所持カードでは、ゲームモードの★5編成上限を守って先発4体を組めません。★5以外のキャラカードを補充するか、★5カードを市場へ出品してください。',[{label:'閉じる',action:'close-modal',style:'primary'}]);return;}
   if(p.lastBattleAbs>0 && p.lastBattleAbs===prefAbsTurn()-1){prefShowModal('連戦禁止','前週に対戦したため、今週は対戦コマンドを選べません。',[{label:'了解',action:'close-modal',style:'primary'}]);return;}
   const provisional=finalizing?(campaignState.turnProcessing?.actions?.[PREF_PLAYER_ID]?.loadout||p.lastLoadout||{}):(p.lastLoadout||{});
   let active=(provisional.active||[]).filter(id=>units.some(x=>x.id===id));let reserve=(provisional.reserve||[]).filter(id=>units.some(x=>x.id===id)&&!active.includes(id));
-  if(active.length!==3){const auto=prefBuildAutoLoadout(units);active=auto.active;reserve=auto.reserve;}
+  if(active.length!==PREF_BATTLE_ACTIVE){const auto=prefBuildAutoLoadout(units);active=auto.active;reserve=auto.reserve;}
   ({active,reserve}=prefNormalizeLoadoutSelection(active,reserve,units));
   const box=document.getElementById('pref-battle-selection');box.classList.remove('hidden');document.getElementById('pref-investigation-selection')?.classList.add('hidden');
   if(finalizing){document.getElementById('pref-command-panel')?.classList.remove('hidden');document.getElementById('pref-turn-progress')?.classList.add('hidden');document.getElementById('pref-pending-battle-panel')?.classList.add('hidden');document.getElementById('campaign-preview-resume')?.classList.add('hidden');}
   const pair=finalizing?(campaignState.turnProcessing?.pairs||[]).find(pair=>pair.a===PREF_PLAYER_ID||pair.b===PREF_PLAYER_ID):null;
   const rivalId=pair?(pair.a===PREF_PLAYER_ID?pair.b:pair.a):null;const rival=rivalId?prefRegion(rivalId):null;
-  box.innerHTML=`<div class="flex flex-wrap justify-between gap-2 items-start"><div><h3 class="text-lg font-black text-rose-200">${finalizing?'対戦前の最終編成を確定':'対戦用の5枚を選出'}</h3><p class="text-xs text-slate-400 mt-1">${finalizing?`対戦相手：${prefEsc(rival?.prefecture||'決定済みの代表')}。出撃3体と控え2体までを選び、この編成で対戦を開始します。`:'出撃3体を必ず選択。残り2枚までは控えにできます。'} カードをタップして役割を変更できます。</p></div><button data-pref-action="cancel-command" class="px-3 py-2 bg-slate-800 rounded-lg text-xs font-bold">${finalizing?'編成を戻す':'キャンセル'}</button></div><div id="pref-loadout-counter" class="mt-3 text-xs font-black text-amber-200"></div><div id="pref-loadout-list" class="grid grid-cols-3 sm:grid-cols-5 gap-2 mt-3"></div><div class="flex flex-wrap gap-2 mt-4"><button data-pref-action="auto-loadout" class="px-4 py-3 rounded-lg bg-slate-800 text-xs font-black">自動選出</button><button data-pref-action="${finalizing?'confirm-final-loadout':'confirm-battle'}" class="flex-1 py-3 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-black text-sm">${finalizing?'この編成を確定して対戦開始':'仮編成で対戦相手を決定'}</button></div>${finalizing?'<p class="text-[10px] text-amber-200 mt-2">対戦相手は確定済みです。ここで編成を確定すると戦闘が始まります。</p>':'<p class="text-[10px] text-slate-500 mt-2">対戦相手が決まった後に、編成を変更して最終確定できます。</p>'}`;
+  box.innerHTML=`<div class="flex flex-wrap justify-between gap-2 items-start"><div><h3 class="text-lg font-black text-rose-200">${finalizing?'対戦前の最終編成を確定':'対戦用の5枚を選出'}</h3><p class="text-xs text-slate-400 mt-1">${finalizing?`対戦相手：${prefEsc(rival?.prefecture||'決定済みの代表')}。出撃4体と控え1体までを選び、この編成で対戦を開始します。`:'出撃4体を必ず選択。残り1枚まで控えにできます。'} カードをタップして役割を変更できます。</p></div><button data-pref-action="cancel-command" class="px-3 py-2 bg-slate-800 rounded-lg text-xs font-bold">${finalizing?'編成を戻す':'キャンセル'}</button></div><div id="pref-loadout-counter" class="mt-3 text-xs font-black text-amber-200"></div><div id="pref-loadout-list" class="grid grid-cols-3 sm:grid-cols-5 gap-2 mt-3"></div><div class="flex flex-wrap gap-2 mt-4"><button data-pref-action="auto-loadout" class="px-4 py-3 rounded-lg bg-slate-800 text-xs font-black">自動選出</button><button data-pref-action="${finalizing?'confirm-final-loadout':'confirm-battle'}" class="flex-1 py-3 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-black text-sm">${finalizing?'この編成を確定して対戦開始':'仮編成で対戦相手を決定'}</button></div>${finalizing?'<p class="text-[10px] text-amber-200 mt-2">対戦相手は確定済みです。ここで編成を確定すると戦闘が始まります。</p>':'<p class="text-[10px] text-slate-500 mt-2">対戦相手が決まった後に、編成を変更して最終確定できます。</p>'}`;
   campaignState.draftLoadout={active,reserve};prefRenderLoadout();
 }
 function prefRenderLoadout() {
@@ -1873,20 +1883,20 @@ function prefRenderLoadout() {
     const card=prefCardForInstance(inst.id);const label=pos==='active'?'出撃':pos==='reserve'?'控え':'未選択';const cls=pos==='active'?'border-rose-400 bg-rose-950/40':pos==='reserve'?'border-cyan-400 bg-cyan-950/40':'border-slate-700 bg-slate-900';
     return `<button data-pref-action="toggle-loadout" data-id="${prefEsc(inst.id)}" class="rounded-xl border-2 ${cls} p-1 text-left min-w-0"><div class="pointer-events-none">${prefCardDisplay(inst.id,{small:true})}</div><div class="mt-1 text-center text-[10px] font-black ${pos==='active'?'text-rose-200':pos==='reserve'?'text-cyan-200':'text-slate-500'}">${label}</div><div class="text-[9px] text-slate-500 text-center">${prefFormatMoney(prefCardValue(card))}</div></button>`;
   }).join('');
-  const count=document.getElementById('pref-loadout-counter');if(count){count.innerHTML=`出撃 ${draft.active.length}/3　／　控え ${draft.reserve.length}/2　／　所持 ${units.length}/10　／　選出中の★5 ${prefCountFiveStarIds([...draft.active,...draft.reserve],units)}/${PREF_BATTLE_RANK5_LIMIT}${prefPendingNotice?`<span class="block text-rose-300 mt-1">${prefEsc(prefPendingNotice)}</span>`:''}`;prefPendingNotice='';}
+  const count=document.getElementById('pref-loadout-counter');if(count){count.innerHTML=`出撃 ${draft.active.length}/4　／　控え ${draft.reserve.length}/1　／　所持 ${units.length}/10　／　選出中の★5 ${prefCountFiveStarIds([...draft.active,...draft.reserve],units)}/${PREF_BATTLE_RANK5_LIMIT}${prefPendingNotice?`<span class="block text-rose-300 mt-1">${prefEsc(prefPendingNotice)}</span>`:''}`;prefPendingNotice='';}
 }
 function prefToggleLoadout(id) {
   const draft=campaignState?.draftLoadout;if(!draft)return;
   if(draft.active.includes(id)){
-    draft.active=draft.active.filter(x=>x!==id);if(draft.reserve.length<2)draft.reserve.push(id);
+    draft.active=draft.active.filter(x=>x!==id);if(draft.reserve.length<1)draft.reserve.push(id);
   }else if(draft.reserve.includes(id)){
     draft.reserve=draft.reserve.filter(x=>x!==id);
   }else {
     const units=prefOwnedUnits(PREF_PLAYER_ID),candidate=prefCardForInstance(id)||prefTemplate(campaignState.instances[id]?.templateId);
     if(prefRankStars(candidate)===5&&prefCountFiveStarIds([...draft.active,...draft.reserve],units)>=PREF_BATTLE_RANK5_LIMIT){prefPendingNotice=`ゲームモードのデッキに入れられる★5キャラは${PREF_BATTLE_RANK5_LIMIT}体までです。`;prefRenderLoadout();return;}
-    if(draft.active.length<3){draft.active.push(id);}
-    else if(draft.reserve.length<2){draft.reserve.push(id);}
-    else {prefPendingNotice='出撃3体と控え2体まで選択できます。';}
+    if(draft.active.length<PREF_BATTLE_ACTIVE){draft.active.push(id);}
+    else if(draft.reserve.length<1){draft.reserve.push(id);}
+    else {prefPendingNotice='出撃4体と控え1体まで選択できます。';}
   }
   prefRenderLoadout();
 }
@@ -2007,11 +2017,11 @@ function prefAiUnitReserveFloor(region) {
   const owned=prefOwnedUnits(region?.id).length;
   // 資金の半分を固定で抱え込むと、S/Aランクでも強力なカードへ投資できない。
   // 年間支援額は目安として残しつつ、実残高の15%程度をソフトな予備費にする。
-  // 所持3枚未満の緊急補充では資金不足による行き詰まりを避ける。
+  // 所持4枚未満の緊急補充では資金不足による行き詰まりを避ける。
   const funding=Number(PREF_FUNDING_BY_TIER[region?.supportTier||region?.tier||'E']||PREF_FUNDING_BY_TIER.E)||0;
   const rankReserve=funding*0.15;
   const cashReserve=Math.min(funds*0.15,rankReserve);
-  const emergencyFloor=owned<3?Math.min(2000000,funds*0.08):Math.min(3000000,funds*0.05);
+  const emergencyFloor=owned<PREF_BATTLE_ACTIVE?Math.min(2000000,funds*0.08):Math.min(3000000,funds*0.05);
   return Math.min(funds,Math.max(cashReserve,emergencyFloor));
 }
 function prefAiCanBuyMarketUnit(region,instance,utility=null) {
@@ -2023,7 +2033,7 @@ function prefAiCanBuyMarketUnit(region,instance,utility=null) {
   if(prefOwnedInstancesAny().some(x=>String(x.templateId)===String(instance.templateId)&&x.ownerId!==region.id&&!x.copyException&&!instance.copyException))return false;
   const floor=prefAiUnitReserveFloor(region);
   if(owned.length>=3&&funds-price<floor)return false;
-  if(owned.length<3&&funds-price<0)return false;
+  if(owned.length<PREF_BATTLE_ACTIVE&&funds-price<0)return false;
   if(utility!=null&&owned.length<5&&utility<-3&&prefAiRosterComplementBonus(region,card)<7)return false;
   if(utility!=null&&owned.length<5&&prefRankStars(card)<=3&&owned.some(x=>prefRankStars(prefCardForInstance(x.id)||prefTemplate(x.templateId))>=4)&&prefAiRosterComplementBonus(region,card)<7)return false;
   if(utility!=null&&owned.length>=5&&!prefAiMarketUpgradeQualifies(region,instance,utility))return false;
@@ -2050,7 +2060,7 @@ function prefAiChooseGachaTier(region,prioritizeQuality=false) {
   if(eligibleB&&funds>=PREF_GACHA.B.price+floor)return 'B';
   // Preserve working capital when three legal starters already exist. Only a genuinely
   // unplayable squad (fewer than 3 cards) can spend down to the last affordable pull.
-  if(funds>=PREF_GACHA.C.price+floor||prefOwnedUnits(region.id).length<3&&funds>=PREF_GACHA.C.price)return 'C';
+  if(funds>=PREF_GACHA.C.price+floor||prefOwnedUnits(region.id).length<PREF_BATTLE_ACTIVE&&funds>=PREF_GACHA.C.price)return 'C';
   return null;
 }
 function prefAiShouldPrioritizeQualityGacha(region, unitsOverride=null, eligibleOverride=null) {
@@ -2132,7 +2142,7 @@ function prefAiMarketUtility(region,instance,baselineQuality=null) {
   const candidateScore=prefCardIntrinsicScore(region,card)+prefCardStrategyScore(region,card)+prefCardPreferenceScore(region,card)+prefCardSynergyScore(region,card)+prefAIPlanFitScore(region,card)+complement;
   let improvement=0,compositionDelta=0;
   if(instance.kind==='unit'){
-    if(ownUnits.length<3) improvement=22+candidateScore*0.30+complement*0.35;
+    if(ownUnits.length<PREF_BATTLE_ACTIVE) improvement=22+candidateScore*0.30+complement*0.35;
     else if(ownUnits.length<5){
       const avg=ownUnits.reduce((sum,x)=>sum+scoreOf(x),0)/Math.max(1,ownUnits.length);
       // Missing roster slots are strategically valuable; also evaluate whether the card closes a synergy gap.
@@ -2264,7 +2274,7 @@ function prefAiTryEconomy(region) {
     const price=prefValueFromInstance(inst),seller=inst.sellerRegionId;
     const reasons=prefAiMarketReasons(region,inst);
     reasons.push(`所持キャラ${currentUnits.length}/5枚の不足を補い、シナジー効用${best.utility.toFixed(1)}・価格${prefFormatMoney(price)}・購入後資金を比較`);
-    if(region.aiMemory?.rebuildPending?.status==='pending')reasons.push('敗北後の再構築中：単なる穴埋めではなく、交換後の先発3枚の勝ち筋と控えまで比較');
+    if(region.aiMemory?.rebuildPending?.status==='pending')reasons.push('敗北後の再構築中：単なる穴埋めではなく、交換後の先発4枚の勝ち筋と控えまで比較');
     prefBook(region.id,-price,'market-buy');if(seller)prefBook(seller,price,'market-sale');
     prefSetInstanceOwner(inst,region.id,true);inst.expiresAtAbs=prefAbsTurn()+PREF_CARD_LIFETIME;
     prefRecordAIThought(region,'カード購入',`市場で「${card?.name||'キャラカード'}」を購入`,reasons,{cardName:card?.name,price,utility:best.utility,rosterBefore:currentUnits.length,rosterAfter:prefOwnedUnits(region.id).length});
@@ -2449,8 +2459,8 @@ function prefAiTryEconomy(region) {
   if(rebuild?.status==='pending'&&prefOwnedUnits(region.id).length>=5){
     prefRecordAIThought(region,'敗北後の再構築','敗北とカード損失を受けて編成を再評価',[
       `前回の敗北で失ったカード：${(rebuild.destroyedCards||[]).map(x=>x.name||'キャラカード').join('、')||'記録なし'}`,
-      '補充枠を埋めるだけでなく、先発3枚の勝ち筋・AP需要・役割相性を再評価',
-      '単体性能だけでなく、交換後の最良の先発3枚と控え2枚を比較',
+      '補充枠を埋めるだけでなく、先発4枚の勝ち筋・AP需要・役割相性を再評価',
+      '単体性能だけでなく、交換後の最良の先発4枚と控え1枚を比較',
       `資金残高：${prefFormatMoney(region.funds||0)}。購入は勝ち筋の改善と購入後の資金を併せて判断`
     ],{opponentId:rebuild.opponentId||null,destroyedCards:rebuild.destroyedCards||[],funds:Number(region.funds)||0,rosterNames:prefOwnedUnits(region.id).map(x=>(prefCardForInstance(x.id)||prefTemplate(x.templateId))?.name||'キャラ')});
     rebuild.status='evaluated';rebuild.evaluatedAtAbs=prefAbsTurn();
@@ -2857,11 +2867,11 @@ async function prefBeginTurn(playerAction) {
   if(playerAction.type==='investigate'&&(p.nonBattleStreak||0)>=3){prefShowModal('対戦が必要です','3ターン連続で対戦していないため、今週は対戦コマンドを選択してください。',[{label:'了解',action:'close-modal'}]);return;}
   if(playerAction.type==='battle'){
     const owned=prefOwnedUnits(PREF_PLAYER_ID);
-    if(owned.length<3){await prefTriggerGameOver('キャラカードが3枚未満の状態で対戦コマンドを選択しました。');return;}
-    if(!prefCanFormLegalBattleSquad(owned)){prefShowModal('先発メンバーが不足しています','現在の所持カードでは、★5編成上限を守って先発3体を組めません。★5以外のキャラカードを補充するか、★5カードを市場へ出品してください。',[{label:'閉じる',action:'close-modal',style:'primary'}]);return;}
+    if(owned.length<PREF_BATTLE_ACTIVE){await prefTriggerGameOver('キャラカードが4枚未満の状態で対戦コマンドを選択しました。');return;}
+    if(!prefCanFormLegalBattleSquad(owned)){prefShowModal('先発メンバーが不足しています','現在の所持カードでは、★5編成上限を守って先発4体を組めません。★5以外のキャラカードを補充するか、★5カードを市場へ出品してください。',[{label:'閉じる',action:'close-modal',style:'primary'}]);return;}
     const requested=playerAction.loadout||prefBuildAutoLoadout(owned);
     const normalized=prefNormalizeLoadoutSelection(requested.active||[],requested.reserve||[],owned);
-    if(normalized.active.length!==PREF_BATTLE_ACTIVE){prefShowModal('出撃メンバーを確認','保存された編成を有効な出撃3体に修復できませんでした。編成を選び直してください。',[{label:'閉じる',action:'close-modal',style:'primary'}]);return;}
+    if(normalized.active.length!==PREF_BATTLE_ACTIVE){prefShowModal('出撃メンバーを確認','保存された編成を有効な出撃4体に修復できませんでした。編成を選び直してください。',[{label:'閉じる',action:'close-modal',style:'primary'}]);return;}
     playerAction={...playerAction,loadout:normalized};
   }
   const tx={id:generateUniqueId('prefturn'),year:campaignState.year,week:campaignState.week,absoluteTurn:prefAbsTurn(),stage:'matching',actions:{[PREF_PLAYER_ID]:playerAction},pairs:[],pairIndex:0,unmatched:null,investigationResult:null,startedAt:Date.now()};
@@ -2951,7 +2961,7 @@ function prefEstimateBuildScenarios(region,activeCards,reserveCards,magicCards) 
   if(attackers>0&&roleDefenders===0)sustainScore-=0.8;
   if(attackers>0&&frontlineDefenders>0)sustainScore+=1.4;
   if(highCost>0&&apSupply===0)sustainScore-=0.6;
-  if(active.length<3)sustainScore-=Math.max(0,3-active.length)*2;
+  if(active.length<PREF_BATTLE_ACTIVE)sustainScore-=Math.max(0,PREF_BATTLE_ACTIVE-active.length)*2;
 
   // Situation C: the planned chain actually has setup/payoff cards and enough active slots.
   let chain=0;
@@ -3076,7 +3086,7 @@ function prefOpeningKit(card) {
 }
 function prefConcreteOpeningSynergy(cards, kits) {
   const trio=(cards||[]).filter(Boolean),ks=kits||trio.map(prefOpeningKit);
-  if(trio.length!==3)return {score:-10,reasons:['先発3体が不足']};
+  if(trio.length!==PREF_BATTLE_ACTIVE)return {score:-10,reasons:['先発4体が不足']};
   let score=0;const reasons=[];
   const attrs=trio.map(c=>[String(c.mainAttr||''),...(Array.isArray(c.subAttrs)?c.subAttrs:[])]);
   const setups=new Set(ks.flatMap(k=>k.setups));
@@ -3118,7 +3128,7 @@ function prefConcreteOpeningSynergy(cards, kits) {
   if(openingTeamBuffs>=2)score+=Math.min(13,(openingTeamBuffs-1)*5);
   const hasDamage=ks.some(k=>k.offense>=2.3),hasAp=ks.some(k=>k.ap>=2.0);
   const hasSupport=ks.some(k=>k.support>=2.5),hasSustain=ks.some(k=>k.sustain>=2.6);
-  for(let i=0;i<3;i++){
+  for(let i=0;i<PREF_BATTLE_ACTIVE;i++){
     const card=trio[i],k=ks[i],skills=Array.isArray(card.skills)?card.skills:[];
     const needs=k.conditions||[];
     for(const condition of needs){
@@ -3153,7 +3163,7 @@ function prefRivalQualityRosterUnits(region, units) {
   const strong=roster.filter(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))>=4);
   const strongFiveCount=strong.filter(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))===5).length;
   const legalStrongCount=strong.length-strongFiveCount+Math.min(strongFiveCount,PREF_BATTLE_RANK5_LIMIT);
-  // Only apply the quality floor when it still leaves three legal starters under the ★5 cap.
+  // Only apply the quality floor when it still leaves four legal starters under the ★5 cap.
   // If there are too many ★5s and not enough ★4 cards, keep the full roster as fallback material.
   return legalStrongCount>=PREF_BATTLE_ACTIVE?strong:roster.slice();
 }
@@ -3165,18 +3175,18 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
   const cards=rosterUnits.map(x=>({inst:x,card:cardById(x.id)})).filter(x=>x.card);
   const mags=prefOwnedMagics(regionId).map(x=>cardById(x.id)).filter(Boolean);
   const opponentIntel=opponentId?prefGetOpponentIntel(region,opponentId):null;
-  if(cards.length<=3){
+  if(cards.length<=PREF_BATTLE_ACTIVE){
     const active=cards.map(x=>x.inst.id);const reserve=[];
-    prefRecordAIThought(region,'編成構築','出撃メンバーを選出',['所持キャラが3体以下のため、全員を出撃候補に設定',`カード選びの賢さ${profile.cardIQ}/100`,...(opponentIntel?.confidence>0.2?[`調査・対戦記憶を参照（信頼度${Math.round(opponentIntel.confidence*100)}%）`]:[])],{activeNames:active.map(id=>cardById(id)?.name||'キャラ'),opponentId:opponentId||null});
+    prefRecordAIThought(region,'編成構築','出撃メンバーを選出',['所持キャラが4体未満のため、全員を出撃候補に設定',`カード選びの賢さ${profile.cardIQ}/100`,...(opponentIntel?.confidence>0.2?[`調査・対戦記憶を参照（信頼度${Math.round(opponentIntel.confidence*100)}%）`]:[])],{activeNames:active.map(id=>cardById(id)?.name||'キャラ'),opponentId:opponentId||null});
     const normalized=prefNormalizeLoadoutSelection(active,reserve,rosterUnits);
     if(!prefCanFormLegalBattleSquad(rosterUnits)){
-      try { prefLog(`${region.prefecture}は★5編成上限を守って先発3体を組めないため、キャラ補充が必要です。`,'warning'); } catch(_) {}
+      try { prefLog(`${region.prefecture}は★5編成上限を守って先発4体を組めないため、キャラ補充が必要です。`,'warning'); } catch(_) {}
     }
     return normalized;
   }
   const candidateSets=[];
   const pick=(arr,start,need,chosen)=>{if(need===0){candidateSets.push([...chosen]);return;}for(let i=start;i<=arr.length-need;i++)pick(arr,i+1,need-1,[...chosen,arr[i]]);};
-  pick(cards,0,Math.min(3,cards.length),[]);
+  pick(cards,0,Math.min(PREF_BATTLE_ACTIVE,cards.length),[]);
   const scoredBuilds=[];
   const cardProfile=new Map(cards.map(x=>[String(x.inst.id),prefCardProfile(x.card)]));
   const openingKit=new Map(cards.map(x=>[String(x.inst.id),prefOpeningKit(x.card)]));
@@ -3285,7 +3295,7 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     const reserveRanked=reservePool.map(x=>({entry:x,value:reserveCandidateValue(x,selected,activeCards,activeProfiles)})).sort((a,b)=>b.value-a.value);
     const reserveEntries=[];let selectedFiveCount=rankFiveCount(selected);
     for(const item of reserveRanked){
-      if(reserveEntries.length>=2)break;
+      if(reserveEntries.length>=1)break;
       const isFive=cardProfile.get(String(item.entry.inst.id))?.rank===5;
       if(isFive&&selectedFiveCount>=PREF_BATTLE_RANK5_LIMIT)continue;
       reserveEntries.push(item.entry);if(isFive)selectedFiveCount++;
@@ -3305,7 +3315,7 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     const reserveHasFrontlineDefender=reserveProfiles.some(x=>x.tags.has('frontline_defender'));
     if(hasAttacker&&reserveHasFrontlineDefender&&!hasFrontlineDefender)score-=6.0;
     // Opportunity cost of keeping a broadly useful controller off the opening field:
-    // entry-on-KO is not equivalent to buffing/protecting all three teammates from turn 1.
+    // entry-on-KO is not equivalent to buffing/protecting all four teammates from turn 1.
     const weakestOpening=Math.min(...activeKits.map(k=>k.value));
     for(const reserveEntry of reserveEntries){
       const rk=openingKit.get(String(reserveEntry.inst.id));
@@ -3320,14 +3330,14 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     // Score only pairs actually co-deployed, with a slightly stronger emphasis on explicit synergy.
     for(let i=0;i<activeCards.length;i++)for(let j=i+1;j<activeCards.length;j++)score+=cachedPair(activeCards[i],activeCards[j])*1.28;
     mags.forEach(m=>activeCards.forEach(c=>score+=cachedPair(m,c)*0.75));
-    // Reserve pair synergy matters less than the opening three because the two reserves usually enter at different times.
-    if(reserveCards.length===2)score+=cachedPair(reserveCards[0],reserveCards[1])*0.08;
+    // Reserve pair synergy matters less than the opening four because the lone reserve enters only after a KO.
+    // Reserve has one unit, so there is no intra-reserve pair to score.
     // Keep a meaningful fallback team even if a small/old save cannot supply every role.
     if(allActiveTags.has('ap_supply')&&allActiveTags.has('heavy_cost'))score+=3.5;
     if(allActiveTags.has('healing'))score+=1.8;if(allActiveTags.has('shield_defense'))score+=1.8;
     if(activeCards.some((a,i)=>activeCards.some((b,j)=>i!==j&&prefActualStatusChain(a,b))))score+=3.0;
     const attrs=new Set(activeCards.map(c=>String(c.mainAttr||'')).filter(Boolean));
-    if(activeCards.length===3&&attrs.size===1&&profile.primaryStrategy==='attribute')score+=2.5;
+    if(activeCards.length===PREF_BATTLE_ACTIVE&&attrs.size===1&&profile.primaryStrategy==='attribute')score+=2.5;
     const buildQuality=0.50+profile.cardIQ/200;
     const scenarioEstimate=prefEstimateBuildScenarios(region,activeCards,reserveCards,mags);
     score=score*buildQuality+scenarioEstimate.mean*0.45+opponentCounterBonus(activeCards)+prefCardEstimateError(profile.cardIQ);
@@ -3342,16 +3352,16 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
   const reserve=best?.reserve||fallback?.reserve||[];
   const reservedApThresholdCards=reserve.filter(id=>prefCardProfile(cardById(id)).apThresholdPassiveValue>=3).map(id=>cardById(id)?.name||'AP条件パッシブ持ち');
   const chosenPlan=best?.openingPlan;
-  const reasons=[`カード選びの賢さ${profile.cardIQ}/100で構築候補を評価`,`主戦術「${(PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)||{}).label||'対応型'}」と副戦術を反映`,`先発3体の勝ち筋を先に評価：${chosenPlan?.title||'基礎性能と役割補完'}`,...(chosenPlan?.coreName?[`中心となる主力候補：「${chosenPlan.coreName}」`]:[]),...(chosenPlan?.reasons||[]),...(best?.concreteReasons||[]),`控えは先発3枚の完成を優先したうえで、交代後の役割補充・登場時パッシブ・追加連携を比較`,`AP条件パッシブは有用性と必要APを見て、APを温存しやすい控え配置も評価`,...(reservedApThresholdCards.length?[`AP条件パッシブを持つ控え候補：${reservedApThresholdCards.join('、')}`]:[]),`候補${candidateSets.length}案を効果解析で評価し、上位${shortlist.length}案を3つの想定戦況（速攻・長期戦・連携成立）で平均比較`];
+  const reasons=[`カード選びの賢さ${profile.cardIQ}/100で構築候補を評価`,`主戦術「${(PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)||{}).label||'対応型'}」と副戦術を反映`,`先発4体の勝ち筋を先に評価：${chosenPlan?.title||'基礎性能と役割補完'}`,...(chosenPlan?.coreName?[`中心となる主力候補：「${chosenPlan.coreName}」`]:[]),...(chosenPlan?.reasons||[]),...(best?.concreteReasons||[]),`控えは先発4枚の完成を優先したうえで、交代後の役割補充・登場時パッシブ・追加連携を比較`,`AP条件パッシブは有用性と必要APを見て、APを温存しやすい控え配置も評価`,...(reservedApThresholdCards.length?[`AP条件パッシブを持つ控え候補：${reservedApThresholdCards.join('、')}`]:[]),`候補${candidateSets.length}案を効果解析で評価し、上位${shortlist.length}案を3つの想定戦況（速攻・長期戦・連携成立）で平均比較`];
   if(opponentIntel?.confidence>0.15)reasons.push(`調査・対戦記憶の情報を対策に使用（信頼度${Math.round(opponentIntel.confidence*100)}%）`);
   prefRecordAIThought(region,'編成構築','出撃メンバーを選出',reasons,{activeNames:best?.activeNames||active.map(id=>cardById(id)?.name||'キャラ'),reserveNames:best?.reserveNames||reserve.map(id=>cardById(id)?.name||'キャラ'),apThresholdReserveNames:reservedApThresholdCards,score:best?.score,alternatives:shortlist.map(x=>({names:x.activeNames,reserveNames:x.reserveNames,roles:x.roleCoverage,score:Math.round(x.score*10)/10,scenarioMean:Math.round((x.scenarioMean||0)*10)/10,scenarios:x.scenarios,attributes:x.attrs,openingPlan:x.openingPlan,openingSkillScore:x.concreteScore})),openingPlan:chosenPlan||null,opponentId:opponentId||null,opponentIntelConfidence:opponentIntel?.confidence||0});
-  return prefNormalizeLoadoutSelection(active.slice(0,3),reserve.slice(0,2),rosterUnits);
+  return prefNormalizeLoadoutSelection(active.slice(0,PREF_BATTLE_ACTIVE),reserve.slice(0,1),rosterUnits);
 }
 function prefDefaultLoadoutFallback(regionId) {
   const units=prefOwnedUnits(regionId);const r=prefRegion(regionId);const saved=r?.lastLoadout||{};
   let active=(saved.active||[]).filter(id=>units.some(x=>x.id===id));let reserve=(saved.reserve||[]).filter(id=>units.some(x=>x.id===id)&&!active.includes(id));
-  if(active.length<Math.min(3,units.length)){const auto=prefBuildAutoLoadout(units);active=auto.active;reserve=auto.reserve;}
-  return prefNormalizeLoadoutSelection(active.slice(0,3),reserve.slice(0,2),units);
+  if(active.length<Math.min(PREF_BATTLE_ACTIVE,units.length)){const auto=prefBuildAutoLoadout(units);active=auto.active;reserve=auto.reserve;}
+  return prefNormalizeLoadoutSelection(active.slice(0,PREF_BATTLE_ACTIVE),reserve.slice(0,1),units);
 }
 function prefDefaultLoadout(regionId,opponentId=null) {
   const region=prefRegion(regionId);
@@ -3380,12 +3390,12 @@ function prefBattleOverrideForRegions(aId,bId,playerLoadout=null) {
   const selectedB=[...legalB.active,...legalB.reserve].filter(id=>battleUnitsB.some(x=>x.id===id)).slice(0,5);
   battleUnitsA.forEach(x=>{if(selectedA.length<5&&!selectedA.includes(x.id)&&prefCountFiveStarIds([...selectedA,x.id],battleUnitsA)<=PREF_BATTLE_RANK5_LIMIT)selectedA.push(x.id);});
   battleUnitsB.forEach(x=>{if(selectedB.length<5&&!selectedB.includes(x.id)&&prefCountFiveStarIds([...selectedB,x.id],battleUnitsB)<=PREF_BATTLE_RANK5_LIMIT)selectedB.push(x.id);});
-  const activeA=legalA.active.filter(id=>selectedA.includes(id)).slice(0,3);
-  while(activeA.length<Math.min(3,selectedA.length)){const id=selectedA.find(x=>!activeA.includes(x));if(!id)break;activeA.push(id);}
-  const reserveA=selectedA.filter(id=>!activeA.includes(id)).slice(0,2);
-  const activeB=legalB.active.filter(id=>selectedB.includes(id)).slice(0,3);while(activeB.length<Math.min(3,selectedB.length)){const id=selectedB.find(x=>!activeB.includes(x));if(!id)break;activeB.push(id);}const reserveB=selectedB.filter(id=>!activeB.includes(id)).slice(0,2);
+  const activeA=legalA.active.filter(id=>selectedA.includes(id)).slice(0,PREF_BATTLE_ACTIVE);
+  while(activeA.length<Math.min(PREF_BATTLE_ACTIVE,selectedA.length)){const id=selectedA.find(x=>!activeA.includes(x));if(!id)break;activeA.push(id);}
+  const reserveA=selectedA.filter(id=>!activeA.includes(id)).slice(0,1);
+  const activeB=legalB.active.filter(id=>selectedB.includes(id)).slice(0,PREF_BATTLE_ACTIVE);while(activeB.length<Math.min(PREF_BATTLE_ACTIVE,selectedB.length)){const id=selectedB.find(x=>!activeB.includes(x));if(!id)break;activeB.push(id);}const reserveB=selectedB.filter(id=>!activeB.includes(id)).slice(0,1);
   if(activeA.length!==PREF_BATTLE_ACTIVE||activeB.length!==PREF_BATTLE_ACTIVE){
-    throw new Error(`対戦編成の先発が3体に達していません（${a.prefecture||aId}: ${activeA.length}体、${b.prefecture||bId}: ${activeB.length}体）。カード所持数または★5編成上限を確認してください。`);
+    throw new Error(`対戦編成の先発が4体に達していません（${a.prefecture||aId}: ${activeA.length}体、${b.prefecture||bId}: ${activeB.length}体）。カード所持数または★5編成上限を確認してください。`);
   }
   const profileA=a.isPlayer?null:prefAIProfileForRegion(a),profileB=b.isPlayer?null:prefAIProfileForRegion(b);
   return {playerDeck:{id:`pref-${aId}`,name:`${a.prefecture}デッキ`,unitIds:selectedA,magicIds:magsA.map(x=>x.id)},enemyDeck:{id:`pref-${bId}`,name:`${b.prefecture}デッキ`,unitIds:selectedB,magicIds:magsB.map(x=>x.id)},playerActive:activeA,playerReserve:reserveA,
@@ -3404,19 +3414,42 @@ function prefRandomDestroyUnits(regionId, candidateIds) {
   destroyed.forEach(id=>{const card=prefCardForInstance(id);prefSendToGacha(campaignState.instances[id],'battle-loss');prefLog(`${prefRegion(regionId)?.prefecture||regionId}の「${card?.name||'キャラカード'}」が敗北により破壊され、ガチャへ戻りました。`,'warning');});
   return destroyed;
 }
+// Cash is carried between years. Only an actual negative balance triggers resignation;
+// zero yen is legal, and support payments never postpone an already bankrupt rival.
+function prefResolveNegativeFunds(region,reason='') {
+  if(!region||!(Number(region.funds)<0))return false;
+  if(region.isPlayer){
+    if(!campaignState.gameOver){
+      campaignState.gameOver=true;
+      campaignState.gameOverReason='所持資金がマイナスになったため、京都府代表はゲームオーバーです。';
+      prefLog('京都府の資金がマイナスとなり、即時ゲームオーバーが確定しました。','warning');
+    }
+    return true;
+  }
+  prefResignRival(region);
+  return true;
+}
 function prefResignRival(region) {
   const old=region.repName;let name=prefRandom(PREF_NAMES);let tries=0;while(name===old&&tries++<10)name=prefRandom(PREF_NAMES);
   const personality=prefRandom(PREF_PERSONALITIES);
   region.repName=name;region.personality=personality.id;region.personalityLabel=personality.name;region.personalityFocus=personality.focus;region.aiIntelligence=personality.intelligence||'normal';
   region.aiProfile=prefDefaultAIProfileForTier(region.tier,personality.id);region.aiTacticalIQ=region.aiProfile.tacticalIQ;region.aiCardIQ=region.aiProfile.cardIQ;region.aiMemory={opponents:{},decisions:[]};
   region.profileRivalId=null;region.funds=100000000;region.resignations=(region.resignations||0)+1;
+  region.lastLoadout={active:[],reserve:[]};
+  delete region._aiPendingGachaDebit;delete region._aiEconomyPhase;
   prefLog(`${region.prefecture}の代表${old}が資金マイナスで辞職。${name}が初期資金1億円で就任しました。カードと都道府県の年間成績は引き継がれます。`,'warning');
 }
 async function prefApplyBattleOutcome(aId,bId,engineResult,selectedA,selectedB,settlementId=null) {
   const a=prefRegion(aId),b=prefRegion(bId);if(!a||!b)throw new Error(`対戦結果を適用する代表が見つかりません: ${aId} / ${bId}`);
   const settlementKey=settlementId==null?'':String(settlementId);
   campaignState.settledBattles=campaignState.settledBattles&&typeof campaignState.settledBattles==='object'&&!Array.isArray(campaignState.settledBattles)?campaignState.settledBattles:{};
-  if(settlementKey&&Object.prototype.hasOwnProperty.call(campaignState.settledBattles,settlementKey))return {...campaignState.settledBattles[settlementKey],alreadyApplied:true};
+  if(settlementKey&&Object.prototype.hasOwnProperty.call(campaignState.settledBattles,settlementKey)){
+    // A saved match may have been committed just before the prior release crashed.
+    // Do not pay twice, but do finish any overdue resignation.
+    prefResolveNegativeFunds(a,'settlement-recovery');
+    prefResolveNegativeFunds(b,'settlement-recovery');
+    return {...campaignState.settledBattles[settlementKey],alreadyApplied:true};
+  }
   const ensureStats=region=>{
     region.yearStats=region.yearStats&&typeof region.yearStats==='object'?region.yearStats:prefNewStats();
     region.allTimeStats=region.allTimeStats&&typeof region.allTimeStats==='object'?region.allTimeStats:{wins:0,losses:0,draws:0,battles:0,assetMetric:0};
@@ -3475,7 +3508,9 @@ async function prefApplyBattleOutcome(aId,bId,engineResult,selectedA,selectedB,s
   // a failed match if an optional analytics function encounters malformed legacy data.
   try { prefPersistBattleMemory(aId,bId,engineResult,selectedA,selectedB,winnerId,loserId,result); }
   catch(err) { console.error('[Prefecture] could not refresh AI battle memory; result was already applied',err); }
-  if(loserId){const loser=prefRegion(loserId);if(loser&&!loser.isPlayer&&loser.funds<0){try{prefResignRival(loser);}catch(err){console.error('[Prefecture] rival resignation follow-up failed',err);}}}
+  // Mandatory settlement completed. Resign now, even if the loser has 0 cards or
+  // optional strategy/memory logging failed. The next match will see the replacement.
+  if(loserId)prefResolveNegativeFunds(prefRegion(loserId),'battle-loss');
   for(const region of [a,b])try{prefRefreshAIPlan(region,'対戦結果・主要カード損失の確認',true);}catch(err){console.error(`[Prefecture] AI plan refresh failed for ${region.id}; match result was kept`,err);}
   return {winnerId,loserId,result};
 }
@@ -3634,6 +3669,7 @@ async function prefFinalizePlayerBattle(winner) {
   }
 }
 async function prefContinueTurn() {
+  if(campaignState?.gameOver){prefHideTurnLoading();prefRenderAll();prefShowGameOverModal();return;}
   if(prefProcessingPromise)return prefProcessingPromise;
   if(!campaignState?.turnProcessing)return;
   prefProcessingPromise=(async()=>{
@@ -3680,6 +3716,7 @@ async function prefContinueTurn() {
         if(!pair){step.status='done';tx.resolutionIndex++;await saveResolutionCheckpoint();continue;}
         if(pair.pendingSettlement){
           await prefSettlePendingPlayerBattle(pair,tx);
+          if(campaignState.gameOver){await prefSave();prefHideTurnLoading();prefRenderAll();prefShowGameOverModal();return;}
           prefTurnResolutionProgress(tx);await saveResolutionCheckpoint(true);
           continue;
         }
@@ -3804,7 +3841,8 @@ async function prefCompleteTurn(tx) {
   prefCalculateRankings();
   campaignState.turnProcessing=null;
   prefLog(`第${campaignState.week}週の行動が完了しました。ランキングを更新しました。`,'info');
-  if(prefPlayerRegion().funds<0){campaignState.gameOver=true;campaignState.gameOverReason='対戦による資金移動で所持資金がマイナスになりました。';await prefSave();prefRenderAll();prefShowGameOverModal();return;}
+  prefResolveNegativeFunds(prefPlayerRegion(),'turn-end');
+  if(campaignState.gameOver){await prefSave();prefHideTurnLoading();prefRenderAll();prefShowGameOverModal();return;}
   if(campaignState.week>=52){
     const snapshot=prefCurrentRegionRankList().map(r=>({id:r.id,prefecture:r.prefecture,repName:r.repName,rankPosition:r.rankPosition,rankEndPosition:r.rankEndPosition,rankTieCount:r.rankTieCount,tier:r.tier,funds:r.funds,assetMetric:r.yearStats.assetMetric||0,winRate:prefYearWinRate(r),wins:r.yearStats.wins||0,losses:r.yearStats.losses||0,draws:r.yearStats.draws||0}));
     campaignState.yearReview={year:campaignState.year,rows:snapshot,nextFunding:Object.fromEntries(snapshot.map(r=>[r.id,PREF_FUNDING_BY_TIER[r.tier]||PREF_FUNDING_BY_TIER.E]))};
@@ -3817,15 +3855,21 @@ function prefShowYearReview() {
   const review=campaignState?.yearReview;if(!review)return;
   const rows=review.rows||[];const player=rows.find(x=>x.id===PREF_PLAYER_ID);
   const rankingRows=rows.map((r,i)=>`<div class="grid grid-cols-[2.8rem_minmax(0,1fr)_auto] sm:grid-cols-[3.3rem_minmax(0,1fr)_minmax(5.5rem,auto)_3rem] items-center gap-2 border-b border-slate-800/80 px-2 py-2 ${r.id===PREF_PLAYER_ID?'bg-amber-950/30 ring-1 ring-inset ring-amber-500/40':''}"><div class="font-black text-amber-200 text-xs">${r.rankPosition}位${r.rankTieCount>1?'同率':''}</div><div class="min-w-0"><div class="text-xs sm:text-sm font-black text-slate-100 truncate">${prefEsc(r.prefecture)}・${prefEsc(r.repName)}</div><div class="text-[10px] text-slate-500">${r.wins||0}勝 ${r.losses||0}敗 ${r.draws||0}分 · 勝率 ${((r.winRate||0)*100).toFixed(1)}%</div></div><div class="text-right"><div class="text-xs sm:text-sm font-black text-emerald-200">${prefFormatMoney(r.assetMetric||0)}</div><div class="text-[10px] text-slate-500">翌年支援 ${prefFormatMoney(review.nextFunding?.[r.id]||PREF_FUNDING_BY_TIER[r.tier]||PREF_FUNDING_BY_TIER.E)}</div></div><div class="hidden sm:flex justify-end">${prefTierBadge(r.tier)}</div></div>`).join('');
-  prefShowModal(`🏆 ${review.year}年度・決算報告`,`<div class="max-h-[78vh] overflow-y-auto pr-1"><div class="rounded-xl bg-slate-900 border border-amber-500/30 p-4"><div class="text-xs text-amber-200 font-black">京都府の年間成績</div><div class="text-3xl font-black text-white mt-1">${prefEsc(String(player?.rankPosition||47))}位${(player?.rankTieCount||1)>1?'タイ':''} / ランク${prefEsc(player?.tier||'E')}</div><div class="grid grid-cols-2 gap-3 mt-3"><div><div class="text-[10px] text-slate-500">年間獲得資産額（収入−対象支出）</div><div class="font-black text-emerald-200">${prefFormatMoney(player?.assetMetric||0)}</div></div><div><div class="text-[10px] text-slate-500">年間勝率</div><div class="font-black text-cyan-200">${((player?.winRate||0)*100).toFixed(1)}%</div><div class="text-[10px] text-slate-500">${player?.wins||0}勝 ${player?.losses||0}敗 ${player?.draws||0}分</div></div></div><div class="border-t border-slate-800 mt-3 pt-3 text-xs text-slate-300">次年度の定期資金提供：${prefFormatMoney(review.nextFunding?.[PREF_PLAYER_ID]||PREF_FUNDING_BY_TIER[player?.tier]||PREF_FUNDING_BY_TIER.E)} × 年4回（第1・14・27・40週）</div></div><div class="flex items-end justify-between gap-2 mt-4 mb-2"><h4 class="font-black text-amber-200">全国47都道府県ランキング</h4><span class="text-[10px] text-slate-500">資産額・年間勝率</span></div><div class="rounded-lg border border-slate-800 overflow-hidden"><div class="grid grid-cols-[2.8rem_minmax(0,1fr)_auto] sm:grid-cols-[3.3rem_minmax(0,1fr)_minmax(5.5rem,auto)_3rem] gap-2 px-2 py-2 bg-slate-900 text-[10px] font-black text-slate-500"><div>順位</div><div>都道府県・代表 / 年間成績</div><div class="text-right">獲得資産 / 翌年支援</div><div class="hidden sm:block text-right">ランク</div></div>${rankingRows}</div><p class="text-[10px] text-slate-500 mt-3">年間成績は次年度にリセットされます。通算成績とカード所有は引き継がれ、年度ごとのランキングは決算履歴に保存されます。</p></div>`,[{label:'次年度を開始',action:'next-year',style:'primary'}]);
+  prefShowModal(`🏆 ${review.year}年度・決算報告`,`<div class="max-h-[78vh] overflow-y-auto pr-1"><div class="rounded-xl bg-slate-900 border border-amber-500/30 p-4"><div class="text-xs text-amber-200 font-black">京都府の年間成績</div><div class="text-3xl font-black text-white mt-1">${prefEsc(String(player?.rankPosition||47))}位${(player?.rankTieCount||1)>1?'タイ':''} / ランク${prefEsc(player?.tier||'E')}</div><div class="grid grid-cols-2 gap-3 mt-3"><div><div class="text-[10px] text-slate-500">年間獲得資産額（収入−対象支出）</div><div class="font-black text-emerald-200">${prefFormatMoney(player?.assetMetric||0)}</div></div><div><div class="text-[10px] text-slate-500">年間勝率</div><div class="font-black text-cyan-200">${((player?.winRate||0)*100).toFixed(1)}%</div><div class="text-[10px] text-slate-500">${player?.wins||0}勝 ${player?.losses||0}敗 ${player?.draws||0}分</div></div></div><div class="border-t border-slate-800 mt-3 pt-3 text-xs text-slate-300">次年度の定期資金提供：${prefFormatMoney(review.nextFunding?.[PREF_PLAYER_ID]||PREF_FUNDING_BY_TIER[player?.tier]||PREF_FUNDING_BY_TIER.E)} × 年4回（第1・14・27・40週）</div></div><div class="flex items-end justify-between gap-2 mt-4 mb-2"><h4 class="font-black text-amber-200">全国47都道府県ランキング</h4><span class="text-[10px] text-slate-500">資産額・年間勝率</span></div><div class="rounded-lg border border-slate-800 overflow-hidden"><div class="grid grid-cols-[2.8rem_minmax(0,1fr)_auto] sm:grid-cols-[3.3rem_minmax(0,1fr)_minmax(5.5rem,auto)_3rem] gap-2 px-2 py-2 bg-slate-900 text-[10px] font-black text-slate-500"><div>順位</div><div>都道府県・代表 / 年間成績</div><div class="text-right">獲得資産 / 翌年支援</div><div class="hidden sm:block text-right">ランク</div></div>${rankingRows}</div><p class="text-[10px] text-slate-500 mt-3">年間成績のみ次年度にリセットします。所持資金・通算成績・カード所有はそのまま引き継ぎ、翌年度第1週の補助金は所持資金に加算します。年間ランキングは決算履歴に保存されます。</p></div>`,[{label:'次年度を開始',action:'next-year',style:'primary'}]);
 }
 async function prefNextYear() {
-  if(!campaignState?.yearReview)return;
-  const review=campaignState.yearReview;
+  if(!campaignState?.yearReview||campaignState.gameOver)return;
+  // Safety check for old saves before applying any new-year support.
+  Object.values(campaignState.regions).forEach(r=>prefResolveNegativeFunds(r,'year-transition'));
+  if(campaignState.gameOver){await prefSave();prefShowGameOverModal();return;}
   // Freeze next year's support bracket from the just-finished final ranking.
-  Object.values(campaignState.regions).forEach(r=>{r.supportTier=r.tier; r.yearStats=prefNewStats();r.lastCommand=null;r.lastCommandAbs=0;r.nonBattleStreak=0;r.lastBattleAbs=0;});
+  // Cash (r.funds) and owned cards carry over untouched; ONLY annual stats and
+  // command history are reset. Funding for week 1 is subsequently added on top.
+  Object.values(campaignState.regions).forEach(r=>{
+    r.supportTier=r.tier;r.yearStats=prefNewStats();r.lastCommand=null;r.lastCommandAbs=0;r.nonBattleStreak=0;r.lastBattleAbs=0;
+  });
   campaignState.year++;campaignState.week=1;campaignState.absoluteTurn=(campaignState.year-1)*52+1;campaignState.yearReview=null;campaignState.phase='ready';
-  prefOpenWeek();prefLog(`第${campaignState.year}年度が始まりました。前年の最終ランクに応じた資金提供が行われます。`,'success');
+  prefOpenWeek();prefLog(`第${campaignState.year}年度が始まりました。全代表の前年度末の所持資金を引き継ぎ、最終ランクに応じた第1週の補助金を上乗せしました。`,'success');
   await prefSave();prefCloseModal();prefSyncCampaignClones();prefRenderAll();switchView('prefecture');
 }
 async function prefTriggerGameOver(reason) {
@@ -3902,8 +3946,8 @@ async function prefHandleClick(action,id,button) {
   if(action==='choose-battle'){
     if(button?.disabled||campaignState?.turnProcessing)return;
     const owned=prefOwnedUnits(PREF_PLAYER_ID);
-    if(owned.length<3){await prefTriggerGameOver('キャラカードが3枚未満の状態で対戦コマンドを選択しました。');return;}
-    if(!prefCanFormLegalBattleSquad(owned)){prefShowModal('先発メンバーが不足しています','現在の所持カードでは、★5編成上限を守って先発3体を組めません。★5以外のキャラカードを補充するか、★5カードを市場へ出品してください。',[{label:'閉じる',action:'close-modal',style:'primary'}]);return;}
+    if(owned.length<PREF_BATTLE_ACTIVE){await prefTriggerGameOver('キャラカードが4枚未満の状態で対戦コマンドを選択しました。');return;}
+    if(!prefCanFormLegalBattleSquad(owned)){prefShowModal('先発メンバーが不足しています','現在の所持カードでは、★5編成上限を守って先発4体を組めません。★5以外のキャラカードを補充するか、★5カードを市場へ出品してください。',[{label:'閉じる',action:'close-modal',style:'primary'}]);return;}
     const loadout=prefDefaultLoadout(PREF_PLAYER_ID);
     await prefBeginTurn({type:'battle',loadout:{active:[...loadout.active],reserve:[...loadout.reserve]}});return;
   }
@@ -3914,10 +3958,10 @@ async function prefHandleClick(action,id,button) {
   if(action==='confirm-final-loadout'){
     const tx=campaignState?.turnProcessing;const draft=campaignState?.draftLoadout;const units=prefOwnedUnits(PREF_PLAYER_ID);
     if(tx?.stage!=='player-preview'){prefShowModal('対戦準備を確認','対戦相手の決定状態を確認できません。画面を更新して再確認してください。',[{label:'閉じる',action:'close-modal'}]);return;}
-    const active=(draft?.active||[]).filter(id=>units.some(x=>x.id===id)).slice(0,3);
-    const reserve=(draft?.reserve||[]).filter(id=>units.some(x=>x.id===id)&&!active.includes(id)).slice(0,2);
-    if(prefCountFiveStarIds([...active,...reserve],units)>PREF_BATTLE_RANK5_LIMIT){prefShowModal('★5カードの上限','ゲームモードでは出撃3体と控えを合わせて★5キャラは2体までです。編成を見直してください。',[{label:'編成に戻る',action:'close-modal',style:'primary'}]);return;}
-    if(active.length!==3){prefShowModal('出撃メンバーを確認','出撃するキャラカードを3体選択してください。',[{label:'編成に戻る',action:'close-modal',style:'primary'}]);return;}
+    const active=(draft?.active||[]).filter(id=>units.some(x=>x.id===id)).slice(0,PREF_BATTLE_ACTIVE);
+    const reserve=(draft?.reserve||[]).filter(id=>units.some(x=>x.id===id)&&!active.includes(id)).slice(0,1);
+    if(prefCountFiveStarIds([...active,...reserve],units)>PREF_BATTLE_RANK5_LIMIT){prefShowModal('★5カードの上限','ゲームモードでは出撃4体と控えを合わせて★5キャラは2体までです。編成を見直してください。',[{label:'編成に戻る',action:'close-modal',style:'primary'}]);return;}
+    if(active.length!==PREF_BATTLE_ACTIVE){prefShowModal('出撃メンバーを確認','出撃するキャラカードを4体選択してください。',[{label:'編成に戻る',action:'close-modal',style:'primary'}]);return;}
     const loadout={active,reserve};tx.actions[PREF_PLAYER_ID].loadout=JSON.parse(JSON.stringify(loadout));
     prefPlayerRegion().lastLoadout=JSON.parse(JSON.stringify(loadout));campaignState.lastLoadout=JSON.parse(JSON.stringify(loadout));
     tx.playerLoadoutConfirmed=true;tx.stage='battles';tx.pairIndex=Math.max(0,tx.pairIndex||0);campaignState.draftLoadout=null;
@@ -3926,8 +3970,8 @@ async function prefHandleClick(action,id,button) {
     await prefSave();prefEnsurePreviewResumeButton();prefRenderDashboard();await prefYieldToBrowser();await prefContinueTurn();return;
   }
   if(action==='confirm-battle'){
-    const draft=campaignState?.draftLoadout,units=prefOwnedUnits(PREF_PLAYER_ID);if(!draft||draft.active.length!==3){prefShowModal('出撃メンバーを確認','出撃するキャラカードを3体選択してください。',[{label:'戻る',action:'close-modal',style:'primary'}]);return;}
-    if(prefCountFiveStarIds([...draft.active,...draft.reserve],units)>PREF_BATTLE_RANK5_LIMIT){prefShowModal('★5カードの上限','ゲームモードでは出撃3体と控えを合わせて★5キャラは2体までです。編成を見直してください。',[{label:'戻る',action:'close-modal',style:'primary'}]);return;}
+    const draft=campaignState?.draftLoadout,units=prefOwnedUnits(PREF_PLAYER_ID);if(!draft||draft.active.length!==PREF_BATTLE_ACTIVE){prefShowModal('出撃メンバーを確認','出撃するキャラカードを4体選択してください。',[{label:'戻る',action:'close-modal',style:'primary'}]);return;}
+    if(prefCountFiveStarIds([...draft.active,...draft.reserve],units)>PREF_BATTLE_RANK5_LIMIT){prefShowModal('★5カードの上限','ゲームモードでは出撃4体と控えを合わせて★5キャラは2体までです。編成を見直してください。',[{label:'戻る',action:'close-modal',style:'primary'}]);return;}
     const chosen=[...draft.active,...draft.reserve].slice(0,5);prefPlayerRegion().lastLoadout={active:[...draft.active],reserve:[...draft.reserve]};campaignState.lastLoadout=JSON.parse(JSON.stringify(prefPlayerRegion().lastLoadout));
     document.getElementById('pref-battle-selection')?.classList.add('hidden');await prefBeginTurn({type:'battle',loadout:{active:[...draft.active],reserve:[...draft.reserve]}});return;
   }
@@ -3972,9 +4016,11 @@ openCardDetail = function(cardId, options={}) {
 // pending) and start a NEW continuation. A single ignored click used to require a page refresh.
 let prefPostBattleAdvancePromise=null;
 async function prefAdvanceAfterPlayerBattle(){
+  if(campaignState?.gameOver){prefHideTurnLoading();prefRenderAll();prefShowGameOverModal();return;}
   if(prefPostBattleAdvancePromise)return prefPostBattleAdvancePromise;
   const run=(async()=>{
     if(!campaignState?.turnProcessing){prefHideTurnLoading();prefRenderAll();return;}
+    if(campaignState.gameOver){prefHideTurnLoading();prefRenderAll();prefShowGameOverModal();return;}
     prefShowTurnLoading('残りの代表の処理を再開中','京都府の対戦結果を保持し、未処理の組み合わせから続行しています…',35);
     const earlier=prefProcessingPromise;
     if(earlier){
@@ -4016,7 +4062,7 @@ showBattleResultModal = function(winner) {
   }
   const rematch=document.getElementById('battle-result-rematch'),back=document.getElementById('battle-result-back');
   if(rematch){rematch.classList.add('hidden');rematch.onclick=null;}
-  if(back){back.classList.remove('hidden');back.innerText='次へ：残りの代表を処理';back.onclick=async()=>{
+  if(back){back.classList.remove('hidden');back.innerText=campaignState?.gameOver?'ゲームオーバーを確認':'次へ：残りの代表を処理';back.onclick=async()=>{
     // Settlement is already idempotent. The button never starts a fresh player battle.
     back.disabled=true;
     try {
