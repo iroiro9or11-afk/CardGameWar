@@ -1,5 +1,5 @@
 /*
- * 都道府県カード戦争 v1.0.48 - カード性能検証ラボ
+ * 都道府県カード戦争 v1.0.68 - カード性能検証ラボ
  * Uses the existing battle engine in isolated, temporary headless battles.
  * Results are intentionally memory-only and never saved to IndexedDB/campaign state.
  */
