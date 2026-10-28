@@ -1912,7 +1912,7 @@
         const payload = {
           format: 'prefecture-card-war-card-data',
           formatVersion: 1,
-          gameVersion: '1.0.58',
+          gameVersion: '1.0.43',
           exportedAt: exportedAt.toISOString(),
           intendedUse: 'このJSONと同じバージョンのゲームZIPを参照し、カードの性能・スキル・効果条件・組み合わせを検証する',
           imagesIncluded: false,
@@ -1935,13 +1935,13 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.62-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.51-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
         window.setTimeout(() => URL.revokeObjectURL(objectUrl), 15000);
-        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.62 ZIP と一緒にChatGPTへアップロードしてください。`);
+        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.51 ZIP と一緒にChatGPTへアップロードしてください。`);
       } catch (error) {
         console.error('[CardDataExport] カードデータの書き出しに失敗しました', error);
         alert(`カードデータの書き出しに失敗しました。\n${String(error?.message || error)}`);
@@ -3505,8 +3505,7 @@
       // 開幕の出撃ユニットは両陣営をまとめ、登場時パッシブを実効行動値順で発動する。
       runPassiveSkills('deploy');
       if (!window.__campaignHeadlessBattle) switchView('battle');
-      if(!window.__campaignHeadlessBattle){initBattleUI();document.getElementById('decision-command-panel')?.classList.remove('hidden');}
-      startTurnPhase();
+      initBattleUI(); document.getElementById('decision-command-panel')?.classList.remove('hidden'); document.getElementById('command-options-container')?.replaceChildren(); startTurnPhase();
     }
 
     function createBattleUnit(cardId, side, active=false) {
@@ -3519,8 +3518,8 @@
         mainAttr: template.mainAttr,
         subAttrs: template.subAttrs || [],
         role: isValidUnitRole(template.role) ? template.role : inferUnitRoleFromSkills(template.skills || [], template.stats || {}),
-        image: window.__campaignHeadlessBattle ? null : (getCardImage(template) || createDummyCardImage("⚔️", "#334155")),
-        imageSource: window.__campaignHeadlessBattle ? null : getCardImage(template),
+        image: getCardImage(template) || createDummyCardImage("⚔️", "#334155"),
+        imageSource: getCardImage(template),
         baseMaxHp: Number(template.stats.hp),
         maxHp: Number(template.stats.hp),
         currentHp: Number(template.stats.hp),
@@ -3635,9 +3634,6 @@
       if (!selected) { const next = getActiveUnits('player')[0]; battleState.selectedPlayerInstanceId = next?.instanceId || null; }
     }
     function renderBattleState() {
-      // National AI-vs-AI battles share the real engine but must not rebuild the interactive
-      // card DOM or decode card pictures on every one of 6+ actions per turn.
-      if(window.__campaignHeadlessBattle)return;
       document.getElementById("battle-turn-num").innerText = battleState.turn;
       document.getElementById("battle-ap").innerText = battleState.playerAp;
       document.getElementById("battle-enemy-ap").innerText = battleState.enemyAp;
@@ -5808,6 +5804,8 @@
       }).sort((a,b)=>b.score-a.score);
       const limit=Math.max(5,Math.min(9,5+Math.round(getAiTacticalIQ(side)*0.04)));
       const chosen=[],usedCards=new Set();
+      // First keep the best target for EACH unique magic (and the do-not-use option).
+      // Otherwise seven target variants of a single spell can crowd out a decisive counterspell.
       for(const row of scored){
         const key=row.c.card?String(row.c.card.id):'no-magic';
         if(!usedCards.has(key)){usedCards.add(key);chosen.push(row);if(chosen.length>=limit)break;}
@@ -5835,7 +5833,8 @@
       const base = aiPlannerCreateState(side);
       const activeIds = aiPlannerActive(base, side).sort((a,b) => aiPlannerEffectiveSpeed(b) - aiPlannerEffectiveSpeed(a)).map(u => u.instanceId);
       const iq=getAiTacticalIQ(side);
-      // Maintain future-action search while avoiding excessive deep copies in every branch.
+      // Preserve multi-action lookahead for every rival while avoiding 48*actions repeated
+      // deep copies. Search breadth varies by IQ; baseline decision safety never does.
       const beamWidth = Math.max(16,Math.min(29,16+Math.round(iq*0.13)));
       let beams = [{ state: base, plan: [], score: aiPlannerEvaluateState(base, side), adjustment:0 }];
 
@@ -7144,13 +7143,6 @@
         const u=(storyResult.reward.units||[]),m=(storyResult.reward.magics||[]);
         rewardBox.classList.remove('hidden');
         rewardBox.innerHTML=`<div class="text-xl sm:text-2xl font-black text-amber-300 mb-2">🎴 勝利報酬：新しく使用可能になったカード</div><div class="text-sm sm:text-base text-slate-200 mb-4 font-bold">キャラクター ${u.length}枚 / マジック ${m.length}枚</div><div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">${[...u.map(c=>`<div class="min-w-0"><div class="text-[10px] sm:text-xs text-cyan-300 font-black mb-1">キャラ</div>${getCardHTML({id:c.id,cardType:'unit',name:c.name,mainAttr:c.mainAttr,subAttrs:c.subAttrs,hp:c.stats?.hp||0,atk:c.stats?.atk||0,prio:c.stats?.priority??0,img:getCardImage(c)})}</div>`),...m.map(c=>`<div class="min-w-0"><div class="text-[10px] sm:text-xs text-purple-300 font-black mb-1">マジック</div>${getCardHTML({id:c.id,cardType:'magic',name:c.name,desc:c.desc,prio:c.stats?.priority??999,img:getCardImage(c)})}</div>`)].join('')||'<div class="text-slate-500 col-span-full">新規解放できるカードはありませんでした。</div>'}</div>`;
-      } else if (!isStory && battleState.campaignMode && winner === 'enemy' && rewardBox && typeof campaignState !== 'undefined') {
-        const lostIds=Array.isArray(campaignState.lastPlayerBattleDestroyedIds)?campaignState.lastPlayerBattleDestroyedIds:[];
-        const lostNames=Array.isArray(campaignState.lastPlayerBattleDestroyed)?campaignState.lastPlayerBattleDestroyed:[];
-        if(lostIds.length){
-          rewardBox.classList.remove('hidden');
-          rewardBox.innerHTML=`<div class="text-xl sm:text-2xl font-black text-rose-300 mb-2">💔 敗北により失ったカード</div><div class="text-sm sm:text-base text-slate-200 mb-4 font-bold">以下のキャラカード${lostIds.length}枚は所持から失われ、ガチャに戻りました。</div><div class="grid grid-cols-3 gap-3 sm:gap-4">${lostIds.map((id,index)=>{const inst=campaignState.instances?.[id];const card=typeof prefCardForInstance==='function'?(prefCardForInstance(id)||prefTemplate(inst?.templateId)):null;return `<div class="min-w-0"><div class="mb-1 text-center text-xs sm:text-sm font-black text-rose-200">${String(index+1)}. ${typeof prefEsc==='function'?prefEsc(lostNames[index]||card?.name||'キャラカード'):(lostNames[index]||card?.name||'キャラカード')}</div>${typeof prefCardDisplay==='function'?prefCardDisplay(id,{small:true}):''}</div>`;}).join('')}</div>`;
-        }
       }
 
       if (rematch) {

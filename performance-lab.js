@@ -1,5 +1,5 @@
 /*
- * 都道府県カード戦争 v1.0.68 - カード性能検証ラボ
+ * 都道府県カード戦争 v1.0.48 - カード性能検証ラボ
  * Uses the existing battle engine in isolated, temporary headless battles.
  * Results are intentionally memory-only and never saved to IndexedDB/campaign state.
  */
@@ -197,24 +197,24 @@
   }
 
   // Preserve random card distribution, but do not confuse random sampling with random deployment.
-  // Choose the best four active units for role coverage and synergy; keep a delayed-deploy
+  // Choose the best three active units for role coverage and synergy; keep a delayed-deploy
   // specialist in reserve when possible so its arrival passive is not wasted at battle start.
   function labArrangeRoster(roster, focalCard = null) {
-    if (!Array.isArray(roster) || roster.length <= 4) return roster || [];
+    if (!Array.isArray(roster) || roster.length <= 3) return roster || [];
     const cards = [...roster];
     const focalId = focalCard ? String(focalCard.id) : null;
     const focal = focalCard ? cards.find(c => String(c.id) === focalId) : null;
     const fp = focal ? labRoleProfile(focal) : null;
-    const targetShouldReserve = !!(fp?.delayedDeploy && cards.length > 4);
+    const targetShouldReserve = !!(fp?.delayedDeploy && cards.length > 3);
     // A battle-start/turn-start passive should not be wasted in reserve. Conversely,
     // a delayed-deployment specialist belongs in reserve. For ordinary focal cards,
     // let the role-based lineup optimizer decide whether the card is one of the best
-    // four openers; this makes the reported deployment-position distribution real
+    // three openers; this makes the reported deployment-position distribution real
     // instead of forcing every tested card into the active line in every trial.
     const targetMustStart = !!(focal && fp?.openingPassive && !targetShouldReserve);
     const combos = [];
-    for (let i=0;i<cards.length;i++) for(let j=i+1;j<cards.length;j++) for(let k=j+1;k<cards.length;k++) for(let m=k+1;m<cards.length;m++) {
-      const active = [cards[i],cards[j],cards[k],cards[m]];
+    for (let i=0;i<cards.length;i++) for(let j=i+1;j<cards.length;j++) for(let k=j+1;k<cards.length;k++) {
+      const active = [cards[i],cards[j],cards[k]];
       const focalActive = !!(focal && active.some(c => String(c.id) === focalId));
       if (targetMustStart && !focalActive) continue;
       if (targetShouldReserve && focalActive) continue;
@@ -229,10 +229,10 @@
     }
     combos.sort((a,b)=>b.score-a.score);
     let chosen = combos[0]?.active;
-    if (!chosen) chosen = cards.slice(0,4);
+    if (!chosen) chosen = cards.slice(0,3);
     const activeIds = new Set(chosen.map(c=>String(c.id)));
     let reserves = cards.filter(c=>!activeIds.has(String(c.id)));
-    // Reserve order is a real part of deployment timing. Randomize ordinary reserve
+    // Reserve 1/2 order is a real part of deployment timing. Randomize ordinary reserve
     // ordering across samples, while retaining the focal card's observed reserve position
     // in the report. This does not randomize the active/reserve decision when a passive's
     // timing requires one side of that boundary.
@@ -252,7 +252,7 @@
     if (stars === 5) {
       const star5 = allUnits.filter(card => labStars(card) === 5 && !excluded.has(String(card.id)));
       const star4 = allUnits.filter(card => labStars(card) === 4 && !excluded.has(String(card.id)));
-      // Each side uses 4 starters and 1 reserve (two ★5 and three ★4 in its five-card roster). The focal card is guaranteed to participate.
+      // Two ★5 cards and three ★4 cards per side. The focal card is guaranteed to participate.
       const otherStar5 = star5.filter(card => String(card.id) !== String(targetCard.id));
       if (star4.length < 3 || otherStar5.length < 1 || star5.length < 2) throw new Error('★5カードの検証には、作成カード一覧に★5キャラカードが合計4枚以上、★4キャラカードが6枚以上必要です（両陣営それぞれ★5を2枚・★4を3枚）。');
       const chosen5 = labPick(otherStar5, 1);
@@ -430,8 +430,8 @@
         if (skill) {
           skillBucket = labGetSkillUsageBucket(labCurrentMatch.target, action.skillIndex, skill);
           skillBucket.executedUses++;
-          apKey = 'ap';
-          apBefore = Number(unit?.ap) || 0;
+          apKey = side === 'enemy' ? 'enemyAp' : 'playerAp';
+          apBefore = Number(battleState?.[apKey]) || 0;
         }
       }
     }
@@ -444,7 +444,7 @@
       return await labOriginalExecuteUnitAction.call(this, unit, ...args);
     } finally {
       if (skillBucket && apKey) {
-        const apAfter = Number(unit?.ap) || 0;
+        const apAfter = Number(battleState?.[apKey]) || 0;
         skillBucket.apDeltaTotal += apAfter - apBefore;
       }
       labActiveActor = previousActor;
@@ -533,10 +533,10 @@
     const enemyIds = enemyRoster.map(card => card.id);
     const magicIds = [];
     const match = labFreshMetrics(targetCard.id);
-    // The chosen array order is also the deployment order: first 4 active, then reserve 1.
+    // The chosen array order is also the deployment order: first 3 active, then reserve 1/2.
     const targetRosterIndex = playerIds.findIndex(id => String(id) === String(targetCard.id));
     match.target.appearancePosition = targetRosterIndex < 0 ? 'active'
-      : targetRosterIndex < 4 ? 'active' : 'reserve1';
+      : targetRosterIndex < 3 ? 'active' : targetRosterIndex === 3 ? 'reserve1' : 'reserve2';
     // A roster's order does not make it a new matchup; count unique card sets, not permutations.
     match.opponentRosterKey = enemyIds.map(String).sort().join('|');
     labCurrentMatch = match;
@@ -550,10 +550,10 @@
       performanceLabBattleOverride = {
         playerDeck: { id: `lab_player_${Date.now()}_${iteration}`, name: '検証チーム', unitIds: playerIds, magicIds: [] },
         enemyDeck: { id: `lab_enemy_${Date.now()}_${iteration}`, name: '比較チーム', unitIds: enemyIds, magicIds: [] },
-        playerActive: playerIds.slice(0, 4),
-        playerReserve: playerIds.slice(4, 5),
-        enemyActive: enemyIds.slice(0, 4),
-        enemyReserve: enemyIds.slice(4, 5),
+        playerActive: playerIds.slice(0, 3),
+        playerReserve: playerIds.slice(3, 5),
+        enemyActive: enemyIds.slice(0, 3),
+        enemyReserve: enemyIds.slice(3, 5),
         playerName: '検証チーム',
         enemyName: 'ランダム編成AI',
         playerIntelligence: 'master',
@@ -650,7 +650,7 @@
     const winRate = wins / count;
     const winPointRate = (wins + draws * 0.5) / count;
     const totalTarget = labNewTotals();
-    const appearancePositions = { active: 0, reserve1: 0 };
+    const appearancePositions = { active: 0, reserve1: 0, reserve2: 0 };
     const skillUsage = {};
     for (const row of results) {
       const position = row.target?.appearancePosition;
@@ -814,7 +814,7 @@
         <div class="mt-5 rounded-xl border border-amber-500/30 bg-black/30 p-4"><div class="text-[10px] font-black text-amber-300">推定カード価値</div><div class="mt-1">${valueHtml}</div>${applyValueButton}<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">${labMetricCard('総合評価スコア', `${summary.combinedScore.toFixed(1)} / 100`, '絶対評価＋実測勝率')}${labMetricCard('本人が参加した試合の勝率', labPercent(summary.winRate), '勝利数 ÷ 全試合数（引き分けは勝利に含めない）')}${labMetricCard('本人の生存率', labPercent(summary.survivalRate), `${summary.wins}勝 ${summary.draws}分 ${summary.losses}敗（${summary.count}戦）`)}${labMetricCard('評価の信頼度', summary.confidence, `${summary.uniqueEnemyRosters}種類の敵編成／登録対象${summary.sameRankCount}枚`)}</div></div>
       </section>
       <section class="rounded-xl border border-slate-800 bg-slate-900 p-4"><h4 class="text-base font-black text-cyan-200 mb-3">本人の実戦貢献（1試合あたり平均）</h4><div class="grid grid-cols-2 sm:grid-cols-4 gap-2">${labMetricCard('与ダメージ', labFormatNumber(summary.averageDamageDealt), `チーム総ダメージの${(summary.damageShare * 100).toFixed(1)}%`)}${labMetricCard('撃破数', summary.averageKills.toFixed(2), '体／試合')}${labMetricCard('行動回数', summary.averageActions.toFixed(2), '回／試合')}${labMetricCard('スキル行動', summary.averageSkills.toFixed(2), '回／試合')}${labMetricCard('被ダメージ', labFormatNumber(summary.averageDamageTaken), '1試合あたり平均')}${labMetricCard('回復量', labFormatNumber(summary.averageHealing), '1試合あたり平均')}${labMetricCard('シールド付与量', labFormatNumber(summary.averageShield), '1試合あたり平均')}${labMetricCard('支援効果', summary.averageSupport.toFixed(2), '回／試合')}${labMetricCard('妨害効果', summary.averageControl.toFixed(2), '回／試合')}${labMetricCard('生存時HP割合', labPercent(summary.averageHpRatio), '試合終了時点の平均')}${labMetricCard('試合ターン数', summary.averageTurns.toFixed(2), 'ターン／試合')}${labMetricCard('受けたダメージ合計', labFormatNumber(summary.totalTarget.damageTaken), `参考：${summary.count}戦の合計`)}</div><p class="text-[10px] text-slate-500 mt-3">ダメージ・回復・シールドは戦闘中に実際に処理された数値です。支援／妨害回数は効果処理の観測数であり、すべてが勝敗を決めたことを意味するものではありません。</p></section>
-      <section class="rounded-xl border border-slate-800 bg-slate-900 p-4"><h4 class="text-base font-black text-violet-200 mb-2">登場位置の統計（編成された${summary.count}戦）</h4><p class="text-xs text-slate-400 mb-3">「先陣」は出撃枠（最初の4体）を指します。控えは5枚目の1枠のみです。試合中の交代・登場前に倒されたかどうかとは区別した、編成時点の配置割合です。</p><div class="grid grid-cols-2 gap-2">${labMetricCard('先発4枚', `${summary.appearancePositions.active}戦（${labPercent(summary.appearancePositionRates.active)}）`, '最初から場に出る4体のいずれか')}${labMetricCard('控え1枚', `${summary.appearancePositions.reserve1}戦（${labPercent(summary.appearancePositionRates.reserve1)}）`, '5枚目の控えとして配置')}</div></section>
+      <section class="rounded-xl border border-slate-800 bg-slate-900 p-4"><h4 class="text-base font-black text-violet-200 mb-2">登場位置の統計（編成された${summary.count}戦）</h4><p class="text-xs text-slate-400 mb-3">「先陣」は出撃枠（最初の3体）を指します。控えに配置された場合は、控え1・控え2のどちらから登場する編成だったかを集計します。試合中の交代・登場前に倒されたかどうかとは区別した、編成時点の配置割合です。</p><div class="grid grid-cols-1 sm:grid-cols-3 gap-2">${labMetricCard('先陣（出撃枠）', `${summary.appearancePositions.active}戦（${labPercent(summary.appearancePositionRates.active)}）`, '最初から場に出る3体のいずれか')}${labMetricCard('控え1', `${summary.appearancePositions.reserve1}戦（${labPercent(summary.appearancePositionRates.reserve1)}）`, '控えの1番目として配置')}${labMetricCard('控え2', `${summary.appearancePositions.reserve2}戦（${labPercent(summary.appearancePositionRates.reserve2)}）`, '控えの2番目として配置')}</div></section>
       ${skillDiagnosticsHtml}
       <section class="grid grid-cols-1 md:grid-cols-2 gap-3"><div class="rounded-xl border border-emerald-800/60 bg-slate-900 p-4"><h4 class="text-base font-black text-emerald-300 mb-3">強いところ・実際の貢献</h4><ul class="space-y-3">${copy.strengths.map(text => `<li class="text-sm leading-relaxed text-slate-200 flex gap-2"><span class="text-emerald-300">＋</span><span>${labEsc(text)}</span></li>`).join('')}</ul></div><div class="rounded-xl border border-rose-800/60 bg-slate-900 p-4"><h4 class="text-base font-black text-rose-300 mb-3">弱いところ・改善できそうな点</h4><ul class="space-y-3">${copy.weaknesses.map(text => `<li class="text-sm leading-relaxed text-slate-200 flex gap-2"><span class="text-rose-300">−</span><span>${labEsc(text)}</span></li>`).join('')}</ul></div></section>
       <section class="rounded-xl border border-slate-800 bg-slate-900 p-4"><h4 class="text-sm font-black text-slate-200">今回の検証条件</h4><p class="text-xs leading-relaxed text-slate-400 mt-2">合計${summary.count}戦。検証対象のランクに合わせ、作成カード一覧に登録済みの★3〜★5キャラのみでチームをランダム編成します。★5カードを検証する場合は、双方とも★5を2体・★4を3体に固定します。★3・★4カードは同ランク5体で編成します。マジックカードは一切使用しません。双方の戦術AIは最高設定です。結果は一時表示のみで、キャンペーンデータや通常戦績は変更しません。</p></section>
