@@ -3,9 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.64</title>
+  <title>都道府県カード戦争 v1.0.66</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
+    /* 4体横1列の戦闘フィールド: offline-tailwind.css(v1.0.64)にはgrid-cols-4が未収録だった。 */
+    .grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    #field-player, #field-enemy { grid-template-columns: repeat(4,minmax(0,1fr)); align-items:start; }
+    #field-player > div, #field-enemy > div { min-width:0; max-width:100%; overflow:hidden; }
+    #field-player .card-element, #field-enemy .card-element { display:flex; width:100%; min-width:0; aspect-ratio:3 / 4; }
+    #field-player .card-element img, #field-enemy .card-element img { display:block; width:100%; height:100%; object-fit:cover; }
+    #field-player .card-element > .relative, #field-enemy .card-element > .relative {flex:0 0 58%;height:58%;min-height:0;}
+    #field-player .card-element > .h-\[42\%\], #field-enemy .card-element > .h-\[42\%\] {flex:0 0 42%;height:42%;min-height:0;}
+    @media(max-width:640px){
+      #field-player > div, #field-enemy > div { padding:3px; }
+      #field-player .card-element .text-sm, #field-enemy .card-element .text-sm { font-size:10px; }
+    }
     .card-aspect { aspect-ratio: 3 / 4; }
     .square-aspect { aspect-ratio: 1 / 1; }
     .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -320,7 +332,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.64</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.66</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -499,7 +511,7 @@
               <div class="rounded border border-slate-800 bg-slate-950 px-3 py-2">
                 <div class="text-[10px] font-bold text-slate-400">ステータスから算出した推定ランク</div>
                 <div id="edit-estimated-rank" class="text-lg font-black text-amber-300">—</div>
-                <div class="text-[9px] text-slate-500">HP + 基礎攻撃力×2 + 行動値×50</div>
+                <div class="text-[9px] text-slate-500">HP÷2 + 基礎攻撃力×2 + 行動値×50</div>
               </div>
             </div>
             
@@ -509,7 +521,7 @@
             </div>
             <!-- スキル設定 -->
             <div id="unit-skills-builder" class="space-y-4 border-t border-slate-800 pt-3">
-              <h3 class="text-xs font-bold text-amber-400">スキル設定（最大4個・↑↓で順番変更）</h3>
+              <h3 class="text-xs font-bold text-amber-400">スキル設定（最大5個・↑↓で順番変更）</h3>
               <div class="skill-builder-card bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-2" data-index="1">
                 <div class="flex justify-between items-center gap-2">
                   <span class="text-xs font-bold text-amber-400">スキル 1</span>
@@ -554,7 +566,20 @@
                   <span class="text-xs font-bold text-amber-400">スキル 4</span>
                   <div class="flex items-center gap-1">
                     <button type="button" class="skill-move-up px-2 py-1 rounded bg-slate-800 text-xs" title="1つ上へ" aria-label="スキル4を上へ" onclick="moveEditorSkill(4,-1)">↑</button>
-                    <button type="button" class="skill-move-down px-2 py-1 rounded bg-slate-800 text-xs disabled:opacity-30" title="1つ下へ" aria-label="スキル4を下へ" onclick="moveEditorSkill(4,1)" disabled>↓</button>
+                    <button type="button" class="skill-move-down px-2 py-1 rounded bg-slate-800 text-xs disabled:opacity-30" title="1つ下へ" aria-label="スキル4を下へ" onclick="moveEditorSkill(4,1)">↓</button>
+                    <select class="skill-type-select bg-slate-800 text-xs rounded px-2 py-1 font-bold" onchange="toggleSkillTypeUI(this)">
+                      <option value="none">なし</option><option value="active">アクティブ</option><option value="passive">パッシブ</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="skill-form-container"></div>
+              </div>
+              <div class="skill-builder-card bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-2" data-index="5">
+                <div class="flex justify-between items-center gap-2">
+                  <span class="text-xs font-bold text-amber-400">スキル 5</span>
+                  <div class="flex items-center gap-1">
+                    <button type="button" class="skill-move-up px-2 py-1 rounded bg-slate-800 text-xs" title="1つ上へ" aria-label="スキル5を上へ" onclick="moveEditorSkill(5,-1)">↑</button>
+                    <button type="button" class="skill-move-down px-2 py-1 rounded bg-slate-800 text-xs disabled:opacity-30" title="1つ下へ" aria-label="スキル5を下へ" onclick="moveEditorSkill(5,1)" disabled>↓</button>
                     <select class="skill-type-select bg-slate-800 text-xs rounded px-2 py-1 font-bold" onchange="toggleSkillTypeUI(this)">
                       <option value="none">なし</option><option value="active">アクティブ</option><option value="passive">パッシブ</option>
                     </select>
@@ -579,10 +604,10 @@
               <div id="edit-spell-requirements" class="hidden space-y-2 border-t border-sky-900 pt-2">
                 <div class="text-[10px] font-black text-sky-200">スキルカードの使用者条件（空欄＝制限なし）</div>
                 <div class="grid grid-cols-2 gap-2">
-                  <input id="edit-spell-attr" list="registered-attributes-list" class="bg-slate-950 border border-slate-700 rounded p-2 text-xs" placeholder="必要属性（主／副）">
-                  <select id="edit-spell-role" class="bg-slate-950 border border-slate-700 rounded p-2 text-xs"><option value="">役割指定なし</option><option value="attacker">アタッカー</option><option value="controller">コントローラー</option><option value="defender">ディフェンダー</option></select>
-                  <input id="edit-spell-atk" type="number" min="0" class="bg-slate-950 border border-slate-700 rounded p-2 text-xs" placeholder="最低攻撃力">
-                  <input id="edit-spell-hp" type="number" min="0" class="bg-slate-950 border border-slate-700 rounded p-2 text-xs" placeholder="最低最大HP">
+                  <input id="edit-spell-attr" oninput="updatePreview()" list="registered-attributes-list" class="bg-slate-950 border border-slate-700 rounded p-2 text-xs" placeholder="必要属性（主／副）">
+                  <select id="edit-spell-role" onchange="updatePreview()" class="bg-slate-950 border border-slate-700 rounded p-2 text-xs"><option value="">役割指定なし</option><option value="attacker">アタッカー</option><option value="controller">コントローラー</option><option value="defender">ディフェンダー</option></select>
+                  <input id="edit-spell-atk" oninput="updatePreview()" type="number" min="0" class="bg-slate-950 border border-slate-700 rounded p-2 text-xs" placeholder="最低攻撃力">
+                  <input id="edit-spell-hp" oninput="updatePreview()" type="number" min="0" class="bg-slate-950 border border-slate-700 rounded p-2 text-xs" placeholder="最低最大HP">
                 </div>
               </div>
             </div>
@@ -683,7 +708,7 @@
         </div>
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
           <div class="rounded-lg border border-violet-500/50 bg-black/20 p-3"><label for="performance-lab-battle-count" class="text-[10px] text-violet-200 font-black">対戦数設定（個別・一括共通）</label><input id="performance-lab-battle-count" type="number" inputmode="numeric" min="1" max="100000" step="1" value="150" class="w-full mt-2 rounded-lg bg-slate-950 border border-violet-500/50 text-lg font-black text-white px-2 py-1.5"><div class="text-[9px] text-slate-500 mt-1">1〜100,000戦／初期値150</div></div>
-          <div class="rounded-lg border border-slate-700 bg-black/20 p-3"><div class="text-[10px] text-slate-400">編成</div><div class="text-lg font-black text-white">3＋控え</div><div class="text-[9px] text-slate-500">最大5体・★5評価時は2枚</div></div>
+          <div class="rounded-lg border border-slate-700 bg-black/20 p-3"><div class="text-[10px] text-slate-400">編成</div><div class="text-lg font-black text-white">先発4＋控え1</div><div class="text-[9px] text-slate-500">5枚編成・★5評価時は2枚</div></div>
           <div class="rounded-lg border border-slate-700 bg-black/20 p-3"><div class="text-[10px] text-slate-400">戦闘AI</div><div class="text-lg font-black text-white">最高ランク</div><div class="text-[9px] text-slate-500">両チーム共通</div></div>
           <div class="rounded-lg border border-slate-700 bg-black/20 p-3"><div class="text-[10px] text-slate-400">保存</div><div class="text-lg font-black text-white">一時のみ</div><div class="text-[9px] text-slate-500">キャンペーンに影響なし</div></div>
         </div>
@@ -1562,6 +1587,9 @@
       if (targetCond && targetCond.type !== "none") {
         if (targetCond.type === "attr_is") condStr = `[${targetCond.attr}]属性の`;
         else if (targetCond.type === "attr_not") condStr = `[${targetCond.attr}]属性以外の`;
+        else if (targetCond.type === 'role_is_attacker') condStr = 'アタッカーの';
+        else if (targetCond.type === 'role_is_controller') condStr = 'コントローラーの';
+        else if (targetCond.type === 'role_is_defender') condStr = 'ディフェンダーの';
         else if (targetCond.type === "hp_ratio_gte") condStr = `HP${targetCond.val}%以上の`;
         else if (targetCond.type === "hp_ratio_lte") condStr = `HP${targetCond.val}%以下の`;
         else if (targetCond.type === "hp_val_gte") condStr = `HP${targetCond.val}以上の`;
@@ -1574,7 +1602,7 @@
         else if (targetCond.type === "any_status") condStr = `状態異常の`;
       }
       switch(targetType) {
-        case "self": return "自分自身";
+        case "self": return condStr + "自分自身";
         case "select_enemy_1": return condStr + "指定した敵1体";
         case "random_enemy_1": return condStr + "ランダムな敵1体";
         case "select_ally_1": return condStr + "指定した味方1体";
@@ -1673,6 +1701,33 @@
       });
     }
 
+    // v1.0.66: 既存の作成済みキャラクター原本だけHPを一度だけ2倍にする。
+    // cardsと移行済み印を同一のreadwriteトランザクションで確定し、
+    // 中断・再起動・多重タブでも途中適用や二重適用が起こらないようにする。
+    function migrateExistingUnitHpOnce() {
+      return new Promise((resolve,reject)=>{
+        const tx=db.transaction(['cards','settings'],'readwrite');
+        const cards=tx.objectStore('cards'), settings=tx.objectStore('settings');
+        const migrationKey='unit_hp_double_migrated_v1_0_66';
+        let migratedCount=0;
+        settings.get(migrationKey).onsuccess=(event)=>{
+          if(event.target.result?.value===true)return;
+          cards.getAll().onsuccess=(ev)=>{
+            for(const card of ev.target.result||[]){
+              if(card?.cardType!=='unit'||!card.stats||!Number.isFinite(Number(card.stats.hp))||Number(card.stats.hp)<=0)continue;
+              card.stats.hp=Number(card.stats.hp)*2;
+              cards.put(card);
+              migratedCount++;
+            }
+            settings.put({key:migrationKey,value:true,processedUnits:migratedCount});
+          };
+        };
+        tx.oncomplete=()=>resolve(migratedCount);
+        tx.onerror=()=>reject(tx.error||new Error('HP移行トランザクション失敗'));
+        tx.onabort=()=>reject(tx.error||new Error('HP移行中断'));
+      });
+    }
+
     async function loadAllData() {
       allCards = (await getAllFromStore("cards")).map(normalizeBattleCard);
       allDecks = await getAllFromStore("decks");
@@ -1691,6 +1746,7 @@
 
       // 初回起動時だけでなく、過去にブラウザへ保存したカードもここでUUIDへ移行する。
       await normalizeLoadedCards();
+      await migrateExistingUnitHpOnce();
       allCards = (await getAllFromStore("cards")).map(normalizeBattleCard);
       allDecks = await getAllFromStore("decks");
       allRivals = await getAllFromStore("rivals");
@@ -2034,7 +2090,7 @@
         }
         if (card.cardType === 'unit') {
           const beforeSub = Array.isArray(card.subAttrs) ? card.subAttrs : [];
-          let nextSub = [...new Set(beforeSub.map(a => String(a || '').trim()).filter(a => a && !MAIN_ATTRIBUTES.includes(a)))].slice(0, 1);
+          let nextSub = [...new Set(beforeSub.map(a => String(a || '').trim()).filter(a => a && !MAIN_ATTRIBUTES.includes(a)))].slice(0, 2);
           if (['builtin:card_def_1','builtin:card_def_2','builtin:card_def_3'].includes(card.systemKey)) nextSub = [];
           if (JSON.stringify(nextSub) !== JSON.stringify(beforeSub)) { card.subAttrs = nextSub; changed = true; }
           // 作成済みキャラクターでランク未設定のものは、現行仕様の推定ランクを初期ランクとして保存する。
@@ -2101,18 +2157,19 @@
       const roleId = isValidUnitRole(data.role) ? data.role : (isValidUnitRole(rankCard?.role) ? rankCard.role : inferUnitRoleFromSkills(data.skills || rankCard?.skills || [], data.stats || {hp:data.hp,atk:data.atk}));
       const roleMeta = UNIT_ROLE_META[roleId] || UNIT_ROLE_META.attacker;
       if (data.cardType === "magic") {
+        const isSkillDisplay=data.magicType==='skill'||rankCard?.magicType==='skill';
         const magicPrio = data.prio ?? (data.stats?.priority ?? 999);
-        const prioText = magicPrio === 999 ? "最速" : (magicPrio === -999 ? "最遅" : `SPD:${magicPrio}`);
+        const prioText = isSkillDisplay ? '術者SPD' : (magicPrio === 999 ? "最速" : (magicPrio === -999 ? "最遅" : `SPD:${magicPrio}`));
         return `
           <div ${cardIdAttr} class="card-element card-aspect w-full bg-slate-900 border-2 border-purple-500/80 rounded-xl overflow-hidden shadow-xl flex flex-col relative hover:scale-[1.02] transition-transform cursor-pointer select-none">
             <div class="relative w-full h-[58%] bg-slate-950 overflow-hidden">
               ${imgUrl ? `<img src="${imgUrl}" onerror="this.onerror=null;this.src=createDummyCardImage('📜','#3b0764')" class="w-full h-full object-cover">` : `<div class="w-full h-full flex items-center justify-center text-3xl bg-purple-950">📜</div>`}
-              <span class="absolute top-1 left-1 bg-purple-950/90 border border-purple-500/40 text-purple-200 text-[9px] px-1.5 py-0.5 rounded font-bold">MAGIC</span>
+              <span class="absolute top-1 left-1 bg-purple-950/90 border border-purple-500/40 text-purple-200 text-[9px] px-1.5 py-0.5 rounded font-bold">${isSkillDisplay?'SKILL':'MAGIC'}</span>
               <span class="absolute top-1 right-1 bg-sky-950/90 border border-sky-400/50 text-sky-300 text-[9px] px-1.5 py-0.5 rounded font-bold">${prioText}</span>
             </div>
             <div class="h-[42%] bg-gradient-to-b from-slate-900 to-purple-950 px-2 py-2 flex flex-col gap-1 border-t border-purple-800/50">
               <div class="font-black text-sm sm:text-base text-purple-100 text-center truncate">${safeName}</div>
-              <div class="bg-slate-950 p-1.5 rounded border border-purple-500/30 text-[10px] sm:text-[11px] text-slate-200 leading-snug line-clamp-3">${data.desc || ''}</div>
+              <div class="bg-slate-950 p-1.5 rounded border border-purple-500/30 text-[10px] sm:text-[11px] text-slate-200 leading-snug line-clamp-3 whitespace-pre-line">${data.desc || ''}</div>
             </div>
           </div>`;
       }
@@ -2330,6 +2387,9 @@
                   <option value="speed_val_lte">対象の行動値が○以下</option>
                   <option value="attr_is">対象が◯属性</option>
                   <option value="attr_not">対象が◯属性以外</option>
+                  <option value="role_is_attacker">対象がアタッカー</option>
+                  <option value="role_is_controller">対象がコントローラー</option>
+                  <option value="role_is_defender">対象がディフェンダー</option>
                   <option value="status_is">対象が(状態異常)</option>
                   <option value="any_status">対象が状態異常</option>
                 </select>
@@ -2441,7 +2501,7 @@
                 <div>
                   <span class="text-[8px] text-slate-400">追加効果の対象条件:</span>
                   <select class="${prefix}-sub-target-cond-type bg-slate-800 text-[10px] rounded w-full" onchange="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">
-                    <option value="none">条件なし</option><option value="hp_ratio_gte">対象のHPが○％以上</option><option value="hp_ratio_lte">対象のHPが○％以下</option><option value="hp_val_gte">対象のHPが○以上</option><option value="hp_val_lte">対象のHPが○以下</option><option value="atk_val_gte">対象の攻撃力が○以上</option><option value="atk_val_lte">対象の攻撃力が○以下</option><option value="speed_val_gte">対象の行動値が○以上</option><option value="speed_val_lte">対象の行動値が○以下</option><option value="attr_is">対象が◯属性</option><option value="attr_not">対象が◯属性以外</option><option value="status_is">対象が(状態異常)</option><option value="any_status">対象が状態異常</option>
+                    <option value="none">条件なし</option><option value="hp_ratio_gte">対象のHPが○％以上</option><option value="hp_ratio_lte">対象のHPが○％以下</option><option value="hp_val_gte">対象のHPが○以上</option><option value="hp_val_lte">対象のHPが○以下</option><option value="atk_val_gte">対象の攻撃力が○以上</option><option value="atk_val_lte">対象の攻撃力が○以下</option><option value="speed_val_gte">対象の行動値が○以上</option><option value="speed_val_lte">対象の行動値が○以下</option><option value="attr_is">対象が◯属性</option><option value="attr_not">対象が◯属性以外</option><option value="role_is_attacker">対象がアタッカー</option><option value="role_is_controller">対象がコントローラー</option><option value="role_is_defender">対象がディフェンダー</option><option value="status_is">対象が(状態異常)</option><option value="any_status">対象が状態異常</option>
                   </select>
                 </div>
                 <div class="grid grid-cols-3 gap-1">
@@ -2588,7 +2648,7 @@
     }
 
     function estimateUnitRank(stats) {
-      const hp = clamp(Number(stats?.hp)||1000, 1000, 20000);
+      const hp = Math.max(1000, Number(stats?.hp)||1000);
       const atk = clamp(Number(stats?.atk)||500, 500, 5000);
       const priority = clamp(Number(stats?.priority)||0, 0, 100);
       const total = hp / 2 + atk * 2 + priority * 50;
@@ -2610,7 +2670,7 @@
         const mainAttr = document.getElementById("edit-main-attr").value;
         const sub1 = document.getElementById("edit-sub1")?.value || "";
         const sub2 = document.getElementById("edit-sub2")?.value || "";
-        const hp = clamp(parseInt(document.getElementById("edit-hp").value), 1000, 20000);
+        const hp = clamp(parseInt(document.getElementById("edit-hp").value), 1000, Math.max(20000,Number(document.getElementById('edit-hp')?.max)||20000));
         const atk = clamp(parseInt(document.getElementById("edit-atk").value), 500, 5000);
         const prio = clamp(parseInt(document.getElementById("edit-priority").value), 0, 100);
         const rank = clamp(parseInt(document.getElementById("edit-unit-rank")?.value || 3), 1, 5);
@@ -2622,9 +2682,17 @@
       } else {
         syncMagicCardAndSkillName();
         const name = document.getElementById("edit-magic-name").value || "名称未設定";
-        const desc = document.querySelector(".magic-eff-desc")?.value || "";
+        const rawDesc = document.querySelector(".magic-eff-desc")?.value || "";
+        const magicType=document.getElementById('edit-magic-type')?.value==='skill'?'skill':'magic';
+        const previewCard={magicType,useRequirements:{
+          attr:document.getElementById('edit-spell-attr')?.value?.trim()||'',
+          role:document.getElementById('edit-spell-role')?.value||'',
+          minAtk:document.getElementById('edit-spell-atk')?.value||'',
+          minHp:document.getElementById('edit-spell-hp')?.value||''
+        }};
+        const desc=spellDescriptionWithRequirements(previewCard,rawDesc);
         const prio = getSelectedMagicPriority();
-        container.innerHTML = getCardHTML({ cardType: "magic", name, desc, prio, img: croppedImageData.magic });
+        container.innerHTML = getCardHTML({ cardType: "magic", magicType, name, desc, prio, img: croppedImageData.magic });
       }
     }
 
@@ -2639,8 +2707,10 @@
       const rawSubAttrs = [document.getElementById("edit-sub1").value.trim(), document.getElementById("edit-sub2").value.trim()].filter(Boolean);
       const invalidSub = rawSubAttrs.find(a => MAIN_ATTRIBUTES.includes(a));
       if (invalidSub) { alert(`サブ属性にメイン属性「${invalidSub}」は設定できません。`); return; }
-      const subAttrs = [...new Set(rawSubAttrs)].slice(0, 1);
-      const hp = clamp(parseInt(document.getElementById("edit-hp").value), 1000, 20000);
+      const subAttrs = [...new Set(rawSubAttrs)].slice(0, 2);
+      const editingHp = Number(allCards.find(c=>c.id===editingCardId && c.cardType==='unit')?.stats?.hp)||0;
+      // 既存カードを正確に2倍にした結果20,000を超えても編集時に切り捨てない。
+      const hp = clamp(parseInt(document.getElementById("edit-hp").value), 1000, Math.max(20000,editingHp));
       const atk = clamp(parseInt(document.getElementById("edit-atk").value), 500, 5000);
       const priority = clamp(parseInt(document.getElementById("edit-priority").value), 0, 100);
       const image = croppedImageData.unit || createDummyCardImage("⚔️", "#334155");
@@ -2691,7 +2761,7 @@
         minAtk:document.getElementById('edit-spell-atk')?.value||'',
         minHp:document.getElementById('edit-spell-hp')?.value||''
       }:{};
-      const magicCard = { id: existing?.id || generateCardId(), cardType: "magic", magicType, useRequirements, name, desc: effectData.desc, value, image: croppedImageData.magic || existing?.image || image, stats: { priority }, effect: effectData };
+      const magicCard = { id: existing?.id || generateCardId(), cardType: "magic", magicType, useRequirements, name, desc: spellDescriptionWithRequirements({magicType,useRequirements},effectData.desc), value, image: croppedImageData.magic || existing?.image || image, stats: { priority }, effect: effectData };
       await saveToStore("cards", magicCard);
       allCards = (await getAllFromStore("cards")).map(normalizeBattleCard);
       refreshAttributeDatalist();
@@ -3152,7 +3222,7 @@
         const payload = {
           format: 'prefecture-card-war-card-data',
           formatVersion: 1,
-          gameVersion: '1.0.58',
+          gameVersion: '1.0.66',
           exportedAt: exportedAt.toISOString(),
           intendedUse: 'このJSONと同じバージョンのゲームZIPを参照し、カードの性能・スキル・効果条件・組み合わせを検証する',
           imagesIncluded: false,
@@ -3175,13 +3245,13 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.64-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.66-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
         window.setTimeout(() => URL.revokeObjectURL(objectUrl), 15000);
-        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.64 ZIP と一緒にChatGPTへアップロードしてください。`);
+        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.66 ZIP と一緒にChatGPTへアップロードしてください。`);
       } catch (error) {
         console.error('[CardDataExport] カードデータの書き出しに失敗しました', error);
         alert(`カードデータの書き出しに失敗しました。\n${String(error?.message || error)}`);
@@ -3254,7 +3324,7 @@
         imgWrap.innerHTML = getCardHTML({ id: card.id, cardType: "magic", name: card.name, desc: card.desc, prio: mPrio, img: getCardImage(card) });
         statsWrap.classList.add("hidden");
         const valueYen = Math.max(10000, Number(card.value) || 1000000);
-        bodyWrap.innerHTML = `<div class="text-sm text-purple-100 space-y-2"><div><b>カード種別:</b> ${magicCardIsSkill(card)?"⚔️ スキルカード":"📜 通常マジック"}</div><div><b>消費AP:</b> ${magicCardIsSkill(card)?(card.effect?.cost||0):"なし（プレイヤー発動）"}</div><div><b>行動値:</b> ${prioDisplay}</div>${card.campaignInstance?'':`<div class="text-emerald-200"><b>市場価値:</b> ${Math.round(valueYen/10000).toLocaleString('ja-JP')}万円</div>`}<div class="pt-3 border-t border-slate-800 text-base leading-relaxed">${card.desc || ''}</div></div>`;
+        bodyWrap.innerHTML = `<div class="text-sm text-purple-100 space-y-2"><div><b>カード種別:</b> ${magicCardIsSkill(card)?"⚔️ スキルカード":"📜 通常マジック"}</div><div><b>消費AP:</b> ${magicCardIsSkill(card)?(card.effect?.cost||0):"なし（プレイヤー発動）"}</div><div><b>行動値:</b> ${prioDisplay}</div>${card.campaignInstance?'':`<div class="text-emerald-200"><b>市場価値:</b> ${Math.round(valueYen/10000).toLocaleString('ja-JP')}万円</div>`}<div class="pt-3 border-t border-slate-800 text-base leading-relaxed whitespace-pre-line">${card.desc || ''}</div></div>`;
       } else {
         const stats = card.stats || {};
         imgWrap.innerHTML = getCardHTML({ id: card.id, cardType: "unit", name: card.name, mainAttr: card.mainAttr, subAttrs: card.subAttrs, hp: stats.hp ?? 0, atk: stats.atk ?? 0, prio: stats.priority ?? 0, rank: card.rank, img: getCardImage(card) });
@@ -3303,6 +3373,7 @@
         document.getElementById('edit-main-attr').value = '人間';
         document.getElementById('edit-sub1').value = '';
         document.getElementById('edit-sub2').value = '';
+        document.getElementById('edit-hp').max='20000';
         document.getElementById('edit-hp').value = 3000;
         document.getElementById('edit-atk').value = 1500;
         document.getElementById('edit-priority').value = 50;
@@ -3344,6 +3415,7 @@
       if(card.cardType==='unit') {
         document.getElementById('edit-name').value=card.name||''; document.getElementById('edit-main-attr').value=card.mainAttr||'人間'; if(document.getElementById('edit-unit-value')) document.getElementById('edit-unit-value').value=Math.max(1,Math.round(Number(card.value||5000000)/10000));
         document.getElementById('edit-sub1').value=card.subAttrs?.[0]||''; document.getElementById('edit-sub2').value=card.subAttrs?.[1]||'';
+        document.getElementById('edit-hp').max=String(Math.max(20000,Number(card.stats?.hp)||0));
         document.getElementById('edit-hp').value=card.stats?.hp||3000; document.getElementById('edit-atk').value=card.stats?.atk||1500; document.getElementById('edit-priority').value=card.stats?.priority??50; document.getElementById('edit-unit-rank').value=String(rankStarCount(card.rank ?? estimateUnitRank(card.stats))); if(document.getElementById('edit-unit-role'))document.getElementById('edit-unit-role').value=isValidUnitRole(card.role)?card.role:'auto'; 
         document.querySelectorAll('#unit-skills-builder .skill-builder-card').forEach((box,i)=>{
           const sk=card.skills?.[i]; const sel=box.querySelector('.skill-type-select'); sel.value=sk?.type||'none'; toggleSkillTypeUI(sel); if(sk) populateSkillEditor(`s${i+1}`,sk,sk.type,false);
@@ -4728,12 +4800,28 @@
         if (card.magicType !== 'skill') card.magicType = 'magic';
         normalizeLegacyTarget(card.effect);
         if (typeof card.desc === 'string') card.desc = migrateDescription(card.desc);
+        if(card.magicType==='skill')card.desc=spellDescriptionWithRequirements(card,card.desc||card.effect?.desc||'');
         if (card.effect && typeof card.effect.desc === 'string') card.effect.desc = migrateDescription(card.effect.desc);
       } else if(card.cardType === 'unit') (card.skills || []).forEach(skill => {
         normalizeLegacyTarget(skill);
         if (skill && typeof skill.desc === 'string') skill.desc = migrateDescription(skill.desc);
       });
       return card;
+    }
+    // 説明文に使用可能者の条件を必ず追記。古いカードも読み込み時に表示を補完する。
+    function skillCardRequirementsDescription(limits={}) {
+      const parts=[];
+      if(String(limits.attr||'').trim()) parts.push(`属性「${String(limits.attr).trim()}」`);
+      const roleLabels={attacker:'アタッカー',controller:'コントローラー',defender:'ディフェンダー'};
+      if(limits.role)parts.push(`役割：${roleLabels[limits.role]||limits.role}`);
+      if(limits.minAtk!==''&&limits.minAtk!=null&&Number(limits.minAtk)>0)parts.push(`攻撃力${Math.round(Number(limits.minAtk)).toLocaleString('ja-JP')}以上`);
+      if(limits.minHp!==''&&limits.minHp!=null&&Number(limits.minHp)>0)parts.push(`最大HP${Math.round(Number(limits.minHp)).toLocaleString('ja-JP')}以上`);
+      return `【使用可能者】${parts.length?parts.join('・')+'（すべて満たす）':'全キャラクター'}`;
+    }
+    function spellDescriptionWithRequirements(card, baseDescription) {
+      const raw=String(baseDescription??card?.desc??'')
+        .replace(/(?:\n|^)【使用可能者】[^\n]*/g,'').trim();
+      return card?.magicType==='skill' ? `${skillCardRequirementsDescription(card.useRequirements||{})}${raw?'\n'+raw:''}` : raw;
     }
     function magicCardIsSkill(card) { return card?.magicType === 'skill'; }
     function skillCardAllowed(card, unit) {
@@ -4828,6 +4916,7 @@
         role: isValidUnitRole(template.role) ? template.role : inferUnitRoleFromSkills(template.skills || [], template.stats || {}),
         image: window.__campaignHeadlessBattle ? null : (getCardImage(template) || createDummyCardImage("⚔️", "#334155")),
         imageSource: window.__campaignHeadlessBattle ? null : getCardImage(template),
+        rank: Number(template.rank)||1,
         baseMaxHp: Number(template.stats.hp),
         maxHp: Number(template.stats.hp),
         currentHp: Number(template.stats.hp),
@@ -4984,7 +5073,7 @@
         }
 
         const cardEl = document.createElement("div");
-        cardEl.className = `relative p-2 rounded-xl border-2 transition cursor-pointer select-none ${isDead ? 'opacity-40 grayscale border-slate-800 bg-slate-950' : (isSelected ? 'border-amber-400 bg-amber-500/10 glow-amber' : 'border-slate-800 bg-slate-900')}`;
+        cardEl.className = `min-w-0 relative p-2 rounded-xl border-2 transition cursor-pointer select-none ${isDead ? 'opacity-40 grayscale border-slate-800 bg-slate-950' : (isSelected ? 'border-amber-400 bg-amber-500/10 glow-amber' : 'border-slate-800 bg-slate-900')}`;
         cardEl.setAttribute("data-card-id", u.cardId);
         cardEl.onclick = () => {
           if (isDead) return;
@@ -5023,7 +5112,8 @@
           atk: getEffectiveAtk(u),
           prio: getEffectiveSpeed(u),
           rank: u.rank,
-          img: getCardImage(u)
+          img: getCardImage(u) || getCardImage(allCards.find(c=>String(c.id)===String(u.cardId))) || u.image,
+          role: u.role
         });
 
         cardEl.innerHTML = `
@@ -5245,6 +5335,9 @@
       if (targetCond.type === 'attr_not') {
         return !(target.mainAttr === targetCond.attr || (target.subAttrs || []).includes(targetCond.attr));
       }
+      if (targetCond.type === 'role_is_attacker') return target.role === 'attacker';
+      if (targetCond.type === 'role_is_controller') return target.role === 'controller';
+      if (targetCond.type === 'role_is_defender') return target.role === 'defender';
       if (targetCond.type === 'status_is') return unitHasStatus(target, targetCond.status);
       if (targetCond.type === 'any_status') return (target.statuses || []).some(x => durationActive(x.duration));
       return false;
@@ -5642,6 +5735,9 @@
       if (cond.type === 'speed_val_lte') return aiPlannerEffectiveSpeed(target) <= Number(cond.val);
       if (cond.type === 'attr_is') return target.mainAttr === cond.attr || (target.subAttrs || []).includes(cond.attr);
       if (cond.type === 'attr_not') return !(target.mainAttr === cond.attr || (target.subAttrs || []).includes(cond.attr));
+      if (cond.type === 'role_is_attacker') return target.role === 'attacker';
+      if (cond.type === 'role_is_controller') return target.role === 'controller';
+      if (cond.type === 'role_is_defender') return target.role === 'defender';
       if (cond.type === 'status_is') return aiPlannerHasStatus(target, cond.status);
       if (cond.type === 'any_status') return (target.statuses || []).some(x => durationActive(x.duration));
       return true;
@@ -6468,7 +6564,7 @@
       if (!attacker || !target || attacker.currentHp <= 0 || target.currentHp <= 0) return 0;
       let best = aiPlannerDamageAfterCut(target, Math.round(aiPlannerEffectiveAtk(attacker) * 1.0));
       const apKey='ap';
-      const futureAp = Math.min(100, Math.max(0, Number(unit[apKey]) || 0) + 20);
+      const futureAp = Math.min(100, Math.max(0, Number(attacker[apKey]) || 0) + 20);
       (attacker.skills || []).forEach(sk => {
         if (sk?.type !== 'active' || !aiPlannerCondition(sk.selfCond, attacker, state)) return;
         const cost = Math.max(0, Number(sk.cost) || 0) + (aiPlannerHasStatus(attacker, 'pressure') ? 5 : 0);
