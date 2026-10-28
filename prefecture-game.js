@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.61 — shared high-quality rival AI, indexed evaluation, budget-driven gacha */
+/* 都道府県カード戦争 v1.0.62 — verified post-battle continuation and opening-synergy loadout scoring */
 'use strict';
 
 let campaignState = null;
@@ -309,6 +309,32 @@ function prefCardPreferenceScore(region,card) {
   }
   return score;
 }
+// Compare actual status names; a generic "has debuff" label does not set up an
+// unrelated mark/poison/freeze condition on a teammate's skill.
+const PREF_STATUS_LINK_CACHE = new WeakMap();
+function prefStatusLinks(card){
+  if(!card)return {sets:[],needs:[]};
+  const memo=PREF_STATUS_LINK_CACHE.get(card);
+  if(memo&&memo.skills===card.skills)return memo.links;
+  const sets=new Set(),needs=new Set();
+  for(const skill of Array.isArray(card.skills)?card.skills:[]){
+    const e=skill.mainEffect||{},target=String(skill.targetType||'');
+    if(e.type==='status_apply'&&target.includes('enemy')&&e.status)sets.add(String(e.status));
+    if(skill.targetCond?.type==='status_is'&&target.includes('enemy')&&skill.targetCond.status)needs.add(String(skill.targetCond.status));
+    if(skill.hasSubEffect&&skill.subEffect){
+      const sub=skill.subEffect;
+      const subTarget=sub.targetType==='same_main_target'?target:String(sub.targetType||'');
+      if(sub.type==='status_apply'&&subTarget.includes('enemy')&&sub.status)sets.add(String(sub.status));
+      if(sub.targetCond?.type==='status_is'&&subTarget.includes('enemy')&&sub.targetCond.status)needs.add(String(sub.targetCond.status));
+    }
+  }
+  const links={sets:[...sets],needs:[...needs]};PREF_STATUS_LINK_CACHE.set(card,{skills:card.skills,links});return links;
+}
+function prefActualStatusChain(a,b){
+  const x=prefStatusLinks(a),y=prefStatusLinks(b);
+  return x.sets.some(s=>y.needs.includes(s))||y.sets.some(s=>x.needs.includes(s));
+}
+
 function prefPairSynergyRaw(cardA,cardB,profile) {
   if(!cardA||!cardB)return 0;
   const a=prefCardProfile(cardA),b=prefCardProfile(cardB);let pair=0;
@@ -319,7 +345,7 @@ function prefPairSynergyRaw(cardA,cardB,profile) {
   if((a.tags.has('hp_scaling_damage')&&(b.tags.has('healing')||b.tags.has('damage_amp'))) || (b.tags.has('hp_scaling_damage')&&(a.tags.has('healing')||a.tags.has('damage_amp'))))pair+=7.5;
   if((a.tags.has('damage_amp')&&b.tags.has('damage'))||(b.tags.has('damage_amp')&&a.tags.has('damage')))pair+=5.5;
   if((b.tags.has('healing')||b.tags.has('shield_defense'))&&(a.tags.has('attack_role')||heavyA))pair+=3.0;
-  if((a.tags.has('status_debuff')&&b.tags.has('status_condition'))||(b.tags.has('status_debuff')&&a.tags.has('status_condition')))pair+=7.0;
+  if(prefActualStatusChain(cardA,cardB))pair+=8.0;
   if((a.tags.has('extra_effect')&&b.tags.has('status_debuff'))||(b.tags.has('extra_effect')&&a.tags.has('status_debuff')))pair+=4.0;
   if((a.tags.has('extra_effect')&&b.tags.has('passive_chain'))||(b.tags.has('extra_effect')&&a.tags.has('passive_chain')))pair+=4.0;
   if(a.tags.has('shield_defense')&&b.tags.has('ap_supply')||b.tags.has('shield_defense')&&a.tags.has('ap_supply'))pair+=1.8;
@@ -331,7 +357,7 @@ function prefPairSynergyRaw(cardA,cardB,profile) {
   if(a.mainAttr&&a.mainAttr===b.mainAttr&&profile?.primaryStrategy==='attribute')pair+=2.4;
   if(a.subAttrs.some(x=>b.subAttrs.includes(x))&&profile?.primaryStrategy==='attribute')pair+=0.8;
   // High-IQ rivals can detect multi-step effect chains. Lower-IQ rivals tend to miss them.
-  const complex=(a.tags.has('status_condition')&&b.tags.has('status_debuff'))||(b.tags.has('status_condition')&&a.tags.has('status_debuff'))||a.tags.has('passive_chain')&&b.tags.has('extra_effect')||b.tags.has('passive_chain')&&a.tags.has('extra_effect');
+  const complex=prefActualStatusChain(cardA,cardB)||(a.tags.has('passive_chain')&&b.tags.has('extra_effect'))||(b.tags.has('passive_chain')&&a.tags.has('extra_effect'));
   if(Number(profile?.cardIQ||0)<25&&complex)pair*=0.15;
   else if(Number(profile?.cardIQ||0)<50&&complex)pair*=0.5;
   if(Number(profile?.cardIQ||0)<20){
@@ -365,8 +391,7 @@ function prefAIActiveTrioPlanEvaluation(activeCards, activeProfiles, profile) {
       if(has(sp,'ap_supply')&&(cp.maxCost>=18||has(cp,'heavy_cost'))){score+=8.5;hasAp=true;reasons.push(`${support.name||'支援役'}が主力のAP需要を補う`);}
       if((has(sp,'damage_amp')||has(sp,'attack_speed_buff'))&&coreDamage){score+=has(sp,'damage_amp')?6.5:4.0;hasAmplifier=true;reasons.push(`${support.name||'支援役'}が主力の火力を伸ばす`);}
       if(teamBuff(support)&&coreDamage){score+=5.0;hasTeamBuff=true;reasons.push(`${support.name||'支援役'}の全体強化を先発で活用できる`);}
-      if(has(cp,'status_condition')&&has(sp,'status_debuff')){score+=7.5;hasConditionSetup=true;reasons.push('状態異常の付与から条件効果へつなぐ');}
-      if(has(cp,'status_debuff')&&has(sp,'status_condition')){score+=5.0;hasConditionSetup=true;}
+      if(prefActualStatusChain(core,support)){score+=7.5;hasConditionSetup=true;reasons.push('一致する状態異常の付与から条件効果へつなぐ');}
       if(has(cp,'hp_scaling_damage')&&(has(sp,'healing')||has(sp,'damage_amp'))){score+=7.0;hasAmplifier=true;reasons.push('HP参照火力を回復・与ダメージ強化で支える');}
       if((has(sp,'frontline_defender')||sp.role==='defender')&&coreDamage){score+=has(sp,'frontline_defender')?6.5:3.2;hasProtection=true;reasons.push(`${support.name||'ディフェンダー'}が主力の生存時間を確保する`);}
       if(has(sp,'healing')||has(sp,'shield_defense'))hasProtection=true;
@@ -375,7 +400,7 @@ function prefAIActiveTrioPlanEvaluation(activeCards, activeProfiles, profile) {
     if((cp.maxCost>=25||has(cp,'heavy_cost'))&&!hasAp){score-=4.5;reasons.push('高コスト技を支えるAP供給が不足');}
     if(has(cp,'permanent_self_buff')&&!hasProtection){score-=2.8;reasons.push('永続強化の準備中に主力を守る手段が不足');}
     if(coreDamage&&!hasProtection&&cards.length>=3)score-=1.8;
-    if(has(cp,'status_condition')&&!hasConditionSetup)score-=4.0;
+    if(has(cp,'status_condition')&&!hasConditionSetup&&!prefActualStatusChain(core,core))score-=4.0;
     if(!coreDamage)score-=2.5;
     if(hasTeamBuff)score+=0.5;
     if(hasDamageBuddy)score+=1.2;
@@ -1294,7 +1319,12 @@ function prefAIQuickRosterQuality(region, unitInstances) {
     if(profiles.filter(x=>x.rank===5).length>PREF_BATTLE_RANK5_LIMIT)continue;
     let score=group.reduce((sum,x)=>sum+(base.get(String(x.inst.id))||0),0);
     for(let a=0;a<group.length;a++)for(let b=a+1;b<group.length;b++)score+=prefPairSynergyRaw(group[a].card,group[b].card,profile)*(0.88+0.12*profile.cardIQ/100)*1.25;
-    const plan=prefAIActiveTrioPlanEvaluation(group.map(x=>x.card),profiles,profile);score+=plan.score;
+    const groupCards=group.map(x=>x.card);
+    const plan=prefAIActiveTrioPlanEvaluation(groupCards,profiles,profile);score+=plan.score;
+    // Acquisition/upgrade evaluation must prize the same opening synergy as battle selection;
+    // otherwise a rival could repeatedly buy high-priced but incoherent individual cards.
+    const kits=groupCards.map(prefOpeningKit);
+    score+=prefConcreteOpeningSynergy(groupCards,kits).score*1.4+kits.reduce((v,k)=>v+k.value*1.25,0);
     const roles=new Set(profiles.map(x=>x.role));
     if(roles.has('attacker'))score+=2.8;if(roles.has('defender'))score+=3;if(roles.has('controller'))score+=2.6;
     const ids=new Set(group.map(x=>String(x.inst.id)));
@@ -1948,8 +1978,7 @@ function prefAiRosterComplementBonus(region,card) {
   if(cp.tags.has('damage')&&hasAny(['damage_amp','attack_speed_buff']))bonus+=6.0;
   if(prefCardHasTeamBuff(card)&&hasAny(['damage','attack_role']))bonus+=5.5;
   if(cp.tags.has('permanent_self_buff')&&hasAny(['healing','shield_defense','taunt_protection']))bonus+=3.5;
-  if(cp.tags.has('status_debuff')&&has('status_condition'))bonus+=5.0;
-  if(cp.tags.has('status_condition')&&has('status_debuff'))bonus+=5.0;
+  if(roster.some(other=>prefActualStatusChain(card,other)))bonus+=7.0;
   if((cp.tags.has('healing')||cp.tags.has('shield_defense'))&&!hasAny(['healing','shield_defense']))bonus+=3.5;
   if(cp.tags.has('attack_speed_buff')&&hasAny(['damage','attack_role']))bonus+=2.0;
   if(cp.tags.has('passive_chain')&&has('extra_effect')||cp.tags.has('extra_effect')&&has('passive_chain'))bonus+=3.0;
@@ -2926,8 +2955,9 @@ function prefEstimateBuildScenarios(region,activeCards,reserveCards,magicCards) 
 
   // Situation C: the planned chain actually has setup/payoff cards and enough active slots.
   let chain=0;
-  if(hasStatusDebuff&&hasStatusCondition)chain+=3.0;
-  else if(hasStatusCondition||hasStatusDebuff)chain-=1.0;
+  const actualStatusChain=active.some((c,i)=>active.some((d,j)=>i!==j&&prefActualStatusChain(c,d)));
+  if(actualStatusChain)chain+=3.0;
+  else if(hasStatusCondition&&!active.some(c=>prefActualStatusChain(c,c)))chain-=1.0;
   if((counts.extra_effect||0)>0&&(counts.passive_chain||0)>0)chain+=2.0;
   if(attrFocus&&mainAttrCount>=2)chain+=Math.min(2.4,(mainAttrCount-1)*1.2);
   if(attrFocus&&mainAttrCount<2&&profile.mainAttrPriority.length)chain-=1.3;
@@ -2971,6 +3001,152 @@ function prefCardHasTeamBuff(card) {
   });
 }
 
+// v1.0.62: Score what a card actually contributes while it is on the opening field.
+// A broad effect tag alone is not evidence that a controller supports its allies:
+// inspect target, sign, AP cost, chance and trigger timing. Cached by card object.
+const PREF_OPENING_KIT_CACHE = new WeakMap();
+function prefOpeningKit(card) {
+  if(!card)return {value:0,offense:0,sustain:0,support:0,ap:0,deploy:0,conditions:[],setups:[],reasons:[]};
+  const cached=PREF_OPENING_KIT_CACHE.get(card);
+  if(cached&&cached.skills===card.skills&&cached.stats===card.stats)return cached.kit;
+  const kit={value:0,offense:0,sustain:0,support:0,ap:0,deploy:0,conditions:[],setups:[],reasons:[]};
+  const skills=Array.isArray(card.skills)?card.skills:[];
+  for(const sk of skills){
+    if(!sk||!['active','passive'].includes(sk.type))continue;
+    const passive=sk.type==='passive',timing=String(sk.timing||'');
+    // On-deploy effects with deploy_turn_gte are useful for a delayed reserve, not the initial field.
+    const delayedDeploy=passive&&['deploy','battle_start'].includes(timing)&&sk.selfCond?.type==='deploy_turn_gte'&&Number(sk.selfCond.val)>1;
+    if(delayedDeploy)continue;
+    const cost=Math.max(0,Number(sk.cost)||0);
+    const chance=Math.max(0,Math.min(1,Number(sk.chance??100)/100));
+    const selfCond=String(sk.selfCond?.type||'none');
+    const conditional=!['none',''].includes(selfCond);
+    let factor=chance*(conditional?0.72:1);
+    if(passive){
+      factor*=timing==='deploy'||timing==='battle_start'?1.15:timing==='turn_start'?1.0:timing==='turn_end'?0.75:0.44;
+    }else factor*=cost>40?0.30:cost>20?0.52:cost>10?0.78:1;
+    let total=0;
+    const entries=[{effect:sk.mainEffect,target:sk.targetType},...(sk.hasSubEffect&&sk.subEffect?[{effect:sk.subEffect,target:sk.subEffect.targetType==='same_main_target'?sk.targetType:sk.subEffect.targetType}]:[])];
+    for(const {effect:e,target:rawTarget} of entries){
+      if(!e)continue;
+      const type=String(e.type||''),v=Number(e.val)||0,target=String(rawTarget||'');
+      const allies=['all_ally','all_allies','select_ally_1','random_ally_1','self'].includes(target);
+      const enemies=['all_enemy','select_enemy_1','random_enemy_1'].includes(target);
+      const broad=['all_ally','all_allies','all_enemy'].includes(target);
+      const group=broad?1.65:target==='self'?0.64:1;
+      let off=0,sup=0,heal=0,ap=0;
+      if(/^dmg_/.test(type)&&enemies)off=type==='dmg_atk_ratio'?Math.min(5,Math.max(0,v)/45):type==='dmg_max_hp_ratio'?Math.min(7,Math.max(0,v)/6):Math.min(6,Math.max(0,v)/750);
+      if((type==='mod_atk_ratio'||type==='mod_atk_val'||type==='mod_speed'||type==='damage_dealt_ratio')&&allies&&v>0)sup=Math.min(7,type==='mod_atk_val'?v/500:v/14);
+      if(type==='damage_taken_ratio'){
+        if(allies&&v<0)heal=Math.min(7,-v/13);
+        if(enemies&&v>0)sup=Math.min(7,v/11);
+      }
+      if(type==='shield'&&allies&&v>0)heal=Math.min(7,v/550);
+      if((type.startsWith('heal_')||type==='mod_max_hp_val')&&allies&&v>0)heal=Math.min(7,type==='heal_max_hp_ratio'?v/13:v/600);
+      if(type==='mod_ap'){
+        if(v>0&&['player_self','self_player','all_ally'].includes(target))ap=Math.min(8,v/5);
+        if(v<0&&['enemy_player','player_enemy','opponent'].includes(target))sup=Math.min(6,-v/5);
+      }
+      if((type==='status_apply'||type==='skill_block'||type==='heal_block')&&enemies){
+        const status=type==='status_apply'?String(e.status||''):type;
+        sup=Math.max(sup,['freeze','paralysis','pressure','silence','skill_block'].includes(status)?5.5:3.2);
+        if(type==='status_apply')kit.setups.push(status);
+      }
+      if(type==='clear_buffs'&&enemies)sup=Math.max(sup,4.6);
+      if(['clear_debuffs','clear_statuses','clear_random_debuffs','heal_block'].includes(type)&&allies)heal=Math.max(heal,3.2);
+      // Damage to the entire field and harmful effects on allies are liabilities, not team support.
+      if(target==='all_field'&&/^dmg_/.test(type))total-=3.0*factor;
+      if(allies&&((type==='mod_atk_ratio'&&v<0)||(type==='damage_taken_ratio'&&v>0)))total-=3.5*factor;
+      const amount=(off+sup+heal+ap)*group*factor;
+      kit.offense+=off*group*factor;kit.support+=sup*group*factor;
+      kit.sustain+=heal*group*factor;kit.ap+=ap*group*factor;
+      if(passive&&(timing==='deploy'||timing==='battle_start'))kit.deploy+=amount;
+      total+=amount;
+    }
+    kit.value+=Math.min(11,Math.max(-3,total));
+    if((sk.targetCond?.type==='status_is'||sk.selfCond?.type==='status_is')&&typeof(sk.targetCond?.status||sk.selfCond?.status)==='string')kit.conditions.push(sk.targetCond?.status||sk.selfCond?.status);
+    if(sk.selfCond?.type==='ally_has_attr'&&sk.selfCond.attr)kit.conditions.push(`ally:${sk.selfCond.attr}`);
+  }
+  // This is an opening-field opportunity score, not an additional card rank.
+  kit.value=Math.min(18,kit.value*0.66);
+  kit.support=Math.min(12,kit.support);kit.offense=Math.min(12,kit.offense);
+  kit.sustain=Math.min(12,kit.sustain);kit.ap=Math.min(12,kit.ap);
+  PREF_OPENING_KIT_CACHE.set(card,{skills:card.skills,stats:card.stats,kit});
+  return kit;
+}
+function prefConcreteOpeningSynergy(cards, kits) {
+  const trio=(cards||[]).filter(Boolean),ks=kits||trio.map(prefOpeningKit);
+  if(trio.length!==3)return {score:-10,reasons:['先発3体が不足']};
+  let score=0;const reasons=[];
+  const attrs=trio.map(c=>[String(c.mainAttr||''),...(Array.isArray(c.subAttrs)?c.subAttrs:[])]);
+  const setups=new Set(ks.flatMap(k=>k.setups));
+  // Explicitly model permanent opening buffs reaching the other two units.
+  // Three related units receiving +ATK/+speed is not equivalent to three unrelated
+  // cards which merely happen to have the same effect tag.
+  let openingTeamBuffs=0;
+  for(let i=0;i<trio.length;i++){
+    for(const skill of Array.isArray(trio[i].skills)?trio[i].skills:[]){
+      const openingPassive=skill?.type==='passive'&&['deploy','battle_start'].includes(String(skill.timing||''));
+      const activeSkill=skill?.type==='active'&&Number(skill.cost||0)<=20;
+      if(!openingPassive&&!activeSkill)continue;
+      if(openingPassive&&skill.selfCond?.type==='deploy_turn_gte'&&Number(skill.selfCond.val)>1)continue;
+      if(skill.selfCond?.type==='ally_has_attr'&&!attrs.some((a,j)=>j!==i&&a.includes(String(skill.selfCond.attr||''))))continue;
+      const entries=[{e:skill.mainEffect,target:skill.targetType,cond:skill.targetCond},...(skill.hasSubEffect&&skill.subEffect?[{e:skill.subEffect,target:skill.subEffect.targetType==='same_main_target'?skill.targetType:skill.subEffect.targetType,cond:skill.subEffect.targetType==='same_main_target'?skill.targetCond:skill.subEffect.targetCond}]:[])];
+      for(const {e,target,cond} of entries){
+        const type=String(e?.type||''),v=Number(e?.val||0);
+        if(!['all_ally','all_allies'].includes(String(target||'')))continue;
+        const beneficial=(['mod_atk_ratio','mod_atk_val','mod_speed','shield','mod_max_hp_val','damage_dealt_ratio'].includes(type)&&v>0)||(type==='damage_taken_ratio'&&v<0);
+        if(!beneficial)continue;
+        const matches=attrs.reduce((sum,a,j)=>{
+          if(cond?.type==='attr_is'&&!a.includes(String(cond.attr||'')))return sum;
+          const stat=trio[j]?.stats||{};
+          if(cond?.type==='atk_val_lte'&&Number(stat.atk)>Number(cond.val))return sum;
+          if(cond?.type==='atk_val_gte'&&Number(stat.atk)<Number(cond.val))return sum;
+          if(cond?.type==='hp_val_lte'&&Number(stat.hp)>Number(cond.val))return sum;
+          return sum+1;
+        },0);
+        if(matches<2)continue;
+        let impact=type==='mod_atk_ratio'?Math.abs(v)/12:type==='mod_speed'?Math.abs(v)/15:type==='shield'?Math.abs(v)/700:type==='damage_taken_ratio'?Math.abs(v)/15:type==='mod_atk_val'?Math.abs(v)/500:Math.abs(v)/22;
+        impact=Math.min(5,impact);
+        const mult=(openingPassive?1.65:0.74)*(Number(e.duration)===-1?1.45:1);
+        const bonus=impact*matches*mult;
+        score+=bonus;openingTeamBuffs++;
+        if(openingPassive&&matches>=2)reasons.push(`${trio[i].name}の登場時全体強化が先発${matches}体に適用`);
+      }
+    }
+  }
+  if(openingTeamBuffs>=2)score+=Math.min(13,(openingTeamBuffs-1)*5);
+  const hasDamage=ks.some(k=>k.offense>=2.3),hasAp=ks.some(k=>k.ap>=2.0);
+  const hasSupport=ks.some(k=>k.support>=2.5),hasSustain=ks.some(k=>k.sustain>=2.6);
+  for(let i=0;i<3;i++){
+    const card=trio[i],k=ks[i],skills=Array.isArray(card.skills)?card.skills:[];
+    const needs=k.conditions||[];
+    for(const condition of needs){
+      if(condition.startsWith('ally:')){
+        const attr=condition.slice(5);
+        if(attrs.some((a,j)=>j!==i&&a.includes(attr))){score+=3;reasons.push(`${card.name}の味方属性条件が先発で成立`);}
+        else score-=2;
+      }else if(setups.has(condition)){
+        score+=3.2;reasons.push(`状態異常「${condition}」の付与と条件技が連携`);
+      }else score-=2.3;
+    }
+    if(k.offense>=3.5){
+      if(ks.some((x,j)=>j!==i&&(x.support>=2.5||x.ap>=2.5))){score+=3.5;reasons.push(`${card.name}の攻撃を先発支援で強化`);}
+      if(ks.some((x,j)=>j!==i&&x.sustain>=3.5))score+=1.5;
+    }
+    // A controller whose best effects only work after a turn or more is less crucial on turn 1.
+    for(const sk of skills){
+      if(sk.type==='passive'&&sk.timing==='deploy'&&sk.selfCond?.type==='deploy_turn_gte'&&Number(sk.selfCond.val)>1)score-=0.3;
+    }
+  }
+  if(hasDamage&&hasAp&&hasSupport)score+=3;
+  if(hasDamage&&hasSustain)score+=2;
+  if(!hasDamage)score-=12;
+  if(!hasSupport&&!hasSustain&&!hasAp)score-=9;
+  if(ks.filter(k=>k.offense>4.2&&k.support<2&&k.sustain<2).length>=2&&!hasSustain&&!hasAp)score-=7;
+  return {score:Math.max(-20,Math.min(70,score)),reasons:[...new Set(reasons)].slice(0,4)};
+}
+
 function prefRivalQualityRosterUnits(region, units) {
   const roster=Array.isArray(units)?units:[];
   if(!region||region.isPlayer)return roster.slice();
@@ -3003,6 +3179,7 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
   pick(cards,0,Math.min(3,cards.length),[]);
   const scoredBuilds=[];
   const cardProfile=new Map(cards.map(x=>[String(x.inst.id),prefCardProfile(x.card)]));
+  const openingKit=new Map(cards.map(x=>[String(x.inst.id),prefOpeningKit(x.card)]));
   const topTier=['S','A','B'].includes(String(region.tier||''));
   const ownedFiveCount=cards.filter(x=>(cardProfile.get(String(x.inst.id))||prefCardProfile(x.card)).rank===5).length;
   const highValueFiveCount=cards.filter(x=>(cardProfile.get(String(x.inst.id))||prefCardProfile(x.card)).rank===5&&Number(x.card?.value||0)>=PREF_GACHA_VALUE_LIMITS[5]).length;
@@ -3069,6 +3246,8 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     if(rankFiveCount(selected)>PREF_BATTLE_RANK5_LIMIT)continue;
     const activeCards=selected.map(x=>x.card);const activeIds=selected.map(x=>x.inst.id);
     const activeProfiles=selected.map(x=>cardProfile.get(String(x.inst.id))||prefCardProfile(x.card));
+    const activeKits=selected.map(x=>openingKit.get(String(x.inst.id)));
+    const concrete=prefConcreteOpeningSynergy(activeCards,activeKits);
     const activeRoles=new Set(activeProfiles.map(x=>x.role).filter(Boolean));
     const activeScore=selected.reduce((sum,x)=>sum+(cardScore.get(String(x.inst.id))||0),0);
     // Broad ally buffs lose value if their controller waits on the bench. Prioritize fielding them,
@@ -3080,7 +3259,10 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     let score=activeScore;
     const openingPlan=prefAIActiveTrioPlanEvaluation(activeCards,activeProfiles,profile);
     score+=openingPlan.score;
-    if(activeTeamBuffControllers)score+=activeTeamBuffControllers*(7.5+(ownedControllerCount<=1?5.0:ownedControllerCount<=2?2.5:0));
+    // Actual opening skills count substantially more than the card label or price.
+    score+=concrete.score*1.7;
+    score+=activeKits.reduce((sum,k)=>sum+k.value*2.0,0);
+    if(activeTeamBuffControllers)score+=activeTeamBuffControllers*(4.5+(ownedControllerCount<=1?2.0:0));
     // Make the first three slots a coherent opening team. Prefer an attacker, a defender/healer,
     // and a controller/support when suitably strong cards exist, without banning all-attacker rush builds.
     if(hasAttacker)score+=2.8;
@@ -3096,7 +3278,7 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     score+=activeProfiles.reduce((sum,x)=>sum+Math.min(7,x.onFieldPassiveValue),0);
     // AP-threshold passives may benefit from a quiet reserve slot when active skills would spend the needed AP.
     const apBankRisk=activeProfiles.reduce((sum,x)=>sum+x.apThresholdPassiveValue,0);
-    score-=apBankRisk*(0.9+0.4*profile.cardIQ/100);
+    score-=apBankRisk*0.25; // Do not bench a strong controller merely because its passive has an AP threshold.
     // Score actual two-card reserve options, obeying the shared ★5 cap. Do not count unselected
     // owned cards as though they were on the five-card battle roster.
     const reservePool=cards.filter(x=>!activeIds.includes(x.inst.id)&&!(rankFiveCount(selected)>=PREF_BATTLE_RANK5_LIMIT&&cardProfile.get(String(x.inst.id))?.rank===5));
@@ -3122,7 +3304,18 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     const reserveProfiles=reserveEntries.map(x=>cardProfile.get(String(x.inst.id))||prefCardProfile(x.card));
     const reserveHasFrontlineDefender=reserveProfiles.some(x=>x.tags.has('frontline_defender'));
     if(hasAttacker&&reserveHasFrontlineDefender&&!hasFrontlineDefender)score-=6.0;
-    score+=reserveEntries.reduce((sum,entry)=>sum+(reserveRanked.find(x=>String(x.entry.inst.id)===String(entry.inst.id))?.value||0)*0.35,0);
+    // Opportunity cost of keeping a broadly useful controller off the opening field:
+    // entry-on-KO is not equivalent to buffing/protecting all three teammates from turn 1.
+    const weakestOpening=Math.min(...activeKits.map(k=>k.value));
+    for(const reserveEntry of reserveEntries){
+      const rk=openingKit.get(String(reserveEntry.inst.id));
+      const rp=cardProfile.get(String(reserveEntry.inst.id));
+      if(rk&&(rk.support>=3||rk.ap>=2.5||rk.sustain>=3)&&rk.value>weakestOpening+1){
+        const delayedOnly=Math.max(0,rk.deploy-rk.value);
+        score-=Math.max(0,rk.value-weakestOpening-1)*2.7*(delayedOnly>2?0.5:1);
+      }
+    }
+    score+=reserveEntries.reduce((sum,entry)=>sum+(reserveRanked.find(x=>String(x.entry.inst.id)===String(entry.inst.id))?.value||0)*0.18,0);
     if(topTier&&ownedFiveCount>=2)score+=Math.min(2,rankFiveCount(selected)+rankFiveCount(reserveEntries))*4.0;
     // Score only pairs actually co-deployed, with a slightly stronger emphasis on explicit synergy.
     for(let i=0;i<activeCards.length;i++)for(let j=i+1;j<activeCards.length;j++)score+=cachedPair(activeCards[i],activeCards[j])*1.28;
@@ -3132,13 +3325,13 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
     // Keep a meaningful fallback team even if a small/old save cannot supply every role.
     if(allActiveTags.has('ap_supply')&&allActiveTags.has('heavy_cost'))score+=3.5;
     if(allActiveTags.has('healing'))score+=1.8;if(allActiveTags.has('shield_defense'))score+=1.8;
-    if(allActiveTags.has('status_debuff')&&allActiveTags.has('status_condition'))score+=3.0;
+    if(activeCards.some((a,i)=>activeCards.some((b,j)=>i!==j&&prefActualStatusChain(a,b))))score+=3.0;
     const attrs=new Set(activeCards.map(c=>String(c.mainAttr||'')).filter(Boolean));
     if(activeCards.length===3&&attrs.size===1&&profile.primaryStrategy==='attribute')score+=2.5;
     const buildQuality=0.50+profile.cardIQ/200;
     const scenarioEstimate=prefEstimateBuildScenarios(region,activeCards,reserveCards,mags);
     score=score*buildQuality+scenarioEstimate.mean*0.45+opponentCounterBonus(activeCards)+prefCardEstimateError(profile.cardIQ);
-    scoredBuilds.push({active:activeIds,reserve:reserveEntries.map(x=>x.inst.id),score,scenarioMean:scenarioEstimate.mean,scenarios:scenarioEstimate.scenarios,activeNames:activeCards.map(c=>c.name||'キャラ'),reserveNames:reserveCards.map(c=>c.name||'キャラ'),attrs:[...attrs],roleCoverage:[...activeRoles],openingPlan:{title:openingPlan.title,coreName:openingPlan.coreName,score:openingPlan.score,reasons:openingPlan.reasons}});
+    scoredBuilds.push({active:activeIds,reserve:reserveEntries.map(x=>x.inst.id),score,concreteReasons:concrete.reasons,concreteScore:concrete.score,scenarioMean:scenarioEstimate.mean,scenarios:scenarioEstimate.scenarios,activeNames:activeCards.map(c=>c.name||'キャラ'),reserveNames:reserveCards.map(c=>c.name||'キャラ'),attrs:[...attrs],roleCoverage:[...activeRoles],openingPlan:{title:openingPlan.title,coreName:openingPlan.coreName,score:openingPlan.score,reasons:openingPlan.reasons}});
   }
   scoredBuilds.sort((a,b)=>b.score-a.score);
   // Keep the three highest-scoring builds; small randomness remains only among genuinely close candidates.
@@ -3149,9 +3342,9 @@ function prefChooseRivalLoadout(regionId,opponentId=null) {
   const reserve=best?.reserve||fallback?.reserve||[];
   const reservedApThresholdCards=reserve.filter(id=>prefCardProfile(cardById(id)).apThresholdPassiveValue>=3).map(id=>cardById(id)?.name||'AP条件パッシブ持ち');
   const chosenPlan=best?.openingPlan;
-  const reasons=[`カード選びの賢さ${profile.cardIQ}/100で構築候補を評価`,`主戦術「${(PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)||{}).label||'対応型'}」と副戦術を反映`,`先発3体の勝ち筋を先に評価：${chosenPlan?.title||'基礎性能と役割補完'}`,...(chosenPlan?.coreName?[`中心となる主力候補：「${chosenPlan.coreName}」`]:[]),...(chosenPlan?.reasons||[]),`控えは先発3枚の完成を優先したうえで、交代後の役割補充・登場時パッシブ・追加連携を比較`,`AP条件パッシブは有用性と必要APを見て、APを温存しやすい控え配置も評価`,...(reservedApThresholdCards.length?[`AP条件パッシブを持つ控え候補：${reservedApThresholdCards.join('、')}`]:[]),`候補${candidateSets.length}案を効果解析で評価し、上位${shortlist.length}案を3つの想定戦況（速攻・長期戦・連携成立）で平均比較`];
+  const reasons=[`カード選びの賢さ${profile.cardIQ}/100で構築候補を評価`,`主戦術「${(PREF_AI_STRATEGIES.find(x=>x.id===profile.primaryStrategy)||{}).label||'対応型'}」と副戦術を反映`,`先発3体の勝ち筋を先に評価：${chosenPlan?.title||'基礎性能と役割補完'}`,...(chosenPlan?.coreName?[`中心となる主力候補：「${chosenPlan.coreName}」`]:[]),...(chosenPlan?.reasons||[]),...(best?.concreteReasons||[]),`控えは先発3枚の完成を優先したうえで、交代後の役割補充・登場時パッシブ・追加連携を比較`,`AP条件パッシブは有用性と必要APを見て、APを温存しやすい控え配置も評価`,...(reservedApThresholdCards.length?[`AP条件パッシブを持つ控え候補：${reservedApThresholdCards.join('、')}`]:[]),`候補${candidateSets.length}案を効果解析で評価し、上位${shortlist.length}案を3つの想定戦況（速攻・長期戦・連携成立）で平均比較`];
   if(opponentIntel?.confidence>0.15)reasons.push(`調査・対戦記憶の情報を対策に使用（信頼度${Math.round(opponentIntel.confidence*100)}%）`);
-  prefRecordAIThought(region,'編成構築','出撃メンバーを選出',reasons,{activeNames:best?.activeNames||active.map(id=>cardById(id)?.name||'キャラ'),reserveNames:best?.reserveNames||reserve.map(id=>cardById(id)?.name||'キャラ'),apThresholdReserveNames:reservedApThresholdCards,score:best?.score,alternatives:shortlist.map(x=>({names:x.activeNames,reserveNames:x.reserveNames,roles:x.roleCoverage,score:Math.round(x.score*10)/10,scenarioMean:Math.round((x.scenarioMean||0)*10)/10,scenarios:x.scenarios,attributes:x.attrs,openingPlan:x.openingPlan})),openingPlan:chosenPlan||null,opponentId:opponentId||null,opponentIntelConfidence:opponentIntel?.confidence||0});
+  prefRecordAIThought(region,'編成構築','出撃メンバーを選出',reasons,{activeNames:best?.activeNames||active.map(id=>cardById(id)?.name||'キャラ'),reserveNames:best?.reserveNames||reserve.map(id=>cardById(id)?.name||'キャラ'),apThresholdReserveNames:reservedApThresholdCards,score:best?.score,alternatives:shortlist.map(x=>({names:x.activeNames,reserveNames:x.reserveNames,roles:x.roleCoverage,score:Math.round(x.score*10)/10,scenarioMean:Math.round((x.scenarioMean||0)*10)/10,scenarios:x.scenarios,attributes:x.attrs,openingPlan:x.openingPlan,openingSkillScore:x.concreteScore})),openingPlan:chosenPlan||null,opponentId:opponentId||null,opponentIntelConfidence:opponentIntel?.confidence||0});
   return prefNormalizeLoadoutSelection(active.slice(0,3),reserve.slice(0,2),rosterUnits);
 }
 function prefDefaultLoadoutFallback(regionId) {
@@ -3775,6 +3968,31 @@ openCardDetail = function(cardId, options={}) {
   prefOriginalOpenCardDetail(cardId,options);
 };
 
+// The result-modal button must await the previous queue invocation (if its cleanup is still
+// pending) and start a NEW continuation. A single ignored click used to require a page refresh.
+let prefPostBattleAdvancePromise=null;
+async function prefAdvanceAfterPlayerBattle(){
+  if(prefPostBattleAdvancePromise)return prefPostBattleAdvancePromise;
+  const run=(async()=>{
+    if(!campaignState?.turnProcessing){prefHideTurnLoading();prefRenderAll();return;}
+    prefShowTurnLoading('残りの代表の処理を再開中','京都府の対戦結果を保持し、未処理の組み合わせから続行しています…',35);
+    const earlier=prefProcessingPromise;
+    if(earlier){
+      await earlier;
+      // Some post-result events fire before the earlier continuation's finally callback
+      // resets the global promise. Only clear the *same, already awaited* promise.
+      if(prefProcessingPromise===earlier)prefProcessingPromise=null;
+    }
+    await prefYieldToBrowser();
+    if(campaignState?.turnProcessing&&campaignState.turnProcessing.stage!=='player-preview'&&campaignState.turnProcessing.stage!=='awaiting-capacity'){
+      await prefContinueTurn();
+    }
+  })();
+  prefPostBattleAdvancePromise=run;
+  try {return await run;}
+  finally {if(prefPostBattleAdvancePromise===run)prefPostBattleAdvancePromise=null;}
+}
+
 // Battle engine integration: player-vs-rival battles use the full interactive engine; all other matches run it headlessly.
 const prefOriginalShowActionPopup = showActionPopup;
 showActionPopup = function(...args) { if(window.__campaignHeadlessBattle || campaignHeadlessBattle) return Promise.resolve(); return prefOriginalShowActionPopup(...args); };
@@ -3798,7 +4016,18 @@ showBattleResultModal = function(winner) {
   }
   const rematch=document.getElementById('battle-result-rematch'),back=document.getElementById('battle-result-back');
   if(rematch){rematch.classList.add('hidden');rematch.onclick=null;}
-  if(back){back.classList.remove('hidden');back.innerText='次へ：残りの代表を処理';back.onclick=()=>{modal.classList.add('hidden');battleExecutionRunning=false;switchView('prefecture');prefContinueTurn();};}
+  if(back){back.classList.remove('hidden');back.innerText='次へ：残りの代表を処理';back.onclick=async()=>{
+    // Settlement is already idempotent. The button never starts a fresh player battle.
+    back.disabled=true;
+    try {
+      modal.classList.add('hidden');battleExecutionRunning=false;switchView('prefecture');
+      await prefAdvanceAfterPlayerBattle();
+    } catch(err) {
+      console.error('[Prefecture] post-battle continuation failed',err);
+      prefHideTurnLoading();
+      prefShowModal('残りの対戦処理を再開できませんでした',`確定した試合結果は保存されています。ゲーム画面の「ターン処理を再開する」から再試行できます。<pre class="text-[10px] text-rose-200 whitespace-pre-wrap mt-2">${prefEsc(err?.message||String(err))}</pre>`,[{label:'閉じる',action:'close-modal'},{label:'処理を再開',action:'resume-turn-processing',style:'primary'}]);
+    } finally {back.disabled=false;}
+  };}
   modal.classList.remove('hidden');
 };
 
