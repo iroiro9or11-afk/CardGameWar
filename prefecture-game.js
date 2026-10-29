@@ -1763,10 +1763,20 @@ function prefEnsurePreviewResumeButton() {
   button.textContent=waiting?'⚔️ 編成を確定して対戦開始':recoverable?'🛠️ 対戦準備を復旧する':'🔄 ターン処理を再開する';
   button.title=waiting?'対戦相手決定後の編成確認へ進みます':recoverable?'保存済みの未決着対戦を編成確認へ戻します':'保存済みのターン処理を再開します';
 }
+// v1.0.74: 非表示タブの大量のカードHTML/画像を毎ターン再生成しない。
+// switchViewのラッパーが各タブの表示時に最新データを描画するため、状態は失われない。
 function prefRenderAll() {
   prefSyncCampaignClones();
-  prefRenderDashboard();prefRenderHolder();prefRenderMarket();prefRenderGacha();prefRenderRanking();prefRenderInvestigations();prefEnsurePreviewResumeButton();
+  const visible=document.querySelector('.view-section:not(.hidden)')?.id || '';
+  prefRenderDashboard();
+  if(visible==='view-pref-holder')prefRenderHolder();
+  else if(visible==='view-pref-market')prefRenderMarket();
+  else if(visible==='view-pref-gacha')prefRenderGacha();
+  else if(visible==='view-pref-ranking')prefRenderRanking();
+  else if(visible==='view-pref-investigations')prefRenderInvestigations();
+  prefEnsurePreviewResumeButton();
 }
+
 const prefOriginalSwitchView = switchView;
 switchView = function(viewId) {
   prefOriginalSwitchView(viewId);
@@ -1782,6 +1792,7 @@ switchView = function(viewId) {
 function prefShowModal(title, body, buttons=[]) {
   const modal=document.getElementById('pref-modal');if(!modal)return;
   const closeButton=document.getElementById('pref-modal-close-btn');if(closeButton)closeButton.classList.remove('hidden');
+  modal.classList.toggle('pref-gacha-dialog', /^✨\s*(?:ガチャ結果|カードを召喚中)/.test(title));
   document.getElementById('pref-modal-title').textContent=title;
   document.getElementById('pref-modal-body').innerHTML=body;
   document.getElementById('pref-modal-footer').innerHTML=buttons.map(b=>`<button data-pref-action="${prefEsc(b.action)}" ${b.id?`data-id="${prefEsc(b.id)}"`:''} class="px-4 py-2.5 rounded-lg text-xs font-black ${b.style==='primary'?'bg-amber-500 hover:bg-amber-400 text-slate-950':b.style==='danger'?'bg-rose-700 hover:bg-rose-600 text-white':b.style==='green'?'bg-emerald-500 hover:bg-emerald-400 text-slate-950':'bg-slate-800 hover:bg-slate-700 text-slate-100'}">${prefEsc(b.label)}</button>`).join('');
@@ -1899,9 +1910,9 @@ async function prefPullGacha(key) {
   const fallback=selected.fallback?`<p class="text-xs text-amber-200 mt-2">希望ランクのカードが残っていないため、${selected.noUnits?'マジックカードに切り替えました':`★${selected.rank}で代用しました`}。</p>`:'';
   const zone=campaignState.instances[resultCard?.id]?.zone;
   const bundledMagic=campaignState.logs?.slice(-5).find(x=>String(x.message||x.text||'').includes('抱き合わせでマジックカード'))?.message||'';const location=zone==='market'?'<p class="text-xs text-cyan-200 mt-2">重複のため市場へ自動出品されました。</p>':zone==='pending'?`<p class="text-xs text-amber-200 mt-2">所持上限${resultCard?.kind==='magic'?`（マジック${PREF_MAGIC_LIMIT}枚）`:''}のため、既存カードまたは新カードを選んで市場へ出品してください。</p>`:'';
-  const cardBlock=c?`<div class="grid grid-cols-2 gap-3 mt-3 items-start"><div><div class="text-[10px] text-amber-200 font-black mb-1">${c?.cardType==='magic'?'確率枠のマジックカード':'キャラカード'}</div><div class="mx-auto w-full max-w-[14rem]">${prefCardDisplay(resultCard.id,{small:true})}</div><div class="text-center mt-2"><div class="font-black text-white text-sm">${prefEsc(c.name)}</div><div class="text-emerald-200 font-black mt-1">価値 ${prefFormatMoney(prefCardValue(c))}</div></div></div>${bundledMagicInstance?(()=>{const mc=prefCardForInstance(bundledMagicInstance.id)||prefTemplate(bundledMagicInstance.templateId);return `<div><div class="text-[10px] text-violet-200 font-black mb-1">確定マジック</div><div class="mx-auto w-full max-w-[14rem]">${prefCardDisplay(bundledMagicInstance.id,{small:true})}</div><div class="text-center mt-2"><div class="font-black text-white text-sm">${prefEsc(mc?.name||'マジックカード')}</div><div class="text-emerald-200 font-black mt-1">価値 ${prefFormatMoney(prefCardValue(mc))}</div></div></div>`;})():''}</div><div class="text-[10px] text-slate-500 mt-2">カード画像をタップすると詳細を確認できます</div>`:'<p class="text-slate-400 text-sm">カードの登録データが見つかりませんでした。</p>';
+  const cardBlock=c?`<div class="pref-gacha-cards grid grid-cols-2 gap-3 mt-3 items-start"><div><div class="text-[10px] text-amber-200 font-black mb-1">${c?.cardType==='magic'?'確率枠のマジックカード':'キャラカード'}</div><div class="pref-gacha-card mx-auto w-full max-w-[14rem]">${prefCardDisplay(resultCard.id,{small:true})}</div><div class="text-center mt-2"><div class="font-black text-white text-sm">${prefEsc(c.name)}</div><div class="text-emerald-200 font-black mt-1">価値 ${prefFormatMoney(prefCardValue(c))}</div></div></div>${bundledMagicInstance?(()=>{const mc=prefCardForInstance(bundledMagicInstance.id)||prefTemplate(bundledMagicInstance.templateId);return `<div><div class="text-[10px] text-violet-200 font-black mb-1">確定マジック</div><div class="pref-gacha-card mx-auto w-full max-w-[14rem]">${prefCardDisplay(bundledMagicInstance.id,{small:true})}</div><div class="text-center mt-2"><div class="font-black text-white text-sm">${prefEsc(mc?.name||'マジックカード')}</div><div class="text-emerald-200 font-black mt-1">価値 ${prefFormatMoney(prefCardValue(mc))}</div></div></div>`;})():''}</div><div class="text-[10px] text-slate-500 mt-2">カード画像をタップすると詳細を確認できます</div>`:'<p class="text-slate-400 text-sm">カードの登録データが見つかりませんでした。</p>';
   const fundsAfterGacha=prefFormatMoney(prefPlayerRegion()?.funds||0);
-  prefShowModal('✨ ガチャ結果',`<div class="text-center"><div class="inline-flex px-3 py-1 rounded-full bg-violet-950 border border-violet-500/50 text-violet-200 text-xs font-black">${prefEsc(g.label)} · ${prefFormatMoney(g.price)}</div><div class="mt-3 mx-auto inline-flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-950/50 px-4 py-2 text-sm"><span class="text-emerald-300">現在資金</span><b class="text-white text-lg">${fundsAfterGacha}</b></div><div class="text-4xl mt-3 animate-pulse">${c?.cardType==='magic'?'📜':'🌟'}</div>${cardBlock}${fallback}${location}</div>`,[{label:'結果を閉じる',action:'gacha-result-close'},{label:'続けて引く',action:'gacha-pull-again',id:key,style:'primary'}]);
+  prefShowModal('✨ ガチャ結果',`<div class="text-center"><div class="inline-flex px-3 py-1 rounded-full bg-violet-950 border border-violet-500/50 text-violet-200 text-xs font-black">${prefEsc(g.label)} · ${prefFormatMoney(g.price)}</div><div class="pref-gacha-money mt-3 mx-auto inline-flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-950/50 px-4 py-2 text-sm"><span class="text-emerald-300">現在資金</span><b class="text-white text-lg">${fundsAfterGacha}</b></div><div class="pref-gacha-emblem text-4xl mt-3 animate-pulse">${c?.cardType==='magic'?'📜':'🌟'}</div>${cardBlock}${fallback}${location}</div>`,[{label:'結果を閉じる',action:'gacha-result-close'},{label:'続けて引く',action:'gacha-pull-again',id:key,style:'primary'}]);
 }
 
 function prefShowBattleSelection(finalizing=false) {

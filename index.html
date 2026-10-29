@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.72</title>
+  <title>都道府県カード戦争 v1.0.74</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     /* 4体横1列の戦闘フィールド: offline-tailwind.css(v1.0.64)にはgrid-cols-4が未収録だった。 */
@@ -657,6 +657,192 @@
     }
   </style>
 
+
+  <style id="desktop-battle-card-layout-v1073">
+    /* 1.0.73: Reuse the exact mobile card art/name/stats/star layout; do not distort the 3:4 frame. */
+    @media (min-width:1100px) and (min-height:620px) {
+      #view-battle:not(.hidden) {
+        grid-template-columns:minmax(0,1fr) clamp(314px,26vw,390px) !important;
+        grid-template-rows:42px minmax(75px,.85fr) minmax(165px,2.2fr) minmax(93px,1.05fr) minmax(42px,.55fr) !important;
+        gap:6px 12px !important;
+      }
+      #view-battle > .space-y-4:not(#enemy-magic-public-panel) {
+        grid-template-rows:minmax(0,1fr) 38px minmax(0,1fr) !important;
+        gap:4px !important;
+      }
+      #view-battle #field-player, #view-battle #field-enemy {
+        grid-template-columns:repeat(4,minmax(0,1fr)) !important;
+        gap:clamp(3px,.55vw,10px) !important;
+        justify-items:center !important; align-items:start !important;
+      }
+      #view-battle #field-player > div, #view-battle #field-enemy > div {
+        min-width:0 !important; padding:2px !important; gap:0 !important;
+        width:100% !important; max-width:210px !important;
+        height:auto !important; align-self:start !important;
+      }
+      #view-battle #field-player > div > .relative,
+      #view-battle #field-enemy > div > .relative {
+        flex:none !important; height:auto !important; overflow:visible !important;
+        width:min(100%,clamp(112px,calc((100dvh - 160px) * .223),186px)) !important;
+        margin-inline:auto !important;
+      }
+      #view-battle #field-player .card-element,
+      #view-battle #field-enemy .card-element {
+        box-sizing:border-box !important; display:flex !important; flex-direction:column !important;
+        width:100% !important; max-width:none !important; height:auto !important;
+        max-height:none !important; min-height:0 !important; flex:none !important;
+        aspect-ratio:3/4 !important; border-radius:10px !important;
+        overflow:hidden !important; padding:0 !important;
+      }
+      #view-battle #field-player .card-element > .relative,
+      #view-battle #field-enemy .card-element > .relative {
+        height:58% !important; flex:0 0 58% !important; min-height:0 !important;
+        overflow:hidden !important; border-radius:0 !important;
+      }
+      #view-battle #field-player .card-element > .h-\[42\%\],
+      #view-battle #field-enemy .card-element > .h-\[42\%\] {
+        height:42% !important; flex:0 0 42% !important;
+        display:flex !important; flex-direction:column !important;
+        gap:clamp(1px,.27vh,3px) !important;
+        padding:clamp(2px,.37vh,5px) clamp(3px,.45vw,8px) !important;
+      }
+      #view-battle #field-player .card-element img,
+      #view-battle #field-enemy .card-element img {width:100% !important;height:100% !important;object-fit:cover !important;}
+      #view-battle #field-player .card-element .grid,
+      #view-battle #field-enemy .card-element .grid {display:grid !important;grid-template-columns:repeat(3,minmax(0,1fr)) !important;gap:3px !important;}
+      #view-battle #field-player .card-element .grid > div,
+      #view-battle #field-enemy .card-element .grid > div {padding:2px 1px !important;min-width:0 !important;}
+      #view-battle #field-player .card-element .font-black.text-sm,
+      #view-battle #field-enemy .card-element .font-black.text-sm {font-size:clamp(9px,.93vw,13px) !important;}
+      #view-battle #field-player .card-element .mt-auto,
+      #view-battle #field-enemy .card-element .mt-auto {margin-top:auto !important;}
+      #view-battle #field-player > div > .mt-2,
+      #view-battle #field-enemy > div > .mt-2 {margin-top:3px !important;}
+      #view-battle #field-player .battle-detail-btn,
+      #view-battle #field-enemy .battle-detail-btn {font-size:9px !important;min-height:21px !important;padding:3px !important;}
+      #view-battle #timeline-list {overflow-x:hidden !important;}
+      /* Right column: show spell thumbnails as proportionate cards, not squeezed landscape shapes. */
+      #view-battle #enemy-magic-hand-grid, #view-battle #magic-hand-grid {
+        min-height:0 !important; display:flex !important; flex-wrap:nowrap !important;
+        align-items:start !important; gap:4px !important; padding:3px !important;
+      }
+      #view-battle #enemy-magic-hand-grid > *, #view-battle #magic-hand-grid > * {
+        min-width:0 !important; flex:0 0 min(calc((100% - 16px)/5),66px) !important;
+        max-width:66px !important; height:auto !important; max-height:none !important;
+      }
+      #view-battle #enemy-magic-hand-grid .card-element,
+      #view-battle #magic-hand-grid .card-element {
+        width:100% !important; height:auto !important; min-height:0 !important;
+        max-height:none !important; flex:none !important; aspect-ratio:3/4 !important;
+      }
+      #view-battle #enemy-magic-hand-grid .card-element > .relative,
+      #view-battle #magic-hand-grid .card-element > .relative {height:58% !important;flex:0 0 58% !important;}
+      #view-battle #enemy-magic-hand-grid .card-element > .h-\[42\%\],
+      #view-battle #magic-hand-grid .card-element > .h-\[42\%\] {height:42% !important;flex:0 0 42% !important;}
+      /* Compact but not tiny: action dialogue and result dialogue gain a little space. */
+      #action-popup-modal > #popup-box {
+        width:min(665px,calc(100vw - 36px)) !important;
+        max-width:665px !important;
+        max-height:min(82dvh,645px) !important;
+        padding:14px 18px !important;
+        overflow:hidden !important;
+      }
+      #popup-action-name {font-size:23px !important;}
+      #popup-actor-panel .aspect-square,#popup-target-panel .aspect-square {
+        width:108px !important;height:108px !important;max-width:108px !important;
+      }
+      #popup-action-description {max-height:66px !important;overflow:hidden !important;}
+      #popup-target-cards {max-height:180px !important;overflow:hidden !important;}
+      #battle-result-modal > div {max-width:570px !important;}
+      /* Skill descriptions stay expanded; two-column arrangement reduces needed height. */
+      #card-detail-modal > div {
+        width:min(795px,calc(100vw - 34px)) !important;
+        max-width:795px !important;
+        max-height:84dvh !important;
+        padding:10px 13px !important; overflow:hidden !important;
+      }
+      #card-detail-modal > div > div:nth-child(2) {
+        display:grid !important;grid-template-columns:150px minmax(0,1fr) !important;
+        align-items:start !important;gap:12px !important;
+        overflow:hidden !important;min-height:0 !important;
+        flex:1 1 auto !important;
+      }
+      #card-detail-modal > div > div:nth-child(2) > #detail-card-body {
+        display:grid !important;grid-template-columns:repeat(2,minmax(0,1fr)) !important;
+        align-content:start !important;gap:5px !important;
+        overflow:hidden !important;max-height:none !important;
+        padding:8px !important;font-size:11px !important;
+      }
+      #detail-card-body > b:first-child {grid-column:1/-1 !important;}
+      #detail-card-body > .text-purple-100 {grid-column:1/-1 !important;}
+      #detail-card-body > .skill-compact-detail {min-width:0 !important; margin:0 !important;break-inside:avoid;}
+      #detail-card-body .skill-detail-desc {font-size:10px !important;line-height:1.35 !important;}
+      #detail-card-body > .mt-3 {grid-column:1/-1 !important;}
+      #detail-card-image-wrapper {width:140px !important;max-width:140px !important;}
+      /* Campaign gacha is specifically smaller than generic campaign dialogs. */
+      #pref-modal.pref-gacha-dialog > div {
+        width:min(455px,calc(100vw - 32px)) !important;max-width:455px !important;
+        max-height:min(83dvh,650px) !important;overflow:hidden !important;
+        display:flex !important;flex-direction:column !important;
+      }
+      #pref-modal.pref-gacha-dialog > div > div:first-child,
+      #pref-modal.pref-gacha-dialog > div > div:last-child {flex:0 0 auto !important;padding:9px 12px !important;}
+      #pref-modal.pref-gacha-dialog #pref-modal-title {font-size:15px !important;}
+      #pref-modal.pref-gacha-dialog #pref-modal-body {
+        min-height:0 !important;flex:1 1 auto !important;
+        overflow:hidden !important;padding:7px 10px !important;
+      }
+      #pref-modal.pref-gacha-dialog #pref-modal-body .pref-gacha-cards {gap:8px !important;margin-top:6px !important;}
+      #pref-modal.pref-gacha-dialog #pref-modal-body .pref-gacha-card {max-width:135px !important;}
+      #pref-modal.pref-gacha-dialog #pref-modal-body .pref-gacha-cards:has(> :only-child) {grid-template-columns:1fr !important;justify-items:center !important;}
+      #pref-modal.pref-gacha-dialog #pref-modal-body .pref-gacha-card .card-element {
+        aspect-ratio:3/4 !important;width:100% !important;height:auto !important;
+        max-height:none !important;
+      }
+      #pref-modal.pref-gacha-dialog #pref-modal-body .pref-gacha-card .card-element > .relative {height:58% !important;flex:0 0 58% !important;}
+      #pref-modal.pref-gacha-dialog #pref-modal-body .pref-gacha-card .card-element > .h-\[42\%\] {height:42% !important;flex:0 0 42% !important;}
+      #pref-modal.pref-gacha-dialog #pref-modal-body .pref-gacha-metadata {margin-top:5px !important;}
+      #pref-modal.pref-gacha-dialog #pref-modal-body .pref-gacha-emblem {font-size:23px !important;margin-top:5px !important;}
+      #pref-modal.pref-gacha-dialog #pref-modal-body .pref-gacha-money {padding:4px 9px !important;margin-top:5px !important;}
+    }
+    @media (min-width:1100px) and (max-height:755px) {
+      #view-battle #field-player > div > .relative,
+      #view-battle #field-enemy > div > .relative {width:min(100%,clamp(99px,calc((100dvh - 180px) * .215),147px)) !important;}
+      #view-battle #field-player .battle-detail-btn,
+      #view-battle #field-enemy .battle-detail-btn {font-size:8px !important;}
+      #card-detail-modal #detail-card-body .skill-detail-desc {line-height:1.24 !important;}
+    }
+    @media (min-width:1100px) and (min-height:620px) {
+      /* Reserve label was taking a separate row above the field after the compact layout. */
+      #view-battle > .space-y-4:not(#enemy-magic-public-panel) > div:first-child > div:first-child {display:none !important;}
+      #view-battle #reserve-enemy {top:0 !important;right:0 !important;}
+      #field-player .card-element > .relative > span,
+      #field-enemy .card-element > .relative > span {font-size:8px !important;max-width:53% !important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+      #action-popup-modal #popup-action-description {max-height:none !important;overflow:visible !important;line-height:1.32 !important;}
+      #action-popup-modal #popup-target-cards {
+        grid-template-columns:repeat(4,minmax(0,1fr)) !important;
+        max-height:none !important;overflow:visible !important;gap:4px !important;
+      }
+      #action-popup-modal #popup-target-cards > div {padding:3px !important;min-width:0 !important;}
+      #action-popup-modal #popup-target-cards .aspect-square {width:100% !important;max-width:60px !important;}
+      #action-popup-modal #popup-target-cards .mt-1 {margin-top:2px !important;}
+      #action-popup-modal #popup-target-cards .text-\[10px\] {font-size:9px !important;line-height:1.2 !important;}
+      #action-popup-modal #popup-box.action-popup-tight {padding:9px 12px !important;}
+      #action-popup-modal #popup-box.action-popup-tight #popup-actor-panel,
+      #action-popup-modal #popup-box.action-popup-tight #popup-target-panel {padding:5px !important;}
+      #action-popup-modal #popup-box.action-popup-tight .aspect-square {width:80px !important;height:80px !important;}
+      #action-popup-modal #popup-box.action-popup-tight #popup-action-name {font-size:18px !important;}
+      #action-popup-modal #popup-box.action-popup-ultra-tight .aspect-square {width:65px !important;height:65px !important;}
+      #action-popup-modal #popup-box.action-popup-ultra-tight .mt-4 {margin-top:3px !important;}
+      #action-popup-modal #popup-box.action-popup-ultra-tight .px-3.py-3 {padding:3px 6px !important;}
+      #action-popup-modal #popup-box.action-popup-ultra-tight .space-y-2 {row-gap:2px !important;}
+    }
+    @media (max-width:1099px) {
+      /* Mobile battlefield retains the original stacked rows and full-size 3:4 card design. */
+      #pref-modal.pref-gacha-dialog > div {max-height:88dvh;}
+    }
+  </style>
+
 </head>
 <body class="bg-slate-950 text-slate-100 font-sans min-h-screen flex flex-col justify-between select-none">
 
@@ -782,7 +968,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.72</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.74</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -2128,35 +2314,45 @@
       });
     }
 
+    // v1.0.74: モバイルでDBのクォータ超過や読込中断が起きても
+    // 無限にロード待ちせず、呼び出し元へエラーを返す。
     function getAllFromStore(store) {
-      return new Promise(res => {
+      return new Promise((resolve,reject) => {
         const tx = db.transaction(store, "readonly");
         const req = tx.objectStore(store).getAll();
-        req.onsuccess = () => res(req.result || []);
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error || new Error(`${store}の読込に失敗`));
+        tx.onabort = () => reject(tx.error || new Error(`${store}の読込が中断`));
       });
     }
 
     function getFromStore(store, key) {
-      return new Promise(res => {
+      return new Promise((resolve,reject) => {
         const tx = db.transaction(store, "readonly");
         const req = tx.objectStore(store).get(key);
-        req.onsuccess = () => res(req.result);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error || new Error(`${store}の読込に失敗`));
+        tx.onabort = () => reject(tx.error || new Error(`${store}の読込が中断`));
       });
     }
 
     function saveToStore(store, item) {
-      return new Promise(res => {
+      return new Promise((resolve,reject) => {
         const tx = db.transaction(store, "readwrite");
         tx.objectStore(store).put(item);
-        tx.oncomplete = () => res();
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error(`${store}の保存に失敗`));
+        tx.onabort = () => reject(tx.error || new Error(`${store}の保存が中断`));
       });
     }
 
     function deleteFromStore(store, id) {
-      return new Promise(res => {
+      return new Promise((resolve,reject) => {
         const tx = db.transaction(store, "readwrite");
         tx.objectStore(store).delete(id);
-        tx.oncomplete = () => res();
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error(`${store}の削除に失敗`));
+        tx.onabort = () => reject(tx.error || new Error(`${store}の削除が中断`));
       });
     }
 
@@ -2187,48 +2383,41 @@
       });
     }
 
+    // v1.0.74: スマホの画像付きカード全件読み込みを起動時に重複させない。
+    // 初期カード生成・旧形式移行の各関数は必要時に自分で再読込／配列更新する。
     async function loadAllData() {
-      allCards = (await getAllFromStore("cards")).map(normalizeBattleCard);
-      allDecks = await getAllFromStore("decks");
+      const started = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      const [storedCards,storedDecks]=await Promise.all([getAllFromStore("cards"),getAllFromStore("decks")]);
+      allCards = storedCards.map(normalizeBattleCard);
+      allDecks = storedDecks;
 
-      if (allCards.length === 0) await seedDefaultCards();
-      allCards = (await getAllFromStore("cards")).map(normalizeBattleCard);
-      await ensureDefaultMagicCards();
-      allCards = (await getAllFromStore("cards")).map(normalizeBattleCard);
-      await ensureDefaultBattleUnits();
-      allCards = (await getAllFromStore("cards")).map(normalizeBattleCard);
+      if (allCards.length === 0) await seedDefaultCards(); // 生成時のみ全件再読込
+      await ensureDefaultMagicCards();                    // 不足した公式カードだけ追加
+      await ensureDefaultBattleUnits();                   // 追加分はallCardsにも反映
       if (allDecks.length === 0) await seedDefaultDeck();
-      allDecks = await getAllFromStore("decks");
       await ensureDefaultDeckMagicCards();
-      allCards = (await getAllFromStore("cards")).map(normalizeBattleCard);
-      allDecks = await getAllFromStore("decks");
-
-      // 初回起動時だけでなく、過去にブラウザへ保存したカードもここでUUIDへ移行する。
-      await normalizeLoadedCards();
-      await migrateExistingUnitHpOnce();
-      allCards = (await getAllFromStore("cards")).map(normalizeBattleCard);
-      allDecks = await getAllFromStore("decks");
+      await normalizeLoadedCards();                       // 保存内容が変わった場合のみ全件再読込
+      const migratedUnits = await migrateExistingUnitHpOnce();
+      if (migratedUnits > 0) allCards = (await getAllFromStore("cards")).map(normalizeBattleCard);
       allRivals = await getAllFromStore("rivals");
 
-      const pNameSetting = await getFromStore("settings", "player_name");
+      const [pNameSetting,pIconSetting,storySetting,storyDraftSetting]=await Promise.all([
+        getFromStore("settings","player_name"),getFromStore("settings","player_icon"),
+        getFromStore("settings","story_mode_state"),getFromStore("settings","story_mode_draft")
+      ]);
       if (pNameSetting) playerName = pNameSetting.value;
-
-      const pIconSetting = await getFromStore("settings", "player_icon");
       if (pIconSetting) playerIcon = pIconSetting.value;
-
-      const storySetting = await getFromStore("settings", "story_mode_state");
       if (storySetting?.value) {
         try { storyModeState = storySetting.value; } catch (_) { storyModeState = null; }
       }
-      const storyDraftSetting = await getFromStore("settings", "story_mode_draft");
       if (storyDraftSetting?.value) {
         try { storyModeDraft = storyDraftSetting.value; } catch (_) { storyModeDraft = null; }
       }
-
       if (allRivals.length === 0 && allDecks.length > 0) await seedDefaultRivals();
 
       refreshAttributeDatalist();
       updatePlayerProfileDisplay();
+      window.__gameCardLoadDurationMs = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - started);
     }
 
     function createDummyCardImage(emoji, bgColor) {
@@ -2541,49 +2730,64 @@
       let changed = migration.cards.some((c,i) => String(c.id)!==String(beforeCards[i]?.id) || c.systemKey!==beforeCards[i]?.systemKey);
       changed = changed || migration.decks.some((d,i) => JSON.stringify(d.unitIds)!==JSON.stringify(beforeDecks[i]?.unitIds||[]) || JSON.stringify(d.magicIds)!==JSON.stringify(beforeDecks[i]?.magicIds||[]));
 
+      const cardsToSave = new Set(migration.cards.filter((c,i)=>String(c.id)!==String(beforeCards[i]?.id) || c.systemKey!==beforeCards[i]?.systemKey).map(c=>String(c.id)));
       for (const card of migration.cards) {
+        let cardChanged = false;
         if (card.value == null || !Number.isFinite(Number(card.value)) || Number(card.value) <= 0) {
           const r = Math.max(1, Math.min(5, Math.round(Number(card.rank || estimateUnitRank(card.stats || {})) || 3)));
           card.value = card.cardType === 'magic' ? 1000000 : ({1:1000000,2:3000000,3:5000000,4:20000000,5:50000000}[r] || 5000000);
-          changed = true;
+          changed = true; cardChanged = true;
         }
         if (card.cardType === 'unit') {
           const beforeSub = Array.isArray(card.subAttrs) ? card.subAttrs : [];
           let nextSub = [...new Set(beforeSub.map(a => String(a || '').trim()).filter(a => a && !MAIN_ATTRIBUTES.includes(a)))].slice(0, 2);
           if (['builtin:card_def_1','builtin:card_def_2','builtin:card_def_3'].includes(card.systemKey)) nextSub = [];
-          if (JSON.stringify(nextSub) !== JSON.stringify(beforeSub)) { card.subAttrs = nextSub; changed = true; }
+          if (JSON.stringify(nextSub) !== JSON.stringify(beforeSub)) { card.subAttrs = nextSub; changed = true; cardChanged = true; }
           // 作成済みキャラクターでランク未設定のものは、現行仕様の推定ランクを初期ランクとして保存する。
-          if (card.rank == null || !Number.isFinite(Number(card.rank)) || Number(card.rank) <= 0) { card.rank=estimateUnitRank(card.stats||{}); changed=true; }
-          if (!isValidUnitRole(card.role)) { card.role=inferUnitRoleFromSkills(card.skills||[],card.stats||{}); changed=true; }
+          if (card.rank == null || !Number.isFinite(Number(card.rank)) || Number(card.rank) <= 0) { card.rank=estimateUnitRank(card.stats||{}); changed=true; cardChanged=true; }
+          if (!isValidUnitRole(card.role)) { card.role=inferUnitRoleFromSkills(card.skills||[],card.stats||{}); changed=true; cardChanged=true; }
         }
-        const normalizeEffectSchema = eff => { if(!eff||typeof eff!=='object')return; if(eff.type==='damage_cut_ratio'){eff.type='damage_taken_ratio';eff.val=-(Number(eff.val)||0);changed=true;} };
+        const normalizeEffectSchema = eff => { if(!eff||typeof eff!=='object')return; if(eff.type==='damage_cut_ratio'){eff.type='damage_taken_ratio';eff.val=-(Number(eff.val)||0);changed=true; cardChanged=true;} };
         if(Array.isArray(card.skills)) card.skills.forEach(sk=>{normalizeEffectSchema(sk.mainEffect);normalizeEffectSchema(sk.subEffect);});
         if(card.effect){normalizeEffectSchema(card.effect.mainEffect);normalizeEffectSchema(card.effect.subEffect);}
         const image = getCardImage(card);
-        if (image && !card.image) { card.image=image; changed=true; }
-        if (Array.isArray(card.skills)) card.skills.forEach(sk => { const nextDesc=buildAutoSkillDescriptionFromData(sk); if(sk.desc!==nextDesc){sk.desc=nextDesc;changed=true;} });
-        if (card.effect) { const nextDesc=buildAutoSkillDescriptionFromData(card.effect); if(card.desc!==nextDesc){card.desc=nextDesc;changed=true;} }
+        if (image && !card.image) { card.image=image; changed=true; cardChanged=true; }
+        if (Array.isArray(card.skills)) card.skills.forEach(sk => { const nextDesc=buildAutoSkillDescriptionFromData(sk); if(sk.desc!==nextDesc){sk.desc=nextDesc;changed=true; cardChanged=true;} });
+        if (card.effect) { const nextDesc=buildAutoSkillDescriptionFromData(card.effect); if(card.desc!==nextDesc){card.desc=nextDesc;changed=true; cardChanged=true;} }
+        if (cardChanged) cardsToSave.add(String(card.id));
       }
       if (!changed) return;
       // IndexedDBのkeyPathは変更できないため、新IDを書き込んだ後に旧キーを削除する。
       // これをしないと、次回起動時に旧カードが再発見されて再移行される。
-      for (const card of migration.cards) await saveToStore('cards', card);
-      for (const [oldId, newId] of migration.idMap.entries()) {
-        if (String(oldId) !== String(newId)) await deleteFromStore('cards', oldId);
-      }
-      for (const deck of migration.decks) await saveToStore('decks', deck);
-      // カードID移行は story_mode_state / story_mode_draft の参照も同時に移行する。
-      await remapPersistedStoryCardReferences(migration.idMap);
+      // 画像を含む数百件を1件ずつ別トランザクションで書かない。
+      // 変更カードだけを1トランザクションで保存し、変更していない画像は再書込しない。
+      await new Promise((resolve,reject)=>{
+        const tx=db.transaction(['cards','decks'],'readwrite');
+        const cardStore=tx.objectStore('cards'),deckStore=tx.objectStore('decks');
+        for(const card of migration.cards) if(cardsToSave.has(String(card.id))) cardStore.put(card);
+        for(const [oldId,newId] of migration.idMap.entries()){
+          if(String(oldId)!==String(newId))cardStore.delete(oldId);
+        }
+        for(let i=0;i<migration.decks.length;i++){
+          const deck=migration.decks[i],old=beforeDecks[i];
+          if(JSON.stringify(deck.unitIds||[])!==JSON.stringify(old?.unitIds||[]) || JSON.stringify(deck.magicIds||[])!==JSON.stringify(old?.magicIds||[]))deckStore.put(deck);
+        }
+        tx.oncomplete=resolve;
+        tx.onerror=()=>reject(tx.error||new Error('カード移行保存に失敗'));
+        tx.onabort=()=>reject(tx.error||new Error('カード移行保存が中断'));
+      });
+      // IDが変わった場合だけストーリーモードの参照を移行する。
+      if([...migration.idMap.entries()].some(([a,b])=>String(a)!==String(b)))await remapPersistedStoryCardReferences(migration.idMap);
       allCards = (await getAllFromStore('cards')).map(normalizeBattleCard);
       allDecks = await getAllFromStore('decks');
     }
 
     async function ensureDefaultMagicCards() {
       const defaults = [
-        { systemKey:'builtin:card_mag_fireball', cardType:'magic', name:'ファイアボール', image:createDummyCardImage('🔥','#7f1d1d'), stats:{priority:999}, effect:{id:'msk_fireball',type:'active',name:'ファイアボール',cost:20,selfCond:{type:'none'},targetType:'select_enemy_1',targetCond:{type:'none'},mainEffect:{type:'dmg_fixed',val:2000,duration:0,stackable:false},hasSubEffect:false,subEffect:{type:'none',val:0} } },
-        { systemKey:'builtin:card_mag_mini_thunder', cardType:'magic', name:'ミニサンダー', image:createDummyCardImage('⚡','#312e81'), stats:{priority:999}, effect:{id:'msk_mini_thunder',type:'active',name:'ミニサンダー',cost:20,selfCond:{type:'none'},targetType:'all_enemy',targetCond:{type:'none'},mainEffect:{type:'dmg_fixed',val:1000,duration:0,stackable:false},hasSubEffect:false,subEffect:{type:'none',val:0} } },
-        { systemKey:'builtin:card_mag_protection', cardType:'magic', name:'プロテクション', image:createDummyCardImage('🛡️','#14532d'), stats:{priority:999}, effect:{id:'msk_protection',type:'active',name:'プロテクション',cost:20,selfCond:{type:'none'},targetType:'all_ally',targetCond:{type:'none'},mainEffect:{type:'damage_cut_ratio',val:20,duration:1,stackable:false},hasSubEffect:false,subEffect:{type:'none',val:0} } },
-        { systemKey:'builtin:card_mag_healing', cardType:'magic', name:'ヒーリング', image:createDummyCardImage('💚','#166534'), stats:{priority:999}, effect:{id:'msk_healing',type:'active',name:'ヒーリング',cost:0,selfCond:{type:'none'},targetType:'select_ally_1',targetCond:{type:'none'},mainEffect:{type:'heal_max_hp_ratio',val:50,duration:0,stackable:false},hasSubEffect:false,subEffect:{type:'none',val:0} } }
+        { systemKey:'builtin:card_mag_fireball', cardType:'magic', name:'ファイアボール', image:()=>createDummyCardImage('🔥','#7f1d1d'), stats:{priority:999}, effect:{id:'msk_fireball',type:'active',name:'ファイアボール',cost:20,selfCond:{type:'none'},targetType:'select_enemy_1',targetCond:{type:'none'},mainEffect:{type:'dmg_fixed',val:2000,duration:0,stackable:false},hasSubEffect:false,subEffect:{type:'none',val:0} } },
+        { systemKey:'builtin:card_mag_mini_thunder', cardType:'magic', name:'ミニサンダー', image:()=>createDummyCardImage('⚡','#312e81'), stats:{priority:999}, effect:{id:'msk_mini_thunder',type:'active',name:'ミニサンダー',cost:20,selfCond:{type:'none'},targetType:'all_enemy',targetCond:{type:'none'},mainEffect:{type:'dmg_fixed',val:1000,duration:0,stackable:false},hasSubEffect:false,subEffect:{type:'none',val:0} } },
+        { systemKey:'builtin:card_mag_protection', cardType:'magic', name:'プロテクション', image:()=>createDummyCardImage('🛡️','#14532d'), stats:{priority:999}, effect:{id:'msk_protection',type:'active',name:'プロテクション',cost:20,selfCond:{type:'none'},targetType:'all_ally',targetCond:{type:'none'},mainEffect:{type:'damage_cut_ratio',val:20,duration:1,stackable:false},hasSubEffect:false,subEffect:{type:'none',val:0} } },
+        { systemKey:'builtin:card_mag_healing', cardType:'magic', name:'ヒーリング', image:()=>createDummyCardImage('💚','#166534'), stats:{priority:999}, effect:{id:'msk_healing',type:'active',name:'ヒーリング',cost:0,selfCond:{type:'none'},targetType:'select_ally_1',targetCond:{type:'none'},mainEffect:{type:'heal_max_hp_ratio',val:50,duration:0,stackable:false},hasSubEffect:false,subEffect:{type:'none',val:0} } }
       ];
       let changed=false;
       for(const c of defaults){
@@ -2598,6 +2802,7 @@
           continue;
         }
         c.id=generateCardId();
+        c.image=c.image(); // 欠損カードを実際に作る場合だけCanvasを生成
         c.desc=buildAutoSkillDescriptionFromData(c.effect);
         await saveToStore('cards',c);
         changed=true;
@@ -2610,7 +2815,9 @@
       const imgUrl = getCardImage(data);
       const cardIdAttr = data.id ? `data-card-id="${data.id}"` : '';
       const safeName = data.name || '名称未設定';
-      const rankCard = data.id ? (Array.isArray(allCards) ? allCards.find(c=>String(c.id)===String(data.id)) : null) : null;
+      const rankCard = data.id ? (typeof prefCardForInstance==='function'
+        ? prefCardForInstance(data.id)
+        : (Array.isArray(allCards) ? allCards.find(c=>String(c.id)===String(data.id)) : null)) : null;
       const rankValue = Number(data.rank ?? data.stats?.rank ?? rankCard?.rank ?? 1);
       const rankStars = Math.max(1, Math.min(5, Math.round(Number.isFinite(rankValue) ? rankValue : 1)));
       const roleId = isValidUnitRole(data.role) ? data.role : (isValidUnitRole(rankCard?.role) ? rankCard.role : inferUnitRoleFromSkills(data.skills || rankCard?.skills || [], data.stats || {hp:data.hp,atk:data.atk}));
@@ -2622,7 +2829,7 @@
         return `
           <div ${cardIdAttr} class="card-element card-aspect w-full bg-slate-900 border-2 border-purple-500/80 rounded-xl overflow-hidden shadow-xl flex flex-col relative hover:scale-[1.02] transition-transform cursor-pointer select-none">
             <div class="relative w-full h-[58%] bg-slate-950 overflow-hidden">
-              ${imgUrl ? `<img src="${imgUrl}" onerror="this.onerror=null;this.src=createDummyCardImage('📜','#3b0764')" class="w-full h-full object-cover">` : `<div class="w-full h-full flex items-center justify-center text-3xl bg-purple-950">📜</div>`}
+              ${imgUrl ? `<img src="${imgUrl}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src=createDummyCardImage('📜','#3b0764')" class="w-full h-full object-cover">` : `<div class="w-full h-full flex items-center justify-center text-3xl bg-purple-950">📜</div>`}
               <span class="absolute top-1 left-1 bg-purple-950/90 border border-purple-500/40 text-purple-200 text-[9px] px-1.5 py-0.5 rounded font-bold">${isSkillDisplay?'SKILL':'MAGIC'}</span>
               <span class="absolute top-1 right-1 bg-sky-950/90 border border-sky-400/50 text-sky-300 text-[9px] px-1.5 py-0.5 rounded font-bold">${prioText}</span>
             </div>
@@ -2637,7 +2844,7 @@
       return `
         <div ${cardIdAttr} data-unit-role="${roleId}" style="border-color:${roleMeta.color}" class="card-element card-aspect w-full bg-slate-900 border-2 rounded-xl overflow-hidden shadow-xl flex flex-col relative hover:scale-[1.02] transition-transform cursor-pointer select-none">
           <div class="relative w-full h-[58%] bg-slate-950 overflow-hidden">
-            <img src="${unitImgUrl}" onerror="this.onerror=null;this.src=createDummyCardImage('⚔️','#334155')" class="w-full h-full object-cover">
+            <img src="${unitImgUrl}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src=createDummyCardImage('⚔️','#334155')" class="w-full h-full object-cover">
             <span class="absolute top-1 left-1 bg-slate-950/90 border border-amber-500/40 text-amber-300 text-[9px] px-1.5 py-0.5 rounded font-bold truncate max-w-[70%]">${attrs}</span>
             <span class="absolute top-1 right-1 text-slate-950 text-[9px] px-1.5 py-0.5 rounded font-black shadow" style="background:${roleMeta.color}">${roleMeta.label}</span>
           </div>
@@ -3704,7 +3911,7 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.72-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.74-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
@@ -3754,6 +3961,27 @@
         list.appendChild(wrap);
       });
     }
+
+    // Desktop card details: fit all five descriptions inside a bounded, scroll-free panel.
+    // Only changes visual density; never removes skill text or alters card data.
+    function fitCardDetailToViewport() {
+      const modal=document.getElementById('card-detail-modal');
+      if(!modal || modal.classList.contains('hidden') || window.innerWidth<1100) return;
+      const outer=modal.firstElementChild;
+      const layout=outer?.children?.[1];
+      const body=document.getElementById('detail-card-body');
+      if(!layout || !body) return;
+      body.style.zoom='1';
+      const allowed=Math.max(120,layout.clientHeight-4);
+      for(const factor of [1,.95,.9,.85,.8,.75,.7,.65,.6,.55,.5,.45]) {
+        body.style.zoom=String(factor);
+        if(body.getBoundingClientRect().height<=allowed+2)break;
+      }
+    }
+    window.addEventListener('resize',()=>{
+      if(!document.getElementById('card-detail-modal')?.classList.contains('hidden'))
+        requestAnimationFrame(fitCardDetailToViewport);
+    });
 
     function openCardDetail(cardId, options = {}) {
       const readOnly = !!(options && options.readOnly);
@@ -3816,6 +4044,7 @@
         };
       }
       document.getElementById("card-detail-modal").classList.remove("hidden");
+      requestAnimationFrame(fitCardDetailToViewport);
     }
     function syncMagicCardAndSkillName() {
       const magicName = document.getElementById("edit-magic-name");
@@ -3917,6 +4146,7 @@
       document.getElementById("btn-edit-card").classList.add('hidden');
       document.getElementById("btn-delete-card").classList.add('hidden');
       document.getElementById("card-detail-modal").classList.remove('hidden');
+      requestAnimationFrame(fitCardDetailToViewport);
     }
 
     function closeCardDetailModal() { document.getElementById("card-detail-modal").classList.add("hidden"); }
@@ -9131,6 +9361,15 @@
         const effectEl=document.getElementById("popup-effect"),resultEl=document.getElementById("popup-result");
         if(effectEl)effectEl.innerText=info.effect||'効果なし';
         if(resultEl)resultEl.innerText=info.result||'変化なし';
+      }
+
+      // Choose the smallest density adjustment that keeps the entire action effect on screen.
+      // This never changes which effects run; it only prevents a scrollable dialog.
+      const popupBox=document.getElementById('popup-box');
+      if(popupBox && window.innerWidth>=1100){
+        popupBox.classList.remove('action-popup-tight','action-popup-ultra-tight');
+        if(popupBox.scrollHeight>popupBox.clientHeight+2) popupBox.classList.add('action-popup-tight');
+        if(popupBox.scrollHeight>popupBox.clientHeight+2) popupBox.classList.add('action-popup-ultra-tight');
       }
 
       // 詳細処理が失敗しても、イベント1件につき最低5秒は画面を保持する。
