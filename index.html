@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.68</title>
+  <title>都道府県カード戦争 v1.0.69</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     /* 4体横1列の戦闘フィールド: offline-tailwind.css(v1.0.64)にはgrid-cols-4が未収録だった。 */
@@ -332,7 +332,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.68</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.69</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -686,12 +686,21 @@
           </div>
         </div>
         <div class="flex flex-wrap justify-end gap-2 shrink-0">
-          <button id="export-custom-card-data-btn" type="button" class="px-3 py-2 bg-cyan-700 hover:bg-cyan-600 border border-cyan-500/50 rounded-lg text-[10px] sm:text-xs font-black" onclick="exportCustomCardDataForAnalysis()">📦 検証用カードデータを書き出し</button>
+          <button id="export-card-transfer-btn" type="button" class="px-3 py-2 bg-emerald-700 hover:bg-emerald-600 border border-emerald-500/50 rounded-lg text-[10px] sm:text-xs font-black" onclick="exportCardsWithImages()">📲 画像付きで書き出し</button>
+          <button id="import-card-transfer-btn" type="button" class="px-3 py-2 bg-indigo-700 hover:bg-indigo-600 border border-indigo-500/50 rounded-lg text-[10px] sm:text-xs font-black" onclick="openCardTransferFilePicker()">📥 別端末から読み込み</button>
+          <input id="card-transfer-file" type="file" accept=".json,application/json" class="hidden" onchange="importCardsWithImages(event)">
+          <button id="export-custom-card-data-btn" type="button" class="px-3 py-2 bg-cyan-700 hover:bg-cyan-600 border border-cyan-500/50 rounded-lg text-[10px] sm:text-xs font-black" onclick="exportCustomCardDataForAnalysis()">📦 検証用データ（画像なし）</button>
           <button type="button" class="card-browser-settings-trigger px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg text-[10px] sm:text-xs font-black" onclick="openCardBrowserSettings('deck-list', this)">⚙ 並べ替え・絞り込み</button>
         </div>
       </div>
       <div class="mb-2"><input id="deck-card-search" type="search" oninput="renderDeckList()" placeholder="カード名で検索（部分一致）" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500"></div>
-      <p class="text-[10px] leading-relaxed text-slate-400 mb-3">検証用のJSONファイルを保存します。自作したキャラ・マジックカードの効果データを含み、画像・標準カード・ゲーム中に生成されたコピーは含みません。ゲーム本体ZIPと一緒にChatGPTへアップロードしてください。</p>
+      <div class="rounded-lg bg-slate-900/90 border border-emerald-500/30 p-3 mb-3 space-y-2">
+        <div class="text-xs font-black text-emerald-200">📲 スマホ ↔ パソコン：画像付きカード移行</div>
+        <p class="text-[11px] text-slate-300 leading-relaxed">「画像付きで書き出し」で自作したキャラ・マジック（スキルカード含む）と画像を1つのJSONに保存できます。ファイルを別端末へ送り、同じゲームの「別端末から読み込み」で取り込んでください。通信接続は不要です。</p>
+        <label class="flex flex-wrap items-center gap-2 text-[11px] text-slate-200">同じカードIDがあるとき：<select id="card-transfer-conflict" class="rounded bg-slate-950 border border-slate-600 py-1.5 px-2 text-xs text-white"><option value="skip">スキップ（既存カードを守る・推奨）</option><option value="replace">移行元の内容で上書き</option><option value="copy">別カードとして追加</option></select></label>
+        <p class="text-[10px] text-slate-400">対象：自作カードとその画像のみ。キャンペーンの進行・所持金・代表・編成デッキは移行しません。検証用データ（画像なし）は取り込み対象ではありません。上書き時も確認画面を表示します。</p>
+        <p id="card-transfer-status" class="text-[11px] text-emerald-200 whitespace-pre-line" aria-live="polite"></p>
+      </div>
       <div id="deck-card-list" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2"></div>
     </section>
 
@@ -3222,7 +3231,7 @@
         const payload = {
           format: 'prefecture-card-war-card-data',
           formatVersion: 1,
-          gameVersion: '1.0.66',
+          gameVersion: '1.0.69',
           exportedAt: exportedAt.toISOString(),
           intendedUse: 'このJSONと同じバージョンのゲームZIPを参照し、カードの性能・スキル・効果条件・組み合わせを検証する',
           imagesIncluded: false,
@@ -3245,13 +3254,13 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.68-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.69-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
         window.setTimeout(() => URL.revokeObjectURL(objectUrl), 15000);
-        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.68 ZIP と一緒にChatGPTへアップロードしてください。`);
+        alert(`検証用カードデータを書き出しました。\n\nキャラカード：${unitCount}枚\nマジックカード：${magicCount}枚\n合計：${customCards.length}枚\n\n画像は含まれていません。ゲーム本体の v1.0.69 ZIP と一緒にChatGPTへアップロードしてください。`);
       } catch (error) {
         console.error('[CardDataExport] カードデータの書き出しに失敗しました', error);
         alert(`カードデータの書き出しに失敗しました。\n${String(error?.message || error)}`);
@@ -8725,6 +8734,7 @@
 </script>
   <script src="prefecture-game.js"></script>
   <script src="performance-lab.js"></script>
+  <script src="card-transfer.js"></script>
 
 
 </body>
