@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.70 —全国AI経済・自動対戦高速化 */
+/* 都道府県カード戦争 v1.0.75 —累計資金ランキング・AIガチャ予算保護 */
 'use strict';
 
 let campaignState = null;
@@ -34,6 +34,9 @@ const PREF_MARKET_LIFETIME = 5;
 const PREF_FUNDING_WEEKS = [1, 14, 27, 40];
 const PREF_FUNDING_BY_TIER = { S: 10000000000, A: 5000000000, B: 1000000000, C: 500000000, D: 300000000, E: 100000000 };
 const PREF_GACHA_VALUE_LIMITS = {4:100000000,5:5000000000};
+// One shared weekly budget for the standard refill, upgrade, and recovery gacha paths.
+const PREF_AI_MAX_GACHA_DRAWS_PER_WEEK = 100;
+const PREF_AI_GACHA_START_FUNDS_FRACTION = 0.5;
 const PREF_GACHA = {
   A: { label: 'Aランクガチャ', price: 100000000, odds: [{kind:'unit',rank:5,band:'upper',weight:5},{kind:'unit',rank:5,band:'lower',weight:15},{kind:'unit',rank:4,band:'any',weight:60},{kind:'unit',rank:3,band:'any',weight:10},{kind:'magic',weight:10}] },
   B: { label: 'Bランクガチャ', price: 10000000, odds: [{kind:'unit',rank:5,band:'lower',weight:1},{kind:'unit',rank:4,band:'upper',weight:10},{kind:'unit',rank:4,band:'lower',weight:40},{kind:'unit',rank:3,band:'any',weight:29},{kind:'magic',weight:20}] },
@@ -1063,7 +1066,8 @@ function prefCreateNewCampaign() {
   const player=prefDefaultRegion(PREF_PLAYER_ID,true,(playerName&&playerName!=='あなた')?playerName:'京都府代表',PREF_PERSONALITIES[0],47);
   state.regions[PREF_PLAYER_ID]=player;
   pool.playerUnits.forEach(inst=>{inst.ownerId=PREF_PLAYER_ID; inst.zone='owner'; inst.acquiredAtAbs=1; inst.expiresAtAbs=1+PREF_CARD_LIFETIME;});
-  player.funds=100000000;
+  // v1.0.75: Kyoto begins at zero just like all E-tier regions. The week-1
+  // E-tier grant supplies its first ¥100m; do not also award a private ¥100m.
   // Rival identities are drawn from custom rivals already saved in the original game where possible.
   const customized=(Array.isArray(allRivals)?allRivals:[]).filter(r=>r && r.name && !/^CPU\s*ライバル$/i.test(r.name) && r.id!=='rival_def_1');
   const usedNames=new Set([player.repName]);
@@ -1114,6 +1118,14 @@ async function prefLoadState() {
     // Restore an old save safely: outstanding negative balances are resolved before
     // any turn can advance or the next funding week can add income.
     for(const region of Object.values(campaignState.regions))prefResolveNegativeFunds(region,'load-recovery');
+    // Keep lifetime earnings when migrating old campaign saves. Annual figures remain
+    // available for year reviews, but they no longer determine the ranking order.
+    for(const r of Object.values(campaignState.regions)) {
+      r.yearStats=r.yearStats&&typeof r.yearStats==='object'?r.yearStats:prefNewStats();
+      r.allTimeStats=r.allTimeStats&&typeof r.allTimeStats==='object'?r.allTimeStats:{};
+      if(!Number.isFinite(Number(r.allTimeStats.assetMetric))||r.allTimeStats.assetMetric==null)
+        r.allTimeStats.assetMetric=Number(r.yearStats.assetMetric)||0;
+    }
     campaignState.pendingAcquisitionQueue=Array.isArray(campaignState.pendingAcquisitionQueue)?campaignState.pendingAcquisitionQueue:[];
     campaignState.pendingGachaContinueKey=campaignState.pendingGachaContinueKey||null;
     // Migrate older saves that granted every authored magic card to the player before the 50-card cap.
@@ -1153,6 +1165,11 @@ async function prefLoadState() {
         prefRecoverPendingBattlePreview(tx, true);
       }
     }
+    // Do not disrupt an unfinished turn or the initial 47th-place seed ranking.
+    // For an existing settled campaign, switch the on-screen order to the
+    // lifetime metric immediately after updating rather than waiting another week.
+    if(!campaignState.turnProcessing && !campaignState.yearReview &&
+       (Number(campaignState.year)>1 || Number(campaignState.week)>1))prefCalculateRankings();
     await prefSave();
   }
 }
@@ -1214,11 +1231,17 @@ function prefCompareAssetGroups(a,b) {
   if(x.sign===-1) return (x.exp-y.exp)||(x.lead-y.lead); // closer to zero ranks higher
   return 0;
 }
+// This value is persisted across years (including expenses and battle losses).
+// Old saves missing the lifetime ledger can fall back to their current-year value.
+function prefTotalEarnedFunds(region) {
+  const total=region?.allTimeStats?.assetMetric;
+  return Number.isFinite(Number(total)) && total!=null ? Number(total) : Number(region?.yearStats?.assetMetric)||0;
+}
 function prefCalculateRankings() {
   if(!campaignState)return;
   const regions=Object.values(campaignState.regions||{});
   const groups=new Map();
-  regions.forEach(r=>{const token=prefAssetToken(r.yearStats?.assetMetric||0);if(!groups.has(token.key))groups.set(token.key,{token,rows:[]});groups.get(token.key).rows.push(r);});
+  regions.forEach(r=>{const token=prefAssetToken(prefTotalEarnedFunds(r));if(!groups.has(token.key))groups.set(token.key,{token,rows:[]});groups.get(token.key).rows.push(r);});
   const sortedGroups=[...groups.values()].sort(prefCompareAssetGroups);
   const ordered=[];let pos=1;
   for(const group of sortedGroups){
@@ -1306,6 +1329,9 @@ function prefOpenWeek() {
   for(const region of Object.values(campaignState.regions||{}))prefResolveNegativeFunds(region,'week-start');
   if(campaignState.gameOver)return;
   prefExpireMarket(); prefExpireOwnedUnits(); prefApplyFundingIfNeeded();
+  // After the week's subsidy, snapshot every rival's starting cash once.
+  // A pending save reloaded in the same week must NOT reset draws or the budget.
+  for(const r of Object.values(campaignState.regions||{}))if(!r.isPlayer)prefAiGachaBudget(r);
   prefTurnStartAbs=prefAbsTurn();
 }
 
@@ -1587,11 +1613,11 @@ function prefRenderDashboard() {
   const p=prefPlayerRegion();if(!p)return;
   week.innerHTML=`<div class="text-[10px] text-amber-200 font-bold">${campaignState.year}年度</div><div class="text-2xl font-black text-white">第${campaignState.week}週</div><div class="text-[10px] text-slate-400 mt-1">全52週</div>`;
   const units=prefOwnedUnits(PREF_PLAYER_ID),magics=prefOwnedMagics(PREF_PLAYER_ID);
-  const currentMetric=p.yearStats?.assetMetric||0;const supports=PREF_FUNDING_BY_TIER[p.supportTier||p.tier||'E'];
+  const currentMetric=prefTotalEarnedFunds(p);const supports=PREF_FUNDING_BY_TIER[p.supportTier||p.tier||'E'];
   document.getElementById('pref-stats').innerHTML=[
-    prefDashboardCardStat('現在の所持資金',prefFormatMoney(p.funds),'ガチャ費用はランキング指標に含めない'),
+    prefDashboardCardStat('現在の所持資金',prefFormatMoney(p.funds),'カード購入・ガチャ費用も累計収支に反映'),
     prefDashboardCardStat('全国ランキング',prefRankLabel(p),`ランク ${p.tier||'E'}`),
-    prefDashboardCardStat('年間獲得資産額',prefFormatMoney(currentMetric),`今年度 ${prefYearMatchText(p)}`),
+    prefDashboardCardStat('総獲得資金額',prefFormatMoney(currentMetric),`今年度の収支 ${prefFormatMoney(p.yearStats?.assetMetric||0)}`),
     prefDashboardCardStat('勝率',prefFormatWinRate(p),`次回資金提供 ${prefFormatMoney(supports)}`)
   ].join('');
   const battleBtn=document.querySelector('[data-pref-action="choose-battle"]');const investBtn=document.querySelector('[data-pref-action="choose-investigation"]');
@@ -1690,11 +1716,11 @@ function prefRenderGacha() {
 function prefRenderRanking() {
   if(!campaignState){const b=document.getElementById('pref-ranking-body');if(b)b.innerHTML='<tr><td colspan="7" class="p-8 text-center text-slate-500">ゲームを開始してください。</td></tr>';return;}
   const rows=prefCurrentRegionRankList();const p=prefPlayerRegion();
-  document.getElementById('pref-ranking-header').innerHTML=`<div class="flex flex-wrap justify-between gap-2"><span>第${campaignState.year}年度・第${campaignState.week}週</span><span>京都府：<b class="text-amber-200">${prefRankLabel(p)} / ランク${p.tier}</b></span><span>年間資産額は資金提供を含む収支指標</span></div>`;
+  document.getElementById('pref-ranking-header').innerHTML=`<div class="flex flex-wrap justify-between gap-2"><span>第${campaignState.year}年度・第${campaignState.week}週</span><span>京都府：<b class="text-amber-200">${prefRankLabel(p)} / ランク${p.tier}</b></span><span>累計収支で順位を決定（年度が変わっても維持）</span></div>`;
   document.getElementById('pref-ranking-body').innerHTML=rows.map((r,i)=>{
     const avatar=prefRegionIconUrl(r);
     const avatarHtml=avatar?`<img src="${prefEsc(avatar)}" alt="" class="w-full h-full object-cover" onerror="this.parentElement.textContent='🏯';this.remove()">`:'🏯';
-    return `<tr class="${r.id===PREF_PLAYER_ID?'bg-amber-950/25':''}"><td class="p-3 font-black text-amber-200 whitespace-nowrap">${prefEsc(prefRankLabel(r))}</td><td class="p-3 font-bold whitespace-nowrap"><div class="flex items-center gap-2"><span class="w-8 h-8 rounded-full overflow-hidden bg-slate-950 border border-slate-700 flex-shrink-0 inline-flex items-center justify-center">${avatarHtml}</span><span>${prefEsc(r.prefecture)} ${r.id===PREF_PLAYER_ID?'<span class="text-[9px] text-amber-300">PLAYER</span>':''}</span></div></td><td class="p-3 text-slate-300 whitespace-nowrap">${prefEsc(r.repName)}</td><td class="p-3 text-right tabular-nums ${Number(r.yearStats?.assetMetric||0)<0?'text-rose-300':'text-white'}">${prefFormatMoney(r.yearStats?.assetMetric||0)}</td><td class="p-3 text-right text-cyan-200 tabular-nums">${prefEsc(prefFormatWinRate(r))}</td><td class="p-3 text-center">${prefTierBadge(r.tier)}</td><td class="p-3 text-center">${r.id===PREF_PLAYER_ID?'—':`<button data-pref-action="ai-thoughts" data-id="${prefEsc(r.id)}" class="px-2 py-1 rounded bg-slate-800 hover:bg-indigo-800 text-[10px] text-cyan-200 font-bold whitespace-nowrap">AI思考</button>`}</td></tr>`;
+    return `<tr class="${r.id===PREF_PLAYER_ID?'bg-amber-950/25':''}"><td class="p-3 font-black text-amber-200 whitespace-nowrap">${prefEsc(prefRankLabel(r))}</td><td class="p-3 font-bold whitespace-nowrap"><div class="flex items-center gap-2"><span class="w-8 h-8 rounded-full overflow-hidden bg-slate-950 border border-slate-700 flex-shrink-0 inline-flex items-center justify-center">${avatarHtml}</span><span>${prefEsc(r.prefecture)} ${r.id===PREF_PLAYER_ID?'<span class="text-[9px] text-amber-300">PLAYER</span>':''}</span></div></td><td class="p-3 text-slate-300 whitespace-nowrap">${prefEsc(r.repName)}</td><td class="p-3 text-right tabular-nums ${prefTotalEarnedFunds(r)<0?'text-rose-300':'text-white'}">${prefFormatMoney(prefTotalEarnedFunds(r))}</td><td class="p-3 text-right text-cyan-200 tabular-nums">${prefEsc(prefFormatWinRate(r))}</td><td class="p-3 text-center">${prefTierBadge(r.tier)}</td><td class="p-3 text-center">${r.id===PREF_PLAYER_ID?'—':`<button data-pref-action="ai-thoughts" data-id="${prefEsc(r.id)}" class="px-2 py-1 rounded bg-slate-800 hover:bg-indigo-800 text-[10px] text-cyan-200 font-bold whitespace-nowrap">AI思考</button>`}</td></tr>`;
   }).join('');
 }
 function prefShowAIThoughts(regionId) {
@@ -2328,9 +2354,42 @@ function prefAiShortlistMarketUnitInstances(region, limit=36) {
   return [...chosen.values()].sort((a,b)=>b.quick-a.quick).slice(0,limit).map(x=>x.inst);
 }
 
-// Cooperative yielding for the 47-representative AI economy. A representative with a large
-// treasury may legitimately draw many times. Fixed draw-count caps weaken its reinforcement;
-// instead we let the browser paint and show the exact ongoing phase every few draws.
+// The budget is shared by all AI gacha routes and saved in the region's campaign
+// state. That makes it robust to resumed turns and failure/recovery attempts.
+function prefAiGachaBudget(region) {
+  if(!region || region.isPlayer || !campaignState)return null;
+  const abs=prefAbsTurn();
+  if(!region.aiGachaBudget || Number(region.aiGachaBudget.abs)!==abs){
+    region.aiGachaBudget={abs,startFunds:Math.max(0,Number(region.funds)||0),draws:0};
+  }
+  return region.aiGachaBudget;
+}
+function prefAiGachaCanDraw(region,key) {
+  const budget=prefAiGachaBudget(region),cost=Number(PREF_GACHA[key]?.price)||0;
+  if(!budget||!cost||!Number.isFinite(cost))return false;
+  const remaining=Number(region.funds)||0;
+  const lowerBound=budget.startFunds*PREF_AI_GACHA_START_FUNDS_FRACTION;
+  return Number(budget.draws)<PREF_AI_MAX_GACHA_DRAWS_PER_WEEK && remaining>lowerBound && remaining>=cost && remaining-cost>=lowerBound;
+}
+function prefAiTakeGachaBudget(region,key) {
+  if(prefAiGachaCanDraw(region,key)){
+    prefAiGachaBudget(region).draws++;
+    return true;
+  }
+  const budget=prefAiGachaBudget(region);
+  if(budget&&!budget.stopLogged){
+    budget.stopLogged=true;
+    const reason=budget.draws>=PREF_AI_MAX_GACHA_DRAWS_PER_WEEK
+      ? `1週あたり${PREF_AI_MAX_GACHA_DRAWS_PER_WEEK}回の上限に到達`
+      : `週開始資金${prefFormatMoney(budget.startFunds)}の半分を維持するため中止`;
+    prefRecordAIThought(region,'ガチャ抑制','今週のガチャを終了',[reason,`今週の抽選${budget.draws}回、現在資金${prefFormatMoney(region.funds||0)}`, '次週に市場と抽選候補を再評価します'],{draws:budget.draws,startFunds:budget.startFunds});
+    prefLog(`${region.prefecture}がガチャを抑制：${reason}（今週${budget.draws}回）。`,'info');
+  }
+  return false;
+}
+
+// Cooperative yielding for the 47-representative AI economy.
+// The new 100-draw / 50%-funds safety guard bounds the work, while yielding keeps the UI responsive.
 async function prefAiEconomyYield(region,drawCount,phase) {
   if(drawCount%3!==0)return;
   const tx=campaignState?.turnProcessing;
@@ -2406,8 +2465,7 @@ async function prefAiTryEconomy(region) {
   // B-rank gacha yields characters 80% of the time; C is the cheaper fallback (50%).
   region._aiEconomyPhase='不足枠のガチャ補充';
   let refillDraws=0;
-  // No arbitrary pull-count cap. Every draw costs money, so affordability and available
-  // worthwhile cards terminate naturally, including repeated magic or weak results.
+  // The shared weekly 100-pull / half-starting-funds guard also limits recovery and upgrades.
   while(prefOwnedUnits(region.id).length<5){
     const available=prefEligibleGachaUnitInstances();if(!available.length)break;
     const prioritizeQuality=prefAiShouldPrioritizeQualityGacha(region,null,available);
@@ -2415,6 +2473,7 @@ async function prefAiTryEconomy(region) {
     const key=prefAiChooseGachaTier(region,prioritizeQuality);if(!key)break;
     await prefAiEconomyYield(region,++refillDraws,'不足枠のガチャ補充');
     const g=PREF_GACHA[key];const beforeCount=prefOwnedUnits(region.id).length;
+    if(!prefAiTakeGachaBudget(region,key))break;
     const cost=g.price;prefBook(region.id,-cost,'gacha');
     region._aiPendingGachaDebit={amount:cost,stage:'不足枠補充'};
     const selected=prefResolveGachaTier(key);
@@ -2500,11 +2559,16 @@ async function prefAiTryEconomy(region) {
       prefRefreshAIPlan(region,'シナジー向上カードへ交換');boughtUpgrade=true;break;
     }
 
-    // Continue only while a real upgrade remains affordable/likely. No artificial draw-count cap.
+    // Continue only while a real upgrade remains affordable/likely and the weekly budget remains.
     // If only a magic was drawn, the character pool and roster are unchanged; reuse the
     // expensive expected-upgrade score instead of running a 12-22-card search again.
     let lastPotentialKey='', lastPotential=-Infinity;
     while(!boughtUpgrade){
+      // Once the weekly cap is exhausted, do not pay for another costly upgrade search.
+      if(prefAiGachaBudget(region).draws>=PREF_AI_MAX_GACHA_DRAWS_PER_WEEK ||
+         Number(region.funds)<=prefAiGachaBudget(region).startFunds*PREF_AI_GACHA_START_FUNDS_FRACTION){
+        prefAiTakeGachaBudget(region,'C');break;
+      }
       const eligible=prefEligibleGachaUnitInstances();
       const qualityPriority=prefAiShouldPrioritizeQualityGacha(region,units,eligible);
       const hasHigherRankInPool=eligible.some(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))>=4);
@@ -2526,6 +2590,7 @@ async function prefAiTryEconomy(region) {
       if(!(eligible.length&&(potential>=utilityGate||qualityPriority)&&key))break;
       await prefAiEconomyYield(region,++upgradeDraws,'シナジー強化のガチャ');
       {
+        if(!prefAiTakeGachaBudget(region,key))break;
         const g=PREF_GACHA[key],cost=g.price,before=units.length;prefBook(region.id,-cost,'gacha');
         region._aiPendingGachaDebit={amount:cost,stage:'シナジー補強'};
         const selected=prefResolveGachaTier(key);
@@ -2827,6 +2892,7 @@ async function prefAiEmergencyGachaRefill(region) {
     else if(allowedB&&funds>=PREF_GACHA.B.price+2000000)key='B';
     else if(funds>=PREF_GACHA.C.price)key='C';
     if(!key)break;
+    if(!prefAiGachaCanDraw(region,key)){prefAiTakeGachaBudget(region,key);break;}
     const cost=PREF_GACHA[key].price;
     let selected=null;
     try { selected=prefResolveGachaTier(key); }
@@ -2835,6 +2901,7 @@ async function prefAiEmergencyGachaRefill(region) {
       break;
     }
     if(!selected||!['unit','magic'].includes(selected.kind))break;
+    if(!prefAiTakeGachaBudget(region,key))break;
     prefBook(region.id,-cost,'gacha');
     region._aiPendingGachaDebit={amount:cost,stage:'復旧ガチャ'};
     if(selected.kind==='unit'&&selected.instance){
@@ -3587,7 +3654,7 @@ function prefResignRival(region) {
   region.aiProfile=prefDefaultAIProfileForTier(region.tier,personality.id);region.aiTacticalIQ=region.aiProfile.tacticalIQ;region.aiCardIQ=region.aiProfile.cardIQ;region.aiMemory={opponents:{},decisions:[]};
   region.profileRivalId=null;region.funds=100000000;region.resignations=(region.resignations||0)+1;
   region.lastLoadout={active:[],reserve:[]};
-  delete region._aiPendingGachaDebit;delete region._aiEconomyPhase;
+  delete region._aiPendingGachaDebit;delete region._aiEconomyPhase;delete region.aiGachaBudget;
   prefLog(`${region.prefecture}の代表${old}が資金マイナスで辞職。${name}が初期資金1億円で就任しました。カードと都道府県の年間成績は引き継がれます。`,'warning');
 }
 async function prefApplyBattleOutcome(aId,bId,engineResult,selectedA,selectedB,settlementId=null) {
@@ -3998,7 +4065,7 @@ async function prefCompleteTurn(tx) {
   prefResolveNegativeFunds(prefPlayerRegion(),'turn-end');
   if(campaignState.gameOver){await prefSave();prefHideTurnLoading();prefRenderAll();prefShowGameOverModal();return;}
   if(campaignState.week>=52){
-    const snapshot=prefCurrentRegionRankList().map(r=>({id:r.id,prefecture:r.prefecture,repName:r.repName,rankPosition:r.rankPosition,rankEndPosition:r.rankEndPosition,rankTieCount:r.rankTieCount,tier:r.tier,funds:r.funds,assetMetric:r.yearStats.assetMetric||0,winRate:prefYearWinRate(r),wins:r.yearStats.wins||0,losses:r.yearStats.losses||0,draws:r.yearStats.draws||0}));
+    const snapshot=prefCurrentRegionRankList().map(r=>({id:r.id,prefecture:r.prefecture,repName:r.repName,rankPosition:r.rankPosition,rankEndPosition:r.rankEndPosition,rankTieCount:r.rankTieCount,tier:r.tier,funds:r.funds,assetMetric:prefTotalEarnedFunds(r),yearAssetMetric:r.yearStats?.assetMetric||0,winRate:prefYearWinRate(r),wins:r.yearStats.wins||0,losses:r.yearStats.losses||0,draws:r.yearStats.draws||0}));
     campaignState.yearReview={year:campaignState.year,rows:snapshot,nextFunding:Object.fromEntries(snapshot.map(r=>[r.id,PREF_FUNDING_BY_TIER[r.tier]||PREF_FUNDING_BY_TIER.E]))};
     campaignState.yearHistory.push(campaignState.yearReview);await prefSave();prefRenderAll();prefShowYearReview();return;
   }
@@ -4008,8 +4075,9 @@ async function prefCompleteTurn(tx) {
 function prefShowYearReview() {
   const review=campaignState?.yearReview;if(!review)return;
   const rows=review.rows||[];const player=rows.find(x=>x.id===PREF_PLAYER_ID);
+  const lifetimeReview=rows.length>0&&rows.every(r=>r.yearAssetMetric!=null);
   const rankingRows=rows.map((r,i)=>`<div class="grid grid-cols-[2.8rem_minmax(0,1fr)_auto] sm:grid-cols-[3.3rem_minmax(0,1fr)_minmax(5.5rem,auto)_3rem] items-center gap-2 border-b border-slate-800/80 px-2 py-2 ${r.id===PREF_PLAYER_ID?'bg-amber-950/30 ring-1 ring-inset ring-amber-500/40':''}"><div class="font-black text-amber-200 text-xs">${r.rankPosition}位${r.rankTieCount>1?'同率':''}</div><div class="min-w-0"><div class="text-xs sm:text-sm font-black text-slate-100 truncate">${prefEsc(r.prefecture)}・${prefEsc(r.repName)}</div><div class="text-[10px] text-slate-500">${r.wins||0}勝 ${r.losses||0}敗 ${r.draws||0}分 · 勝率 ${((r.winRate||0)*100).toFixed(1)}%</div></div><div class="text-right"><div class="text-xs sm:text-sm font-black text-emerald-200">${prefFormatMoney(r.assetMetric||0)}</div><div class="text-[10px] text-slate-500">翌年支援 ${prefFormatMoney(review.nextFunding?.[r.id]||PREF_FUNDING_BY_TIER[r.tier]||PREF_FUNDING_BY_TIER.E)}</div></div><div class="hidden sm:flex justify-end">${prefTierBadge(r.tier)}</div></div>`).join('');
-  prefShowModal(`🏆 ${review.year}年度・決算報告`,`<div class="max-h-[78vh] overflow-y-auto pr-1"><div class="rounded-xl bg-slate-900 border border-amber-500/30 p-4"><div class="text-xs text-amber-200 font-black">京都府の年間成績</div><div class="text-3xl font-black text-white mt-1">${prefEsc(String(player?.rankPosition||47))}位${(player?.rankTieCount||1)>1?'タイ':''} / ランク${prefEsc(player?.tier||'E')}</div><div class="grid grid-cols-2 gap-3 mt-3"><div><div class="text-[10px] text-slate-500">年間獲得資産額（収入−対象支出）</div><div class="font-black text-emerald-200">${prefFormatMoney(player?.assetMetric||0)}</div></div><div><div class="text-[10px] text-slate-500">年間勝率</div><div class="font-black text-cyan-200">${((player?.winRate||0)*100).toFixed(1)}%</div><div class="text-[10px] text-slate-500">${player?.wins||0}勝 ${player?.losses||0}敗 ${player?.draws||0}分</div></div></div><div class="border-t border-slate-800 mt-3 pt-3 text-xs text-slate-300">次年度の定期資金提供：${prefFormatMoney(review.nextFunding?.[PREF_PLAYER_ID]||PREF_FUNDING_BY_TIER[player?.tier]||PREF_FUNDING_BY_TIER.E)} × 年4回（第1・14・27・40週）</div></div><div class="flex items-end justify-between gap-2 mt-4 mb-2"><h4 class="font-black text-amber-200">全国47都道府県ランキング</h4><span class="text-[10px] text-slate-500">資産額・年間勝率</span></div><div class="rounded-lg border border-slate-800 overflow-hidden"><div class="grid grid-cols-[2.8rem_minmax(0,1fr)_auto] sm:grid-cols-[3.3rem_minmax(0,1fr)_minmax(5.5rem,auto)_3rem] gap-2 px-2 py-2 bg-slate-900 text-[10px] font-black text-slate-500"><div>順位</div><div>都道府県・代表 / 年間成績</div><div class="text-right">獲得資産 / 翌年支援</div><div class="hidden sm:block text-right">ランク</div></div>${rankingRows}</div><p class="text-[10px] text-slate-500 mt-3">年間成績のみ次年度にリセットします。所持資金・通算成績・カード所有はそのまま引き継ぎ、翌年度第1週の補助金は所持資金に加算します。年間ランキングは決算履歴に保存されます。</p></div>`,[{label:'次年度を開始',action:'next-year',style:'primary'}]);
+  prefShowModal(`🏆 ${review.year}年度・決算報告`,`<div class="max-h-[78vh] overflow-y-auto pr-1"><div class="rounded-xl bg-slate-900 border border-amber-500/30 p-4"><div class="text-xs text-amber-200 font-black">京都府の年間成績</div><div class="text-3xl font-black text-white mt-1">${prefEsc(String(player?.rankPosition||47))}位${(player?.rankTieCount||1)>1?'タイ':''} / ランク${prefEsc(player?.tier||'E')}</div><div class="grid grid-cols-2 gap-3 mt-3"><div><div class="text-[10px] text-slate-500">${player?.yearAssetMetric!=null?"総獲得資金額（年度をまたいで累積）":"旧データ：当時の年度収支"}</div><div class="font-black text-emerald-200">${prefFormatMoney(player?.assetMetric||0)}</div><div class="text-[10px] text-slate-400 mt-1">${player?.yearAssetMetric!=null?`今年度の収支 ${prefFormatMoney(player.yearAssetMetric)}`:"旧年度データ：当時の年度収支"}</div></div><div><div class="text-[10px] text-slate-500">年間勝率</div><div class="font-black text-cyan-200">${((player?.winRate||0)*100).toFixed(1)}%</div><div class="text-[10px] text-slate-500">${player?.wins||0}勝 ${player?.losses||0}敗 ${player?.draws||0}分</div></div></div><div class="border-t border-slate-800 mt-3 pt-3 text-xs text-slate-300">次年度の定期資金提供：${prefFormatMoney(review.nextFunding?.[PREF_PLAYER_ID]||PREF_FUNDING_BY_TIER[player?.tier]||PREF_FUNDING_BY_TIER.E)} × 年4回（第1・14・27・40週）</div></div><div class="flex items-end justify-between gap-2 mt-4 mb-2"><h4 class="font-black text-amber-200">全国47都道府県ランキング</h4><span class="text-[10px] text-slate-500">${lifetimeReview?'総獲得資金額・年間勝率':'旧年度ランキング記録'}</span></div><div class="rounded-lg border border-slate-800 overflow-hidden"><div class="grid grid-cols-[2.8rem_minmax(0,1fr)_auto] sm:grid-cols-[3.3rem_minmax(0,1fr)_minmax(5.5rem,auto)_3rem] gap-2 px-2 py-2 bg-slate-900 text-[10px] font-black text-slate-500"><div>順位</div><div>都道府県・代表 / 年間成績</div><div class="text-right">${lifetimeReview?'累計収支':'旧・年度収支'} / 翌年支援</div><div class="hidden sm:block text-right">ランク</div></div>${rankingRows}</div><p class="text-[10px] text-slate-500 mt-3">年間の勝敗・年間収支は次年度にリセットしますが、総獲得資金額とカード所有・所持金は年度をまたいで引き継ぎます。順位は累計収支と同額帯での年間勝率で決定します。過去の年度末順位は決算履歴に保存されます。</p></div>`,[{label:'次年度を開始',action:'next-year',style:'primary'}]);
 }
 async function prefNextYear() {
   if(!campaignState?.yearReview||campaignState.gameOver)return;
@@ -4017,7 +4085,7 @@ async function prefNextYear() {
   Object.values(campaignState.regions).forEach(r=>prefResolveNegativeFunds(r,'year-transition'));
   if(campaignState.gameOver){await prefSave();prefShowGameOverModal();return;}
   // Freeze next year's support bracket from the just-finished final ranking.
-  // Cash (r.funds) and owned cards carry over untouched; ONLY annual stats and
+  // Cash (r.funds), lifetime earnings and owned cards carry over; ONLY annual stats and
   // command history are reset. Funding for week 1 is subsequently added on top.
   Object.values(campaignState.regions).forEach(r=>{
     r.supportTier=r.tier;r.yearStats=prefNewStats();r.lastCommand=null;r.lastCommandAbs=0;r.nonBattleStreak=0;r.lastBattleAbs=0;
