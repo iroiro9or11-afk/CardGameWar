@@ -1089,24 +1089,16 @@ function prefCreateNewCampaign() {
     state.regions[row.prefecture]=region;
     (pool.assigned[row.prefecture]||[]).forEach(inst=>{inst.ownerId=row.prefecture;inst.zone='owner';inst.acquiredAtAbs=1;inst.expiresAtAbs=1+PREF_CARD_LIFETIME;});
   }
-  // Player receives up to 30 magic cards at campaign start. If the library contains more, each extra
-  // card is queued as a pending acquisition so the player can choose which owned magic to list, just
-  // like normal capacity overflow. Rivals continue to start with a small no-duplicate selection.
+  // v1.0.71: A new campaign starts with zero magic cards for *all* representatives.
+  // Authored magic templates remain in the library and may enter normal gacha/market later.
+  // Keep old campaign holdings untouched; this branch runs only when creating a new campaign.
   state.pendingAcquisitionQueue=[];
-  magics.forEach(c=>{
-    const currentCount=prefOwnedMagics(PREF_PLAYER_ID).length;
-    if(currentCount<PREF_MAGIC_LIMIT){const inst=prefCreateInstance(c.id,'owner',PREF_PLAYER_ID,{source:'initial-magic'});if(inst)inst.expiresAtAbs=null;}
-    else {const inst=prefCreateInstance(c.id,'pending',null,{source:'initial-magic-cap'});if(inst)state.pendingAcquisitionQueue.push(inst.id);}
-  });
-  Object.values(state.regions).filter(r=>!r.isPlayer).forEach(region=>{
-    const pickCount=Math.min(3,magics.length);
-    prefShuffle(magics.filter(c=>prefAiMagicFitsRoster(region,c))).slice(0,pickCount).forEach(c=>{const inst=prefCreateInstance(c.id,'owner',region.id,{source:'initial-magic'}); if(inst)inst.expiresAtAbs=null;});
-  });
   // Initial rank order places Kyoto at 47th. Funds begin at zero; the week-1 aid payment is the opening capital.
   state.rankingOrder=[...pool.rankRows.map(x=>x.prefecture),PREF_PLAYER_ID];
   state.rankingInitialized=true;
   state.rankingOrder.forEach((id,i)=>{const r=state.regions[id];r.rankPosition=i+1;r.rankEndPosition=i+1;r.rankTieCount=1;r.tier=prefTierForPosition(i+1);r.supportTier=r.tier;});
   prefLog('京都府代表として全国47位から参戦。第1週の資金提供が初期資金になります。','success');
+  prefLog('マジックカードの初期配布は全代表0枚です。作成済みのマジック原本はガチャ候補として残ります。','info');
   prefLog(`初期配布完了：キャラカード原本${units.length}枚。${units.length<240?'必要枠に満たないため、初期配布に限り複製を許可。初期ガチャのキャラカードは0枚です。':'初期配布後のキャラカードはガチャに残ります。'}`,'info');
   prefEnsureCampaignAIConfig();
   prefOpenWeek();
