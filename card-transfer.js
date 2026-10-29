@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.69 — カード画像込みの端末間移行 */
+/* 都道府県カード戦争 v1.0.70 — カード画像込みの端末間移行 */
 'use strict';
 const CARD_TRANSFER_FORMAT = 'prefecture-card-war-image-transfer';
 const CARD_TRANSFER_FORMAT_VERSION = 1;
@@ -88,7 +88,7 @@ async function exportCardsWithImages() {
     const payload = {
       format: CARD_TRANSFER_FORMAT,
       formatVersion: CARD_TRANSFER_FORMAT_VERSION,
-      gameVersion: '1.0.69',
+      gameVersion: '1.0.70',
       exportedAt: now.toISOString(),
       imagesIncluded: true,
       counts: {

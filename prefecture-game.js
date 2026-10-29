@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.69 —全国AI経済・自動対戦高速化 */
+/* 都道府県カード戦争 v1.0.70 —全国AI経済・自動対戦高速化 */
 'use strict';
 
 let campaignState = null;
@@ -2325,7 +2325,26 @@ function prefAiShortlistMarketUnitInstances(region, limit=36) {
   return [...chosen.values()].sort((a,b)=>b.quick-a.quick).slice(0,limit).map(x=>x.inst);
 }
 
-function prefAiTryEconomy(region) {
+// Cooperative yielding for the 47-representative AI economy. A representative with a large
+// treasury may legitimately draw many times. Fixed draw-count caps weaken its reinforcement;
+// instead we let the browser paint and show the exact ongoing phase every few draws.
+async function prefAiEconomyYield(region,drawCount,phase) {
+  if(drawCount%3!==0)return;
+  const tx=campaignState?.turnProcessing;
+  if(tx?.stage==='matching'){
+    const name=String(region?.prefecture||region?.id||'代表');
+    const step=String(phase||'カード補強');
+    const funds=prefFormatMoney(Number(region?.funds)||0);
+    const text=`${name}：${step}（抽選${drawCount}回・残高${funds}）`;
+    const node=document.getElementById('pref-turn-loading-text');
+    if(node)node.textContent=text;
+    const panel=document.getElementById('pref-turn-progress-text');
+    if(panel)panel.textContent=text;
+  }
+  await prefYieldToBrowser();
+}
+
+async function prefAiTryEconomy(region) {
   if(!region||region.isPlayer)return;
   region._aiEconomyPhase='初期構築計画';
   try { prefRefreshAIPlan(region,'市場・所持カードの確認'); }
@@ -2383,6 +2402,7 @@ function prefAiTryEconomy(region) {
   // If the market cannot complete the roster, use gacha while funds and useful candidates remain.
   // B-rank gacha yields characters 80% of the time; C is the cheaper fallback (50%).
   region._aiEconomyPhase='不足枠のガチャ補充';
+  let refillDraws=0;
   // No arbitrary pull-count cap. Every draw costs money, so affordability and available
   // worthwhile cards terminate naturally, including repeated magic or weak results.
   while(prefOwnedUnits(region.id).length<5){
@@ -2390,6 +2410,7 @@ function prefAiTryEconomy(region) {
     const prioritizeQuality=prefAiShouldPrioritizeQualityGacha(region,null,available);
     const hasHigherRankInPool=available.some(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))>=4);
     const key=prefAiChooseGachaTier(region,prioritizeQuality);if(!key)break;
+    await prefAiEconomyYield(region,++refillDraws,'不足枠のガチャ補充');
     const g=PREF_GACHA[key];const beforeCount=prefOwnedUnits(region.id).length;
     const cost=g.price;prefBook(region.id,-cost,'gacha');
     region._aiPendingGachaDebit={amount:cost,stage:'不足枠補充'};
@@ -2443,6 +2464,7 @@ function prefAiTryEconomy(region) {
   // a meaningful upgrade opportunity and a sufficient cash reserve remains.
   region._aiEconomyPhase='5枚揃った後の市場・ガチャ改善';
   let units=prefOwnedUnits(region.id);
+  let upgradeDraws=0;
   if(units.length>=5){
     let marketUnits=[];
     try {
@@ -2476,6 +2498,9 @@ function prefAiTryEconomy(region) {
     }
 
     // Continue only while a real upgrade remains affordable/likely. No artificial draw-count cap.
+    // If only a magic was drawn, the character pool and roster are unchanged; reuse the
+    // expensive expected-upgrade score instead of running a 12-22-card search again.
+    let lastPotentialKey='', lastPotential=-Infinity;
     while(!boughtUpgrade){
       const eligible=prefEligibleGachaUnitInstances();
       const qualityPriority=prefAiShouldPrioritizeQualityGacha(region,units,eligible);
@@ -2487,10 +2512,16 @@ function prefAiTryEconomy(region) {
       // gacha is already justified. Skip the expensive average-potential calculation in that case.
       // Other tiers use a smaller shortlist; A/B/S use a broader one when no direct repair is needed.
       if(!qualityPriority&&eligible.length&&key){
-        try { potential=prefAiBestGachaUpgradePotential(region,['S','A','B'].includes(region.tier)?22:12,eligible); }
-        catch(err) { console.error(`[Prefecture] AI gacha upgrade scoring failed for ${region.id}`,err); }
+        const potentialKey=`${key}|${eligible.length}|${units.map(x=>String(x.id)).join(',')}`;
+        if(potentialKey===lastPotentialKey)potential=lastPotential;
+        else {
+          try { potential=prefAiBestGachaUpgradePotential(region,['S','A','B'].includes(region.tier)?22:12,eligible); }
+          catch(err) { console.error(`[Prefecture] AI gacha upgrade scoring failed for ${region.id}`,err); }
+          lastPotentialKey=potentialKey;lastPotential=potential;
+        }
       }
       if(!(eligible.length&&(potential>=utilityGate||qualityPriority)&&key))break;
+      await prefAiEconomyYield(region,++upgradeDraws,'シナジー強化のガチャ');
       {
         const g=PREF_GACHA[key],cost=g.price,before=units.length;prefBook(region.id,-cost,'gacha');
         region._aiPendingGachaDebit={amount:cost,stage:'シナジー補強'};
@@ -2771,12 +2802,13 @@ function prefAutoBuyListedMagics(region){
   }
   return false;
 }
-function prefAiEmergencyGachaRefill(region) {
+async function prefAiEmergencyGachaRefill(region) {
   // Recovery path used only when the full AI economy planner throws. It deliberately avoids
   // market scoring and AI-plan helpers so a failure in those systems cannot suppress basic refill.
   if(!campaignState||!region||region.isPlayer)return 0;
-  let acquired=0;
+  let acquired=0,attempts=0;
   while(prefOwnedUnits(region.id).length<5){
+    await prefAiEconomyYield(region,++attempts,'復旧ガチャ補充');
     const eligible=prefEligibleGachaUnitInstances();
     if(!eligible.length)break;
     const hasHigherRankInPool=eligible.some(inst=>prefRankStars(prefCardForInstance(inst.id)||prefTemplate(inst.templateId))>=4);
@@ -2851,9 +2883,9 @@ function prefFallbackAiCommand(region) {
   if(mustBattle && !justBattled)return {type:'battle'};
   return {type:'investigate',target:target||PREF_PLAYER_ID,topic:'cards'};
 }
-function prefGetAiTurnAction(region) {
+async function prefGetAiTurnAction(region) {
   try {
-    prefAiTryEconomy(region);
+    await prefAiTryEconomy(region);
   } catch(err) {
     const failedPhase=String(region._aiEconomyPhase||'処理開始前');
     console.error(`[Prefecture] AI economy failed for ${region.id} during ${failedPhase}; attempting isolated gacha refill`,err);
@@ -2865,7 +2897,7 @@ function prefGetAiTurnAction(region) {
     }
     prefLog(`${region.prefecture}の市場・ガチャ判断で「${failedPhase}」中にエラーが発生しました。通常の補充判断を切り離し、ガチャ補充を再試行します。`,'warning');
     try {
-      const recovered=prefAiEmergencyGachaRefill(region);
+      const recovered=await prefAiEmergencyGachaRefill(region);
       if(recovered>0)prefRefreshAIPlan(region,'エラー後のガチャ補充',true);
     } catch(recoveryErr) {
       console.error(`[Prefecture] AI emergency gacha refill failed for ${region.id}`,recoveryErr);
@@ -2896,7 +2928,7 @@ function prefMakeTurnActions(playerAction) {
     const preselected=prepared?.[r.id];
     if(preselected&&['battle','investigate'].includes(preselected.type))actionById[r.id]=preselected;
     else {
-      try { actionById[r.id]=prefGetAiTurnAction(r); }
+      try { actionById[r.id]=prefFallbackAiCommand(r); }
       catch(err) {
         console.error(`[Prefecture] legacy AI action recovery failed for ${r.id}`,err);
         const canBattle=prefCanFormLegalBattleSquad(prefOwnedUnits(r.id));
@@ -2939,7 +2971,11 @@ async function prefPrepareTurnActionsInRankOrder(playerAction,tx) {
       await prefSave();prefSyncCampaignClones();prefRenderAll();prefHideTurnLoading();prefShowReplaceModal();return false;
     }
     if(!region.isPlayer&&id!==String(PREF_PLAYER_ID)){
-      try { tx.preparedActions[id]=prefGetAiTurnAction(region); }
+      try {
+        tx.currentPreparingRegionId=id;
+        tx.currentPreparingPhase='economy';
+        tx.preparedActions[id]=await prefGetAiTurnAction(region);
+      }
       catch(err) {
         console.error(`[Prefecture] AI command preparation failed for ${id}; using safe command`,err);
         const canBattle=prefCanFormLegalBattleSquad(prefOwnedUnits(id));
@@ -2950,11 +2986,13 @@ async function prefPrepareTurnActionsInRankOrder(playerAction,tx) {
         try { prefLog(`${region.prefecture||id}のAI判断に失敗したため、安全な${mustBattle?'対戦':'調査'}コマンドへ切り替えました。`,'warning'); } catch(_) {}
       }
     }
+    delete tx.currentPreparingRegionId;
+    delete tx.currentPreparingPhase;
     processed.add(id);tx.preparationProcessedIds=[...processed];tx.preparationIndex=i+1;
     prefSetPreparationProgress(processed.size,ordered.length,region.prefecture||id);
     // Save a compact checkpoint every four representatives instead of serializing the entire
     // campaign state after each one. This keeps the UI responsive while limiting replay on interruption.
-    if(processed.size%4===0||i===ordered.length-1)await prefSave();
+    if(processed.size%3===0||i===ordered.length-1)await prefSave();
     await prefYieldToBrowser();
   }
   tx.preparationComplete=true;tx.stage='matching';delete tx.resumePlayerAction;
