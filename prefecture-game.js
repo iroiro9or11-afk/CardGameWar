@@ -3756,6 +3756,9 @@ async function prefSettlePendingPlayerBattle(pair,tx) {
   delete pair.settlementError;
   try{prefSyncCampaignClones();}catch(err){console.warn('[Prefecture] clone refresh failed after player match',err);}
   prefTurnResolutionProgress(tx);
+  // An interactive player battle is finished here. Keep its result dialog accessible;
+  // the remainder of the national turn should only resume after the player clicks 次へ.
+  if(!campaignHeadlessBattle && (pair.a===PREF_PLAYER_ID || pair.b===PREF_PLAYER_ID))prefHideTurnLoading();
   // First persist both the committed result and its recovery snapshot. If this save fails,
   // pendingSettlement stays available and settledBattles prevents double rewards on retry.
   await prefSave();
@@ -4170,9 +4173,16 @@ async function prefAdvanceAfterPlayerBattle(){
       if(prefProcessingPromise===earlier)prefProcessingPromise=null;
     }
     await prefYieldToBrowser();
-    if(campaignState?.turnProcessing&&campaignState.turnProcessing.stage!=='player-preview'&&campaignState.turnProcessing.stage!=='awaiting-capacity'){
-      await prefContinueTurn();
+    const stage=campaignState?.turnProcessing?.stage;
+    if(!stage||stage==='player-preview'||stage==='awaiting-capacity'){
+      // A settlement may have already completed, or another user interaction is needed.
+      // Do not leave an opaque loading overlay on top of the playable screen.
+      prefHideTurnLoading();
+      prefRenderAll();
+      prefEnsurePreviewResumeButton();
+      return;
     }
+    await prefContinueTurn();
   })();
   prefPostBattleAdvancePromise=run;
   try {return await run;}
@@ -4188,6 +4198,11 @@ const prefOriginalShowBattleResultModal = showBattleResultModal;
 showBattleResultModal = function(winner) {
   if(!battleState?.campaignMode) return prefOriginalShowBattleResultModal(winner);
   if(window.__campaignHeadlessBattle||campaignHeadlessBattle)return;
+  // prefSettlePendingPlayerBattle updates the queue progress, which may raise a z=110
+  // fullscreen loading overlay. The result modal is z=80: without this cleanup,
+  // the player cannot see or click the result/continue button after a finished match.
+  // Only the button handler reopens progress while processing remaining representatives.
+  prefHideTurnLoading();
   const modal=document.getElementById('battle-result-modal');const title=document.getElementById('battle-result-title');const message=document.getElementById('battle-result-message');
   const reward=document.getElementById('battle-result-reward');if(reward){reward.classList.add('hidden');reward.innerHTML='';}
   title.innerText=winner==='player'?'🎉 京都府の勝利！':winner==='enemy'?'💀 京都府の敗北':'🤝 引き分け';

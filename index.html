@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.71</title>
+  <title>都道府県カード戦争 v1.0.72</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     /* 4体横1列の戦闘フィールド: offline-tailwind.css(v1.0.64)にはgrid-cols-4が未収録だった。 */
@@ -520,6 +520,143 @@
       .skill-compact-detail[open] > .skill-detail-desc { padding:9px; }
     }
   </style>
+
+  <style id="desktop-proportional-cards-and-modals-v1072">
+    /* 1.0.72: Never crop/stretch a card merely to force it into a fixed-height cell.
+       The whole card remains a 3:4 object; resize its container, not its internal art/stats. */
+    .skill-compact-detail > div:first-child { padding:5px 8px 2px; font-weight:900; }
+    .skill-compact-detail > .skill-detail-desc {padding:2px 8px 7px; white-space:pre-wrap; overflow-wrap:anywhere;}
+    @media (min-width:1100px) and (min-height:620px) {
+      #view-battle:not(.hidden) {
+        grid-template-columns:minmax(0,1fr) minmax(300px,340px) !important;
+        grid-template-rows:43px minmax(80px,1fr) minmax(170px,2.2fr) minmax(95px,1.12fr) minmax(43px,.58fr) !important;
+        gap:5px 9px !important;
+      }
+      #view-battle > .space-y-4:not(#enemy-magic-public-panel) {
+        grid-template-rows:minmax(0,1fr) 42px minmax(0,1fr) !important;
+        gap:4px !important;
+      }
+      #view-battle #field-player, #view-battle #field-enemy {
+        display:grid !important; grid-template-columns:repeat(4,minmax(0,1fr)) !important;
+        justify-items:center; align-items:start !important; gap:5px !important;
+      }
+      /* Move reserve thumbnails into the section header instead of consuming a card row. */
+      #view-battle > .space-y-4:not(#enemy-magic-public-panel) > div:first-child,
+      #view-battle > .space-y-4:not(#enemy-magic-public-panel) > div:last-child {position:relative;}
+      #view-battle #reserve-enemy {position:absolute; top:0; right:0; width:190px; z-index:1;}
+      #view-battle > .space-y-4:not(#enemy-magic-public-panel) > div:last-child > .mt-2 {
+        position:absolute;top:0;right:0;display:flex;align-items:center;
+        gap:4px;margin:0 !important; width:auto;max-width:260px;
+      }
+      #view-battle > .space-y-4:not(#enemy-magic-public-panel) > div:last-child > .mt-2 > div:first-child {
+        white-space:nowrap;margin:0 !important;font-size:9px;
+      }
+      #view-battle #reserve-player {width:130px;}
+      #view-battle #field-player > div, #view-battle #field-enemy > div {
+        height:auto !important; min-height:0; align-self:start; width:100%;
+        padding:2px !important; display:flex; flex-direction:column; align-items:center;
+      }
+      #view-battle #field-player > div > .relative, #view-battle #field-enemy > div > .relative {
+        display:block !important; flex:none !important; width:100% !important;
+        height:auto !important; overflow:visible !important;
+      }
+      #view-battle #field-player .card-element, #view-battle #field-enemy .card-element,
+      #view-battle #enemy-magic-hand-grid .card-element, #view-battle #magic-hand-grid .card-element,
+      #pref-owned-summary .card-element {
+        width:100% !important; height:auto !important; max-height:none !important;
+        min-height:0 !important; flex:none !important;
+        aspect-ratio:3 / 4 !important; overflow:hidden;
+      }
+      /* For the field, a modest physical size keeps the two rows inside the viewport.
+         A card never fills a tall/skinny cell. */
+      #view-battle #field-player .card-element, #view-battle #field-enemy .card-element {
+        max-width:min(100%, clamp(98px, calc((100dvh - 205px) * .215), 178px)) !important;
+        margin-left:auto; margin-right:auto;
+      }
+      #view-battle #field-player .card-element > .relative, #view-battle #field-enemy .card-element > .relative,
+      #view-battle #enemy-magic-hand-grid .card-element > .relative, #view-battle #magic-hand-grid .card-element > .relative {
+        height:58% !important; flex:0 0 58% !important;
+      }
+      #view-battle #field-player .card-element > .h-\[42\%\], #view-battle #field-enemy .card-element > .h-\[42\%\],
+      #view-battle #enemy-magic-hand-grid .card-element > .h-\[42\%\], #view-battle #magic-hand-grid .card-element > .h-\[42\%\] {
+        height:42% !important; flex:0 0 42% !important;
+      }
+      #view-battle #field-player > div > .mt-2, #view-battle #field-enemy > div > .mt-2,
+      #view-battle #field-player > div > .w-full, #view-battle #field-enemy > div > .w-full { width:100%; }
+      #view-battle #enemy-magic-hand-grid, #view-battle #magic-hand-grid { align-items:flex-start !important; }
+      #view-battle #enemy-magic-hand-grid > *, #view-battle #magic-hand-grid > * {
+        flex:0 0 min(19%,65px) !important; max-width:65px !important;
+        overflow:visible !important;
+      }
+      #pref-owned-summary .card-element { max-width:125px !important; }
+      #pref-owned-summary .card-element .grid { display:grid !important; }
+      #pref-owned-summary .card-element > .relative {height:58% !important;flex:0 0 58% !important;}
+      #pref-owned-summary .card-element > .h-\[42\%\] {height:42% !important;flex:0 0 42% !important;}
+      /* Compact (not fullscreen) readable character detail. All descriptions visible,
+         internal overflow only when the user has unusually long custom descriptions. */
+      #card-detail-modal {padding:12px !important;}
+      #card-detail-modal > div {
+        width:min(660px,calc(100vw - 30px)) !important;
+        max-width:660px !important; max-height:min(69dvh,530px) !important;
+        padding:12px 14px !important; gap:7px !important;
+        overflow:hidden !important;
+      }
+      #card-detail-modal > div > div:nth-child(2) {
+        display:grid !important; grid-template-columns:150px minmax(0,1fr) !important;
+        align-items:start !important; gap:12px !important;
+        overflow-y:auto !important; min-height:0; flex:1 1 auto;
+      }
+      #card-detail-modal > div > div:nth-child(2) > div:first-child {
+        display:flex !important; flex-direction:column !important;
+        align-items:stretch !important; gap:6px !important;
+        min-width:0; grid-column:1; grid-row:1;
+      }
+      #card-detail-modal > div > div:nth-child(2) > #detail-card-body {
+        grid-column:2; grid-row:1; overflow:visible !important;
+        max-height:none !important; padding:9px !important;
+        font-size:11px !important; line-height:1.4 !important;
+      }
+      #detail-card-image-wrapper {width:140px !important; max-width:100% !important; margin:0 auto !important;}
+      #detail-card-image-wrapper .card-element {width:100% !important; aspect-ratio:3/4 !important;height:auto !important;max-height:none !important;}
+      #card-detail-modal .skill-compact-detail > .skill-detail-desc {font-size:11px !important;line-height:1.4 !important;}
+      #card-detail-modal #detail-unit-stats {padding:6px 3px !important;}
+      /* Action animation: actor and target are compact square portraits (not full cards). */
+      #action-popup-modal {padding:12px !important;}
+      #action-popup-modal > #popup-box {
+        width:min(560px,calc(100vw - 28px)) !important;
+        max-width:560px !important; max-height:min(70dvh,555px) !important;
+        padding:12px 16px !important; border-width:2px !important;
+        border-radius:15px !important; overflow-y:auto !important;
+      }
+      #popup-title {font-size:10px !important; margin-bottom:3px !important;}
+      #popup-action-name {font-size:19px !important; margin-bottom:5px !important;}
+      #popup-action-description {font-size:11px !important; padding:6px 9px !important;margin-bottom:8px !important;}
+      #popup-box > .relative.grid {gap:10px !important;align-items:start;}
+      #popup-actor-panel, #popup-target-panel {padding:8px !important;border-width:2px !important;border-radius:10px !important;}
+      #popup-actor-panel .aspect-square, #popup-target-panel .aspect-square {width:82px !important; height:82px !important;max-width:82px !important;margin:0 auto;border-width:2px !important;border-radius:8px !important;}
+      #popup-actor-side, #popup-target-side {font-size:10px !important;margin-bottom:4px !important;padding:2px 8px !important;}
+      #popup-actor-name, #popup-target-name {font-size:13px !important; margin-top:5px !important;}
+      #popup-box .mt-4 {margin-top:7px !important;}
+      #popup-box .space-y-2 {row-gap:5px !important;}
+      #popup-box .px-3.py-3 {padding:6px 8px !important;}
+      #popup-box .text-sm, #popup-box .text-lg {font-size:11px !important;}
+      #popup-box .relative.grid > .absolute {width:31px !important;height:31px !important;border-width:2px !important;}
+      #popup-box .relative.grid > .absolute span {font-size:20px !important;}
+      #popup-target-cards {max-height:175px !important;}
+      #battle-result-modal {padding:12px !important;}
+      #battle-result-modal > div {width:min(540px,calc(100vw - 28px)) !important;max-width:540px !important;max-height:80dvh !important;padding:18px 22px !important;border-width:2px !important;border-radius:15px !important;}
+      #battle-result-title {font-size:clamp(22px,3vw,36px) !important;}
+      #battle-result-message {font-size:13px !important;margin-top:8px !important;}
+      #battle-result-modal .mt-8 {margin-top:13px !important;}
+      #battle-result-modal button {padding:9px !important;font-size:13px !important;}
+    }
+    @media (min-width:1100px) and (min-height:620px) and (max-height:760px) {
+      #view-battle #field-player .card-element, #view-battle #field-enemy .card-element {
+        max-width:min(100%,clamp(96px,calc((100dvh - 205px) * .21),140px)) !important;
+      }
+    }
+  </style>
+
 </head>
 <body class="bg-slate-950 text-slate-100 font-sans min-h-screen flex flex-col justify-between select-none">
 
@@ -645,7 +782,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.71</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.72</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -3567,7 +3704,7 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.71-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.72-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
@@ -3655,7 +3792,7 @@
         document.getElementById("detail-atk").innerText = stats.atk ?? 0;
         document.getElementById("detail-prio").innerText = stats.priority ?? 0;
         let html = '<b class="text-amber-300 text-base">スキル一覧</b>';
-        (card.skills || []).forEach(s => { html += `<details class="skill-compact-detail bg-slate-900 rounded border border-slate-800 text-sm text-slate-100 mt-1"><summary class="font-black text-amber-200 cursor-pointer">[${s.type.toUpperCase()}] ${s.name} <span class="text-xs text-slate-400">AP:${s.cost||0}</span></summary><div class="skill-detail-desc text-slate-200">${s.desc || ''}</div></details>`; });
+        (card.skills || []).forEach(s => { html += `<div class="skill-compact-detail bg-slate-900 rounded border border-slate-800 text-sm text-slate-100 mt-1"><div class="font-black text-amber-200">[${s.type.toUpperCase()}] ${s.name} <span class="text-xs text-slate-400">AP:${s.cost||0}</span></div><div class="skill-detail-desc text-slate-200">${s.desc || ''}</div></div>`; });
         const valueYen = Math.max(10000, Number(card.value) || 5000000);
         if (!card.campaignInstance) html += `<div class="mt-3 pt-3 border-t border-slate-700 text-sm text-emerald-200"><b>市場価値：</b>${Math.round(valueYen/10000).toLocaleString('ja-JP')}万円</div>`;
         bodyWrap.innerHTML = html;
@@ -3775,7 +3912,7 @@
       const statusLine = (arr, title, cls) => arr.length ? `<div class="mb-3"><div class="font-black ${cls} mb-1">${title}</div><div class="space-y-1">${arr.map(x=>`<div class="bg-slate-900 border border-slate-800 rounded px-2 py-1.5"><b>${x.type==='status'?statusName(x.status):x.type}</b>：${x.type==='status' ? '' : (x.val !== undefined ? (x.val>=0?'+':'')+x.val : '')}${durationActive(x.duration) ? ` ／ 残り${durationText(x.duration)}` : ''}</div>`).join('')}</div></div>` : `<div class="text-slate-500">${title}なし</div>`;
       const buffs = unit.buffs || [], debuffs = unit.debuffs || [], shields = unit.shields || [];
       const detailSkills = Array.isArray(unit.skills) && unit.skills.length ? unit.skills : (base.skills || []);
-      const html = `<div class="mb-3"><b class="text-amber-300 text-base">戦闘中ステータス</b><div class="grid grid-cols-2 gap-2 mt-2"><div>現在HP: <b>${unit.currentHp}/${unit.maxHp}</b></div><div>現在AP: <b class="text-sky-300">${characterAp(unit)}/100</b></div><div>現在行動値: <b class="text-sky-300">${getEffectiveSpeed(unit)}</b></div></div></div>${statusLine(buffs,'🟢 バフ','text-emerald-300')}${statusLine(debuffs,'🔴 デバフ','text-rose-300')}${statusLine((unit.statuses||[]).map(x=>({...x,type:x.type==='mark'?`印（付与者：${x.sourceName||'不明'}）`:statusName(x.type),val:undefined})),'🟣 状態異常','text-purple-300')}${shields.length ? `<div class="mb-3"><div class="font-black text-cyan-300 mb-1">🛡 シールド</div><div class="space-y-1">${shields.map((x,i)=>`<div class="bg-slate-900 border border-cyan-900 rounded px-2 py-1.5">${i+1}層目：残り${Number(x.remaining ?? x.amount) || 0} / ${Number(x.amount)||0}（${durationActive(x.duration)?`残り${durationText(x.duration)}`:'期限切れ'}）</div>`).join('')}</div></div>` : '<div class="text-slate-500">シールドなし</div>'}<div class="pt-3 border-t border-slate-800"><b class="text-amber-300">スキル一覧</b>${(detailSkills||[]).map(s=>`<details class="skill-compact-detail bg-slate-900 rounded border border-slate-800 text-sm mt-1"><summary class="font-black text-amber-200 cursor-pointer">[${s.type?.toUpperCase()||'SKILL'}] ${s.name} <span class="text-xs text-slate-400">AP:${s.cost||0}</span></summary><div class="skill-detail-desc text-slate-200">${s.desc||''}</div></details>`).join('')}</div>`;
+      const html = `<div class="mb-3"><b class="text-amber-300 text-base">戦闘中ステータス</b><div class="grid grid-cols-2 gap-2 mt-2"><div>現在HP: <b>${unit.currentHp}/${unit.maxHp}</b></div><div>現在AP: <b class="text-sky-300">${characterAp(unit)}/100</b></div><div>現在行動値: <b class="text-sky-300">${getEffectiveSpeed(unit)}</b></div></div></div>${statusLine(buffs,'🟢 バフ','text-emerald-300')}${statusLine(debuffs,'🔴 デバフ','text-rose-300')}${statusLine((unit.statuses||[]).map(x=>({...x,type:x.type==='mark'?`印（付与者：${x.sourceName||'不明'}）`:statusName(x.type),val:undefined})),'🟣 状態異常','text-purple-300')}${shields.length ? `<div class="mb-3"><div class="font-black text-cyan-300 mb-1">🛡 シールド</div><div class="space-y-1">${shields.map((x,i)=>`<div class="bg-slate-900 border border-cyan-900 rounded px-2 py-1.5">${i+1}層目：残り${Number(x.remaining ?? x.amount) || 0} / ${Number(x.amount)||0}（${durationActive(x.duration)?`残り${durationText(x.duration)}`:'期限切れ'}）</div>`).join('')}</div></div>` : '<div class="text-slate-500">シールドなし</div>'}<div class="pt-3 border-t border-slate-800"><b class="text-amber-300">スキル一覧</b>${(detailSkills||[]).map(s=>`<div class="skill-compact-detail bg-slate-900 rounded border border-slate-800 text-sm mt-1"><div class="font-black text-amber-200">[${s.type?.toUpperCase()||'SKILL'}] ${s.name} <span class="text-xs text-slate-400">AP:${s.cost||0}</span></div><div class="skill-detail-desc text-slate-200">${s.desc||''}</div></div>`).join('')}</div>`;
       document.getElementById("detail-card-body").innerHTML = html;
       document.getElementById("btn-edit-card").classList.add('hidden');
       document.getElementById("btn-delete-card").classList.add('hidden');
