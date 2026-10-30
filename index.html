@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.75</title>
+  <title>都道府県カード戦争 v1.0.76</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     /* 4体横1列の戦闘フィールド: offline-tailwind.css(v1.0.64)にはgrid-cols-4が未収録だった。 */
@@ -843,6 +843,68 @@
     }
   </style>
 
+  <style id="mobile-width-safety-v1076">
+    /* Mobile-only layout. Do not change PC cards or desktop 16:9 layout.
+       An unshrinkable toolbar previously expanded the mobile layout viewport
+       (390px -> about 588px), making the header and card list appear misaligned. */
+    @media (max-width: 767px) {
+      html, body { width: 100%; max-width: 100%; min-width: 0; }
+      header, header > div:first-child, main, main > .view-section {
+        box-sizing: border-box; max-width: 100%; min-width: 0;
+      }
+      header > div:first-child { width: 100%; flex-direction: column; align-items: stretch; }
+      header nav {
+        display: grid !important;
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        width: 100%; min-width: 0; gap: 6px !important;
+      }
+      header nav button {
+        min-width: 0; max-width: 100%; min-height: 40px;
+        display: flex; align-items: center; justify-content: center;
+        white-space: normal !important; overflow-wrap: anywhere; text-align: center;
+        padding: 7px 4px !important; line-height: 1.25;
+      }
+      main { width: 100% !important; padding: 10px !important; }
+      #view-deck { width: 100%; min-width: 0; }
+      #view-deck > div:first-child { flex-direction: column; align-items: stretch; width: 100%; min-width: 0; }
+      #view-deck > div:first-child > div:first-child { width: 100%; min-width: 0; flex-wrap: wrap; }
+      #view-deck > div:first-child > div:first-child > div { flex-wrap: wrap; min-width: 0; }
+      #view-deck .deck-transfer-actions {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) !important;
+        width: 100% !important; max-width: 100%; min-width: 0;
+        flex: 0 1 auto !important;
+        gap: 7px !important;
+      }
+      #view-deck .deck-transfer-actions > button {
+        box-sizing: border-box; width: 100%; min-width: 0;
+        padding: 10px 8px !important; min-height: 40px;
+        font-size: 12px !important;
+        white-space: normal; overflow-wrap: anywhere; text-align: center;
+      }
+      #view-deck #deck-card-search, #card-transfer-panel, #card-transfer-panel > * {
+        box-sizing: border-box; max-width: 100%; min-width: 0;
+      }
+      #card-transfer-panel { width: 100%; overflow-wrap: anywhere; }
+      #card-transfer-panel label { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+      #card-transfer-conflict { display: block; width: 100%; max-width: 100%; min-width: 0; }
+      #deck-card-list {
+        display: grid !important;
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        width: 100%; max-width: 100%; min-width: 0; gap: 10px !important;
+      }
+      #deck-card-list > div { min-width: 0; max-width: 100%; }
+      #deck-card-list .card-element { width: 100%; min-width: 0; aspect-ratio: 3 / 4; }
+      #deck-card-list .card-element .grid > div { min-width: 0; }
+      #deck-card-list .card-element .grid .font-black { overflow-wrap: anywhere; }
+    }
+    @media (max-width: 360px) {
+      header nav button { font-size: 10px !important; }
+      #deck-card-list { gap: 6px !important; }
+      #deck-card-list .card-element .h-\[42\%\] { padding-left: 4px; padding-right: 4px; }
+    }
+  </style>
+
 </head>
 <body class="bg-slate-950 text-slate-100 font-sans min-h-screen flex flex-col justify-between select-none">
 
@@ -968,7 +1030,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.75</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.76</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -1321,7 +1383,7 @@
             <button id="deck-tab-magic" onclick="filterDeckType('magic')" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-xs font-bold rounded">マジック</button>
           </div>
         </div>
-        <div class="flex flex-wrap justify-end gap-2 shrink-0">
+        <div class="deck-transfer-actions flex flex-wrap justify-end gap-2 min-w-0">
           <button id="export-card-transfer-btn" type="button" class="px-3 py-2 bg-emerald-700 hover:bg-emerald-600 border border-emerald-500/50 rounded-lg text-[10px] sm:text-xs font-black" onclick="exportCardsWithImages()">📲 画像付きで書き出し</button>
           <button id="import-card-transfer-btn" type="button" class="px-3 py-2 bg-indigo-700 hover:bg-indigo-600 border border-indigo-500/50 rounded-lg text-[10px] sm:text-xs font-black" onclick="openCardTransferFilePicker()">📥 別端末から読み込み</button>
           <input id="card-transfer-file" type="file" accept=".json,application/json" class="hidden" onchange="importCardsWithImages(event)">
@@ -1330,7 +1392,7 @@
         </div>
       </div>
       <div class="mb-2"><input id="deck-card-search" type="search" oninput="renderDeckList()" placeholder="カード名で検索（部分一致）" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500"></div>
-      <div class="rounded-lg bg-slate-900/90 border border-emerald-500/30 p-3 mb-3 space-y-2">
+      <div id="card-transfer-panel" class="rounded-lg bg-slate-900/90 border border-emerald-500/30 p-3 mb-3 space-y-2">
         <div class="text-xs font-black text-emerald-200">📲 スマホ ↔ パソコン：画像付きカード移行</div>
         <p class="text-[11px] text-slate-300 leading-relaxed">「画像付きで書き出し」で自作したキャラ・マジック（スキルカード含む）と画像を1つのJSONに保存できます。ファイルを別端末へ送り、同じゲームの「別端末から読み込み」で取り込んでください。通信接続は不要です。</p>
         <label class="flex flex-wrap items-center gap-2 text-[11px] text-slate-200">同じカードIDがあるとき：<select id="card-transfer-conflict" class="rounded bg-slate-950 border border-slate-600 py-1.5 px-2 text-xs text-white"><option value="skip">スキップ（既存カードを守る・推奨）</option><option value="replace">移行元の内容で上書き</option><option value="copy">別カードとして追加</option></select></label>
@@ -3911,7 +3973,7 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.75-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.76-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
