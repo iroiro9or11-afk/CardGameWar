@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.76</title>
+  <title>都道府県カード戦争 v1.0.78</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     /* 4体横1列の戦闘フィールド: offline-tailwind.css(v1.0.64)にはgrid-cols-4が未収録だった。 */
@@ -1030,7 +1030,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.76</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.78</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -3973,7 +3973,7 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.76-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.78-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
@@ -6917,6 +6917,107 @@
       return value;
     }
 
+    // v1.0.78: 自己準備 -> 条件付きアクティブ技の連携価値。
+    // このAIは一ターンの4人の行動をビーム探索するが、次ターン以降の「本人が印を
+    // 付ける -> 本人が印条件の高火力技を撃つ」という連鎖は探索範囲の外にある。
+    // 実際のスキルデータの発動条件・AP・対象条件・敵人数・HPを調べて、
+    // 準備状態が有効なときだけ将来の一手に相当する *割引済み* の価値を付ける。
+    // 固有名・カードIDを使わないため、今後作成する同系統カードにも対応する。
+    function aiPlannerSelfComboPotential(state, unit, onlySkill = null) {
+      if (!unit || !unit.isActive || unit.currentHp <= 0) return 0;
+      const statuses = (unit.statuses || []).filter(x => durationActive(x.duration));
+      if (!statuses.length) return 0;
+      const enemies = aiPlannerActive(state, unit.side === 'player' ? 'enemy' : 'player');
+      if (!enemies.length) return 0;
+      let best = 0;
+      for (const skill of unit.skills || []) {
+        if (onlySkill && skill !== onlySkill && skill?.id !== onlySkill.id) continue;
+        if (skill?.type !== 'active') continue;
+        const cond = skill.selfCond || {};
+        if (!['self_status','self_any_status'].includes(cond.type)) continue;
+        if (!aiPlannerCondition(cond, unit, state)) continue;
+        const targetType = String(skill.targetType || '');
+        if (!/enemy/.test(targetType)) continue;
+        const effect = skill.mainEffect || {};
+        const effectType = String(effect.type || '');
+        if (!['dmg_atk_ratio','dmg_atk_ratio_pierce','dmg_max_hp_ratio','dmg_fixed','dmg_fixed_pierce'].includes(effectType)) continue;
+        const chosenStatus = cond.type === 'self_status'
+          ? statuses.find(x => x.type === cond.status)
+          : statuses.find(x => x.duration === -1) || statuses[0];
+        if (!chosenStatus) continue;
+        const cost = Math.max(0, Number(skill.cost) || 0) + (aiPlannerHasStatus(unit,'pressure') ? 5 : 0);
+        if (cost > 100) continue;
+        // 自己APの毎ターン+20と、確実な自己AP供給パッシブを見積もる。
+        const apGain = 20 + (unit.skills || []).reduce((sum, passive) => {
+          if (passive?.type !== 'passive' || passive.timing !== 'turn_start' || Number(passive.chance ?? 100) < 100) return sum;
+          if (passive.targetType !== 'self' || passive.mainEffect?.type !== 'mod_ap') return sum;
+          const pc = passive.selfCond || {};
+          if (pc.type !== 'none' && !aiPlannerCondition(pc,unit,state)) return sum;
+          return sum + Math.max(0, Math.min(20, Number(passive.mainEffect.val) || 0));
+        }, 0);
+        // 準備を行ったキャラはそのターン再行動できない。最低でも次ターン。
+        const waitTurns = Math.max(1, Math.ceil((cost - aiPlannerUnitAp(unit)) / Math.max(1, apGain)));
+        if (Number(chosenStatus.duration) !== -1 && Number(chosenStatus.duration) <= waitTurns) continue;
+        if (waitTurns > 4) continue; // 生存・状況変化の大きい遠い将来を過大評価しない。
+        const atk = Math.max(0, aiPlannerEffectiveAtk(unit));
+        const raw = effectType === 'dmg_fixed' || effectType === 'dmg_fixed_pierce' ? Number(effect.val) || 0
+          : effectType === 'dmg_max_hp_ratio' ? Math.round(Number(unit.maxHp || 0) * (Number(effect.val) || 0) / 100)
+          : Math.round(atk * (Number(effect.val) || 0) / 100);
+        if (raw <= 0) continue;
+        const piercing = ['dmg_fixed_pierce','dmg_atk_ratio_pierce'].includes(effectType);
+        const aoe = ['all_enemy'].includes(targetType);
+        let total = 0, eligible = 0;
+        for (const enemy of enemies) {
+          const tc = skill.targetCond || {};
+          let likelihood = 1;
+          if (!aiPlannerTargetCondition(enemy,tc)) {
+            // 現時点で残HP条件に届かなくても、次ターン以降に届く可能性だけはある。
+            // ただし即死系を「全敵に99,999ダメージ」として評価しない。
+            const hpRate = enemy.maxHp > 0 ? enemy.currentHp / enemy.maxHp * 100 : 100;
+            if (tc.type === 'hp_ratio_lte' && hpRate > Number(tc.val)) {
+              likelihood = Math.max(0, 0.18 * (Number(tc.val) / Math.max(hpRate, 1)));
+            } else if (tc.type === 'hp_val_lte' && enemy.currentHp > Number(tc.val)) {
+              likelihood = Math.max(0, 0.16 * (Number(tc.val) / Math.max(enemy.currentHp, 1)));
+            } else continue;
+          }
+          const afterCut = piercing ? Math.max(0, raw) : aiPlannerDamageAfterCut(enemy, raw);
+          const shield = (enemy.shields || []).reduce((sum, sh) => sum + Math.max(0, Number(sh.remaining ?? sh.amount) || 0), 0);
+          const damage = Math.max(0, Math.min(enemy.currentHp, afterCut - shield));
+          total += damage * likelihood;
+          eligible++;
+        }
+        if (!eligible) continue;
+        if (!aoe) total /= eligible;
+        // 一回の将来行動の割引価値。即時の通常攻撃を無条件に捨てないよう上限を設ける。
+        const survival = Math.max(0.46, Math.min(1, unit.currentHp / Math.max(1, unit.maxHp) + 0.12));
+        const value = total * 0.135 * survival / (1 + 0.42 * waitTurns);
+        best = Math.max(best, Math.min(2450, value));
+      }
+      return best;
+    }
+
+    function aiPlannerSelfComboBoardScore(state, side) {
+      let value = 0;
+      for (const unit of state.units || []) {
+        const bonus = aiPlannerSelfComboPotential(state,unit);
+        if (bonus > 0) value += (unit.side === side ? 1 : -1) * bonus;
+      }
+      return value;
+    }
+
+    // 解禁済みの技が印を消費したとき、状態評価に含めていた「まだ撃てる価値」を
+    // 実現済みの攻撃から二重に差し引かない。技が当たった場合だけ補正する。
+    function aiPlannerSelfComboRealization(beforeState, afterState, actor, candidate, result) {
+      if (candidate?.type !== 'skill' || !actor || !(Number(result?.damage) > 0)) return 0;
+      const cond = candidate.skill?.selfCond || {};
+      if (!['self_status','self_any_status'].includes(cond.type)) return 0;
+      const before = aiPlannerSelfComboPotential(beforeState,actor,candidate.skill);
+      if (before <= 0) return 0;
+      const afterActor = aiPlannerFindUnit(afterState,actor.instanceId);
+      const after = aiPlannerSelfComboPotential(afterState,afterActor,candidate.skill);
+      return Math.max(0, before - after);
+    }
+
     function aiPlannerRoughPassiveEffectValue(effect, targetType = 'self') {
       if (!effect || effect.type === 'none') return 0;
       const type = String(effect.type || ''), val = Math.abs(Number(effect.val) || 0);
@@ -7030,6 +7131,7 @@
       if (includeForecast) {
         score += aiPlannerFutureCombatPotential(state, side);
         score += aiPlannerApThresholdPassivePotential(state, side);
+        score += aiPlannerSelfComboBoardScore(state, side);
       }
       return score;
     }
@@ -7763,6 +7865,81 @@
       return unitName.includes('キサキ') || cardId === '4f2f883c-55a6-41f5-824d-6b4339b11134';
     }
 
+    // v1.0.78: 自己完結型の「準備 -> 本命技」を、単なる加点ではなく行動方針として扱う。
+    // スキルの名前/カードIDではなく、実際の状態付与・発動条件・威力・必要APで判定。
+    // 乙骨のような永続印から強力な全体技へつなぐ構成は、初回の準備を原則優先する。
+    function aiPlannerPrioritySelfSetup(state, actor) {
+      if (!actor || actor.currentHp <= 0 || !actor.isActive) return [];
+      if ((actor.debuffs || []).some(d => d.type === 'skill_block' && durationActive(d.duration))) return [];
+      const enemies = aiPlannerActive(state, actor.side === 'player' ? 'enemy' : 'player');
+      if (!enemies.length) return [];
+      const attack = Math.max(1, aiPlannerEffectiveAtk(actor));
+      // ただの通常攻撃で最後の敵を倒して決着できるなら、準備より決着を優先。
+      if (enemies.length === 1 && aiPlannerDamageAfterCut(enemies[0],attack) >= enemies[0].currentHp &&
+          !(enemies[0].shields || []).some(sh => Number(sh.remaining ?? sh.amount)>0)) return [];
+      const availableAp = aiPlannerUnitAp(actor);
+      const activeSkills = (actor.skills || []).filter(sk => sk?.type === 'active');
+      const candidates = [];
+      (actor.skills || []).forEach((setup, index) => {
+        if (setup?.type !== 'active' || !aiPlannerCondition(setup.selfCond, actor, state)) return;
+        if (Number(setup.chance ?? 100) < 90 || aiPlannerShouldHoldKisakiOpeningBuff(actor,setup,state.turn)) return;
+        const prepCost = Math.max(0, Number(setup.cost) || 0) + (aiPlannerHasStatus(actor,'pressure') ? 5 : 0);
+        if (availableAp < prepCost) return;
+        const entries = [{type:setup.targetType, effect:setup.mainEffect}];
+        if (setup.hasSubEffect && setup.subEffect) entries.push({type:setup.subEffect.targetType, effect:setup.subEffect});
+        const statusEntries = entries.filter(x => x.type === 'self' && x.effect?.type === 'status_apply' && Number(x.effect.val ?? 100) >= 90);
+        if (!statusEntries.length) return;
+        for (const {effect} of statusEntries) {
+          const status = String(effect.status || '');
+          if (!status || aiPlannerHasStatus(actor,status)) continue;
+          const duration = normalizeDuration(effect.duration);
+          if (duration !== -1 && duration < 2) continue;
+          let bestPayoff = 0;
+          for (const payoff of activeSkills) {
+            if (payoff === setup || Number(payoff.chance ?? 100) < 50) continue;
+            const cond = payoff.selfCond || {};
+            if (cond.type !== 'self_status' || cond.status !== status) {
+              if (cond.type !== 'self_any_status' || (actor.statuses || []).some(x => durationActive(x.duration))) continue;
+            }
+            const hitType = String(payoff.targetType || '');
+            if (!['all_enemy','select_enemy_1','random_enemy_1'].includes(hitType)) continue;
+            const damage = payoff.mainEffect || {};
+            if (!['dmg_atk_ratio','dmg_atk_ratio_pierce','dmg_max_hp_ratio','dmg_fixed','dmg_fixed_pierce'].includes(damage.type)) continue;
+            const cost = Math.max(0,Number(payoff.cost)||0) + (aiPlannerHasStatus(actor,'pressure') ? 5 : 0);
+            if (cost > 100) continue;
+            const immediateAp = entries.reduce((sum,x) => {
+              if (x.effect?.type !== 'mod_ap' || Number(x.effect.val) <= 0) return sum;
+              if (x.type === 'self' || x.type === 'all_ally') return sum + Number(x.effect.val);
+              return sum;
+            },0);
+            const passiveAp = (actor.skills || []).reduce((sum,passive) => {
+              if (passive?.type !== 'passive' || passive.timing !== 'turn_start' || Number(passive.chance ?? 100) < 100 || passive.targetType !== 'self' || passive.mainEffect?.type !== 'mod_ap') return sum;
+              if (!aiPlannerCondition(passive.selfCond,actor,state)) return sum;
+              return sum + Math.max(0,Number(passive.mainEffect.val)||0);
+            },0);
+            const nextAp = Math.min(100, Math.max(0,availableAp-prepCost+immediateAp));
+            const wait = Math.max(1,Math.ceil((cost-nextAp)/Math.max(1,20+passiveAp)));
+            if (wait > 3 || (duration !== -1 && duration <= wait)) continue;
+            const val = Math.max(0,Number(damage.val)||0);
+            const raw = damage.type === 'dmg_fixed' || damage.type === 'dmg_fixed_pierce' ? val : damage.type === 'dmg_max_hp_ratio' ? Number(actor.maxHp||0)*val/100 : attack*val/100;
+            if (raw <= 0) continue;
+            const damageAll = hitType === 'all_enemy';
+            const applicable = enemies.filter(enemy => aiPlannerTargetCondition(enemy,payoff.targetCond));
+            // HP30%以下の敵が一人もいない即死技は、この時点では準備動作の理由にしない。
+            if (!applicable.length) continue;
+            const numTargets = damageAll ? applicable.length : 1;
+            const expected = Math.min(raw,Math.max(...applicable.map(enemy=>enemy.currentHp))) * numTargets;
+            // 毎ターンの通常攻撃を犠牲にするだけの価値がある本命技に限定する。
+            // 永続コンボは多少APを貯める必要があっても優先する。
+            if (expected < attack * (damageAll ? 2.0 : 1.65)) continue;
+            bestPayoff=Math.max(bestPayoff, expected / Math.max(1,wait));
+          }
+          if (bestPayoff > 0) candidates.push({index,skill:setup,priority:bestPayoff});
+        }
+      });
+      return candidates.sort((a,b)=>b.priority-a.priority);
+    }
+
     function aiPlannerBuildUnitCandidates(state, actorId, intelligence, futureActorIds = []) {
       const actor = aiPlannerFindUnit(state, actorId);
       if (!actor || actor.currentHp <= 0) return [{ type: 'skip', actorId, targetInstanceId: null, cost: 0, name: 'skip' }];
@@ -7780,11 +7957,30 @@
           if (aiPlannerUnitAp(actor) < cost) return;
           const targets = aiPlannerCandidateTargets(state, actor, sk);
           if (skillNeedsManualTarget(sk) && targets.length === 0) return;
+          // 全体・ランダム対象の技も対象条件を満たすキャラが0体なら発動しない。
+          // 例：「HP30%以下の敵全体」への技を、HP満タンの相手に空撃ちしない。
+          if (!skillNeedsManualTarget(sk) && sk.targetCond?.type && sk.targetCond.type !== 'none' &&
+              !aiPlannerTargetPool(state,sk.targetType,actor).some(t => aiPlannerTargetCondition(t,sk.targetCond))) return;
           targets.forEach(target => candidates.push({ type: 'skill', actorId, skillIndex: sIdx, skill: sk, targetInstanceId: target.targetInstanceId || null, subTargetInstanceId: target.subTargetInstanceId || null, cost, name: sk.name }));
         });
       }
+      // 強力な自己コンボの準備が必要なら、探索幅の外へ落とさず基本行動として確保する。
+      // ただしこの一手で敵を全滅させられる攻撃は例外として残す。
+      const prioritySetups = aiPlannerPrioritySelfSetup(state,actor);
+      const priorityIndexes = new Set(prioritySetups.map(x=>x.index));
+      const preferred = priorityIndexes.size ? candidates.filter(c=>c.type==='skill' && priorityIndexes.has(c.skillIndex)) : [];
+      let searchCandidates = candidates;
+      if (preferred.length) {
+        searchCandidates = preferred.concat(candidates.filter(c=>{
+          if(c.type!=='attack' && c.type!=='skill')return false;
+          if (aiPlannerActive(state, side==='player'?'enemy':'player').length!==1) return false;
+          const sim=aiPlannerCloneState(state);
+          aiPlannerApplyCandidate(sim,c);
+          return aiPlannerActive(sim,side==='player'?'enemy':'player').length===0;
+        }));
+      }
       // 各キャラにつき探索候補を絞る。ただし撃破確定・回復・無効化系は切り捨てない。
-      const scored = candidates.map(c => {
+      const scored = searchCandidates.map(c => {
         const copy = aiPlannerCloneState(state);
         const r = c.type === 'attack' ? aiPlannerApplyAttack(copy, c.actorId, c.targetInstanceId) : c.type === 'skill' ? aiPlannerApplySkill(copy, c.actorId, c.skill, c.targetInstanceId, false, c.subTargetInstanceId) : {value:0};
         const afterScore=aiPlannerEvaluateState(copy, side);
@@ -7804,7 +8000,8 @@
         const healControlPenalty=aiPlannerHealControlTradeoffPenalty(state,actor,c);
         const apOpportunity=aiPlannerApOpportunityPenalty(state,side,actor,c,copy,futureActorIds);
         const damageBonus=aiPlannerDirectDamageScoreBonus(r);
-        const baseAdjustment=strat+tactical+selfHarm+roleAdjustment+comboThreshold+teamLethalCombo+recoveryPressure+actionOrderImpact+damageBonus-repeatBuffPenalty-controlRiskPenalty-healControlPenalty;
+        const comboRealization=aiPlannerSelfComboRealization(state,copy,actor,c,r);
+        const baseAdjustment=strat+tactical+selfHarm+roleAdjustment+comboThreshold+teamLethalCombo+recoveryPressure+actionOrderImpact+damageBonus+comboRealization-repeatBuffPenalty-controlRiskPenalty-healControlPenalty;
         // Full AP opportunity cost prunes a bad early support action, but current-turn denial
         // is already reflected when later actors choose their actual action. Only next-turn AP
         // breakpoints are carried into the final whole-plan score.
@@ -8096,14 +8293,17 @@
       const plannerState = aiPlannerCreateState(side);
       units.forEach((u, unitIndex) => {
         if (u.currentHp <= 0) return;
-        plannerState[apKey] = remainingAp;
         const plannerActor = aiPlannerFindUnit(plannerState, u.instanceId);
         if (!plannerActor) return;
+        remainingAp = aiPlannerUnitAp(plannerActor);
         const futureActorIds = units.slice(unitIndex + 1).filter(x=>x.currentHp>0).map(x=>x.instanceId);
         const blocked = (u.debuffs || []).some(d => d.type === 'skill_block' && durationActive(d.duration));
         const usable = [];
+        const prioritySetups=aiPlannerPrioritySelfSetup(plannerState,plannerActor);
+        const priorityIndexes=new Set(prioritySetups.map(x=>x.index));
         const baseValue = aiPlannerEvaluateStateBase(plannerState, side, false);
         if (!blocked) (u.skills || []).forEach((sk, sIdx) => {
+          if(priorityIndexes.size && !priorityIndexes.has(sIdx)) return;
           if (aiPlannerShouldHoldKisakiOpeningBuff(u, sk, battleState.turn)) return;
           if (sk.type !== 'active' || !evalCond(sk.selfCond, u, side === 'player')) return;
           const cost = Math.max(0, Number(sk.cost || 0)) + (unitHasStatus(u, 'pressure') ? 5 : 0);
@@ -8136,7 +8336,8 @@
           usable.sort((a,b)=>b.score-a.score);
           const best=usable[0];
           const minimumAcceptable=(getAiTacticalIQ(side)<20?4:getAiTacticalIQ(side)<40?1.5:0);
-          if(best.score>=minimumAcceptable)pick=aiPickWithinThree(usable,'score');
+          if(priorityIndexes.size) pick = usable[0];
+          else if(best.score>=minimumAcceptable)pick=aiPickWithinThree(usable,'score');
         }
         if (pick) {
           const candidates = pick.candidates.length ? pick.candidates : getAiTargetsForSkill(pick.sk,u);

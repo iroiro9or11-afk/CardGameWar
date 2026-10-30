@@ -1,4 +1,4 @@
-/* 都道府県カード戦争 v1.0.76 —累計資金ランキング・AIガチャ予算保護 */
+/* 都道府県カード戦争 v1.0.78 —累計資金ランキング・AIガチャ予算保護（戦闘AIの自己連携評価はindex.html） */
 'use strict';
 
 let campaignState = null;
