@@ -1,5 +1,5 @@
 /*
- * 都道府県カード戦争 v1.0.70 - カード性能検証ラボ
+ * 都道府県カード戦争 v1.0.80 - カード性能検証ラボ
  * Uses the existing battle engine in isolated, temporary headless battles.
  * Results are intentionally memory-only and never saved to IndexedDB/campaign state.
  */
@@ -13,6 +13,21 @@
   let labActiveSource = null;
   let labOriginalSwitchView = null;
   let labNavigationState = [];
+  // Keep the UI responsive, but do not schedule an empty macrotask after every
+  // turn and every match. Browser timer clamping made those waits substantial.
+  let labLastYieldAt = 0;
+  let labLastProgressAt = 0;
+  const LAB_YIELD_INTERVAL_MS = 100;
+  const LAB_PROGRESS_INTERVAL_MS = 160;
+  const labClock = () => (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
+
+  function labProgressDue(force = false) {
+    const now = labClock();
+    if (!force && now - labLastProgressAt < LAB_PROGRESS_INTERVAL_MS) return false;
+    labLastProgressAt = now;
+    return true;
+  }
+
 
   let LAB_TOTAL_BATTLES = 150;
   // Estimated values from the latest completed batch report; not persisted until user confirms.
@@ -328,6 +343,9 @@
   // Instrument actual resolved damage/healing/effects without changing the rules themselves.
   const labOriginalDealDamage = dealDamage;
   dealDamage = function (target, ...args) {
+    // Rank-wide batch reports only use win/draw/loss totals. Skip the per-hit
+    // before/after accounting entirely when detailed measurements are disabled.
+    if (!labCurrentMatch) return labOriginalDealDamage.call(this, target, ...args);
     const beforeHp = Number(target?.currentHp);
     const source = labActiveSource || labActiveActor || null;
     const result = labOriginalDealDamage.call(this, target, ...args);
@@ -356,6 +374,7 @@
 
   const labOriginalApplyEffect = applyEffect;
   applyEffect = function (effect, target, isPlayerActor, isMagic = false, actor = null) {
+    if (!labCurrentMatch) return labOriginalApplyEffect.call(this, effect, target, isPlayerActor, isMagic, actor);
     const source = labGetSource(actor, isPlayerActor);
     const beforeHp = target && !target.__playerTarget ? Number(target.currentHp) : null;
     const beforeShield = target && !target.__playerTarget && Array.isArray(target.shields) ? target.shields.reduce((sum, shield) => sum + Math.max(0, Number(shield.remaining ?? shield.amount) || 0), 0) : 0;
@@ -454,6 +473,7 @@
 
   const labOriginalExecuteMagicCard = executeMagicCard;
   executeMagicCard = async function (card, side = 'player', ...args) {
+    if (!labCurrentMatch) return labOriginalExecuteMagicCard.call(this, card, side, ...args);
     const previousSource = labActiveSource;
     labActiveSource = { side, cardId: null, isMagic: true };
     let result;
@@ -517,9 +537,14 @@
 
   async function labYieldToBrowser() {
     await new Promise(resolve => setTimeout(resolve, 0));
+    labLastYieldAt = labClock();
   }
 
-  async function labPlayBattle(targetCard, level, iteration, playerRoster, enemyRoster, magicPool) {
+  async function labYieldIfDue() {
+    if (labClock() - labLastYieldAt >= LAB_YIELD_INTERVAL_MS) await labYieldToBrowser();
+  }
+
+  async function labPlayBattle(targetCard, level, iteration, playerRoster, enemyRoster, magicPool, collectDetailedMetrics = true) {
     const previousBattleState = battleState;
     const previousDeploymentSelection = deploymentSelection;
     const previousStoryOverride = storyBattleOverride;
@@ -539,7 +564,10 @@
       : targetRosterIndex < 4 ? 'active' : 'reserve1';
     // A roster's order does not make it a new matchup; count unique card sets, not permutations.
     match.opponentRosterKey = enemyIds.map(String).sort().join('|');
-    labCurrentMatch = match;
+    // Per-card detailed statistics are needed for an individual report only.
+    // The rank-wide batch needs win/loss and roster participation, not hundreds
+    // of effect-by-effect measurements per battle.
+    labCurrentMatch = collectDetailedMetrics ? match : null;
     labActiveActor = null;
     labActiveSource = null;
 
@@ -572,7 +600,6 @@
       battleExecutionRunning = false;
 
       startBattle();
-      await labYieldToBrowser();
       let guard = 0;
       while (!battleState?.resultWinner && guard < 22) {
         if (battleState?.phase === 'decision') {
@@ -595,12 +622,16 @@
             break;
           }
         } else if (battleState?.phase === 'execution') {
+          // Unexpected asynchronous execution: release the event loop rather
+          // than busy-spinning, exactly as the original guard intended.
           await labYieldToBrowser();
         } else {
           break;
         }
         guard++;
-        await labYieldToBrowser();
+        // Campaign headless battles also yield approximately every three turns.
+        // The extra time gate prevents needless macrotasks for fast turns.
+        if ((guard % 3) === 0) await labYieldIfDue();
       }
       if (!battleState?.resultWinner) {
         battleState.resultWinner = 'draw';
@@ -1050,7 +1081,11 @@
     labRunning = true;
     labCancelRequested = false;
     const previousRunLabFlag = window.__performanceLabRunning;
+    const previousNormalizedCards = window.__performanceLabNormalizedCards;
     window.__performanceLabRunning = true;
+    window.__performanceLabNormalizedCards = null;
+    labLastYieldAt = 0;
+    labLastProgressAt = 0;
     labLockNavigation(true);
     const picker = document.getElementById('performance-lab-picker-panel');
     const progress = document.getElementById('performance-lab-progress-panel');
@@ -1105,7 +1140,7 @@
         }
 
         const focalCard = playerRoster[0];
-        const row = await labPlayBattle(focalCard, 'random', totalBattles, playerRoster, enemyRoster, []);
+        const row = await labPlayBattle(focalCard, 'random', totalBattles, playerRoster, enemyRoster, [], false);
         // Final defense: even if an unexpected engine/integration change returns a
         // duplicated lineup, do not count it and retry the match.
         if (labRostersHaveDuplicate(row.playerRosterIds.map(id => ({ id })), row.enemyRosterIds.map(id => ({ id })))) {
@@ -1129,8 +1164,10 @@
           if (stats) labRecordBatchAppearance(stats, row.winner, 'enemy', playerRosterKey);
         }
 
-        labSetBatchProgress(totalBattles, rank, candidates, statsById);
-        await labYieldToBrowser();
+        // Avoid rebuilding the progress DOM after each of thousands of fights.
+        // The final report still includes every single result and sample.
+        if (labProgressDue()) labSetBatchProgress(totalBattles, rank, candidates, statsById);
+        await labYieldIfDue();
       }
       if (!allReachedTarget()) {
         throw new Error(`安全上限${maxBatchBattles}戦に達しましたが、全カードの${LAB_TOTAL_BATTLES}戦到達を確認できませんでした。集計を中断しました。`);
@@ -1147,6 +1184,7 @@
       labRunning = false;
       labCancelRequested = false;
       window.__performanceLabRunning = previousRunLabFlag;
+      window.__performanceLabNormalizedCards = previousNormalizedCards;
       labLockNavigation(false);
       if (cancelButton) { cancelButton.disabled = false; cancelButton.textContent = '検証を中断'; }
       if (picker && !report?.classList.contains('hidden')) picker.classList.add('hidden');
@@ -1219,7 +1257,11 @@
     labRunning = true;
     labCancelRequested = false;
     const previousRunLabFlag = window.__performanceLabRunning;
+    const previousNormalizedCards = window.__performanceLabNormalizedCards;
     window.__performanceLabRunning = true;
+    window.__performanceLabNormalizedCards = null;
+    labLastYieldAt = 0;
+    labLastProgressAt = 0;
     labLockNavigation(true);
     const picker = document.getElementById('performance-lab-picker-panel');
     const progress = document.getElementById('performance-lab-progress-panel');
@@ -1258,8 +1300,8 @@
         results.push(row);
         uniqueRosters.add(row.opponentRosterKey);
         done++;
-        labSetProgress(done, targetCard);
-        await labYieldToBrowser();
+        if (labProgressDue(done === LAB_TOTAL_BATTLES)) labSetProgress(done, targetCard);
+        await labYieldIfDue();
       }
       const summary = labScoreAndValue(targetCard, results, uniqueRosters.size, sameRankCount);
       labRenderReport(targetCard, results, summary);
@@ -1275,6 +1317,7 @@
       labRunning = false;
       labCancelRequested = false;
       window.__performanceLabRunning = previousRunLabFlag;
+      window.__performanceLabNormalizedCards = previousNormalizedCards;
       labLockNavigation(false);
       if (cancelButton) { cancelButton.disabled = false; cancelButton.textContent = '検証を中断'; }
       if (picker && !report?.classList.contains('hidden')) picker.classList.add('hidden');

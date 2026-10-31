@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.78</title>
+  <title>都道府県カード戦争 v1.0.80</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     /* 4体横1列の戦闘フィールド: offline-tailwind.css(v1.0.64)にはgrid-cols-4が未収録だった。 */
@@ -61,7 +61,7 @@
     .popup-hp-fill.hp-dead { background: #64748b; }
 </style>
 <style>
-      #form-magic-card option[value="dmg_atk_ratio"] { display:none; }
+      /* スキルカードの術者依存ダメージは編集JSで分類別に制御する（通常マジックは選択不可）。 */
       /* v1.0.64: four active cards must remain a single row at every viewport size. */
     #field-player, #field-enemy { display:grid !important; grid-template-columns:repeat(4,minmax(0,1fr)) !important; width:100%; gap:clamp(3px,1vw,12px); }
     #field-player > *, #field-enemy > * {min-width:0; width:100%; overflow-wrap:anywhere;}
@@ -1030,7 +1030,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.78</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.80</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -3255,12 +3255,21 @@
     }
 
     function sanitizeMagicEffectUI(prefix = "magic-eff") {
-      if (!activeCreateType || activeCreateType !== "magic") return;
-      const forbidden = ["dmg_atk_ratio", "dmg_atk_ratio_pierce", "dmg_max_hp_ratio"];
-      const main = document.querySelector(`.${prefix}-main-eff-type`);
-      if (main && forbidden.includes(main.value)) main.value = "none";
-      const sub = document.querySelector(`.${prefix}-sub-eff-type`);
-      if (sub && forbidden.includes(sub.value)) sub.value = "none";
+      if (activeCreateType !== "magic") return;
+      // 通常マジックには術者となるキャラがいない。一方、スキルカードは
+      // 指定した実行キャラの攻撃力・最大HPを参照できるので、主/追加効果とも許可する。
+      const isSkillCard = document.getElementById('edit-magic-type')?.value === 'skill';
+      const actorBased = ['dmg_atk_ratio', 'dmg_atk_ratio_pierce', 'dmg_max_hp_ratio'];
+      for (const slot of ['main-eff', 'sub-eff']) {
+        const select = document.querySelector(`.${prefix}-${slot}-type`);
+        if (!select) continue;
+        actorBased.forEach(type => {
+          const option = select.querySelector(`option[value="${type}"]`);
+          if (option) { option.disabled = !isSkillCard; option.hidden = !isSkillCard; }
+        });
+        // 既存の通常マジック向け制限だけを維持。存在しない値「none」にはしない。
+        if (!isSkillCard && actorBased.includes(select.value)) select.value = 'dmg_fixed';
+      }
       // マジックカード名＝マジックカードのスキル名
       const magicName = document.getElementById("edit-magic-name");
       const skillName = document.querySelector(`.${prefix}-name`);
@@ -3469,8 +3478,9 @@
       const skill=document.getElementById('edit-magic-type')?.value==='skill';
       document.getElementById('edit-spell-requirements')?.classList.toggle('hidden',!skill);
       document.getElementById('edit-magic-priority-group')?.classList.toggle('hidden',skill);
-      const desc=document.getElementById('magic-type-explainer');if(desc)desc.textContent=skill?'使用キャラが行動値で発動・自身のAPで支払い・通常行動の代わりになります。':'プレイヤーが行動するカードです。AP消費なし・記載のカード行動値で発動します。';
-      updatePreview();
+      const desc=document.getElementById('magic-type-explainer');if(desc)desc.textContent=skill?'使用キャラが行動値で発動・自身のAPで支払い・通常行動の代わりになります。攻撃力・最大HP依存の技も使えます。':'プレイヤーが行動するカードです。AP消費なし・記載のカード行動値で発動します。';
+      sanitizeMagicEffectUI('magic-eff');
+      updateSkillFormDisplay('magic-eff','active',true);
     }
     async function saveCustomMagicCard() {
       const name = document.getElementById("edit-magic-name").value.trim() || "マジック";
@@ -3973,7 +3983,7 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.78-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.80-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
@@ -5590,7 +5600,12 @@
       return units.find(u=>u.instanceId===selectedId)||units[0]||null;
     }
     function startBattle() {
-      allCards.forEach(normalizeBattleCard);
+      // During a lab batch the authored card templates do not change. Normalize
+      // them once instead of rescanning hundreds of cards on every headless fight.
+      if (!(window.__performanceLabRunning && window.__performanceLabNormalizedCards === allCards)) {
+        allCards.forEach(normalizeBattleCard);
+        if (window.__performanceLabRunning) window.__performanceLabNormalizedCards = allCards;
+      }
       if (typeof aiPlannerResetEvaluationContentCache === 'function') aiPlannerResetEvaluationContentCache();
       hideBattleResultModal();
       const override = performanceLabBattleOverride || storyBattleOverride || campaignBattleOverride;
