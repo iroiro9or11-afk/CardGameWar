@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.80</title>
+  <title>都道府県カード戦争 v1.0.81</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     /* 4体横1列の戦闘フィールド: offline-tailwind.css(v1.0.64)にはgrid-cols-4が未収録だった。 */
@@ -1030,7 +1030,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.80</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.81</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -1297,7 +1297,7 @@
             </div>
             <div class="rounded-xl border border-sky-800/70 bg-sky-950/25 p-3 space-y-2">
               <label class="block text-xs text-sky-300 font-black" for="edit-magic-type">カード分類</label>
-              <select id="edit-magic-type" onchange="toggleMagicTypeEditor()" class="bg-slate-950 border border-sky-700 rounded px-3 py-2 text-xs w-full"><option value="magic">📜 マジックカード（プレイヤー実行・AP消費なし）</option><option value="skill">⚔️ スキルカード（キャラ実行・個別APを消費）</option></select>
+              <select id="edit-magic-type" onchange="toggleMagicTypeEditor()" class="bg-slate-950 border border-sky-700 rounded px-3 py-2 text-xs w-full"><option value="magic">📜 マジックカード（プレイヤー実行・AP消費なし）</option><option value="skill">⚔️ スキルカード（キャラ実行・チーム共通APを消費）</option></select>
               <div id="magic-type-explainer" class="text-[10px] text-slate-300">通常マジックはAPを使用せず、プレイヤーが1ターンに1枚使用します。</div>
               <div id="edit-spell-requirements" class="hidden space-y-2 border-t border-sky-900 pt-2">
                 <div class="text-[10px] font-black text-sky-200">スキルカードの使用者条件（空欄＝制限なし）</div>
@@ -1651,7 +1651,7 @@
           </div>
           <div>
             <div id="battle-player-name-display" class="text-xs font-black text-cyan-300">プレイヤー</div>
-            <div class="text-[10px] text-amber-400 font-bold">合計AP: <span id="battle-ap" class="text-white text-xs">0</span>（各キャラ個別） <span id="battle-reserved-ap" class="text-slate-400 text-[9px]">(AP予約合計: 0)</span></div>
+            <div class="text-[10px] text-amber-400 font-bold">共通AP: <span id="battle-ap" class="text-white text-xs">0</span> / 100 <span id="battle-reserved-ap" class="text-slate-400 text-[9px]">(AP予約合計: 0)</span></div>
           </div>
         </div>
 
@@ -1667,7 +1667,7 @@
           </div>
           <div class="text-right">
             <div id="battle-enemy-name-display" class="text-xs font-black text-rose-300">ライバル</div>
-            <div class="text-[10px] text-rose-400 font-bold">合計AP: <span id="battle-enemy-ap" class="text-white text-xs">0</span>（各キャラ個別）</div>
+            <div class="text-[10px] text-rose-400 font-bold">共通AP: <span id="battle-enemy-ap" class="text-white text-xs">0</span> / 100</div>
           </div>
         </div>
       </div>
@@ -2450,7 +2450,14 @@
     async function loadAllData() {
       const started = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       const [storedCards,storedDecks]=await Promise.all([getAllFromStore("cards"),getAllFromStore("decks")]);
-      allCards = storedCards.map(normalizeBattleCard);
+      const apMigrated=[];
+      allCards = storedCards.map(card=>{
+        const before=apTargetSnapshot(card);
+        const normalized=normalizeBattleCard(card);
+        if(apTargetSnapshot(normalized)!==before)apMigrated.push(normalized);
+        return normalized;
+      });
+      await persistMigratedApTargets(apMigrated);
       allDecks = storedDecks;
 
       if (allCards.length === 0) await seedDefaultCards(); // 生成時のみ全件再読込
@@ -3088,6 +3095,8 @@
                 <span class="text-[8px] text-slate-400">対象指定:</span>
                 <select class="${prefix}-target-type bg-slate-800 text-[10px] rounded w-full" onchange="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">
                   ${!isMagic ? `<option value="self">自分自身</option>` : ''}
+                  <option value="player_self">自分（プレイヤー）</option>
+                  <option value="player_opp">相手（プレイヤー）</option>
                   <option value="select_enemy_1">指定した敵1体</option>
                   <option value="random_enemy_1">ランダムな敵1体</option>
                   <option value="select_ally_1">指定した味方1体</option>
@@ -3182,6 +3191,8 @@
                   <span class="text-[8px] text-slate-400">追加効果の対象:</span>
                   <select class="${prefix}-sub-target-type bg-slate-800 text-[10px] rounded w-full" onchange="updateSkillFormDisplay('${prefix}', '${skillType}', ${isMagic})">
                     ${!isMagic ? `<option value="self">自分自身</option>` : ''}
+                    <option value="player_self">自分（プレイヤー）</option>
+                    <option value="player_opp">相手（プレイヤー）</option>
                     <option value="same_main_target">メイン効果と同じ対象</option>
                     <option value="select_enemy_1">指定した敵1体</option>
                     <option value="random_enemy_1">ランダムな敵1体</option>
@@ -3328,6 +3339,7 @@
         selfCond, targetType, targetCond, mainEffect,
         hasSubEffect, subEffect
       };
+      normalizeLegacyTarget(rawSkill);
       rawSkill.desc = buildAutoSkillDescriptionFromData(rawSkill);
       return rawSkill;
     }
@@ -3366,6 +3378,13 @@
     function updateSkillFormDisplay(prefix, skillType, isMagic = false) {
       syncEffectValueInput(prefix, 'main-eff');
       syncEffectValueInput(prefix, 'sub-eff');
+      // AP操作はキャラ個体ではなくプレイヤー側の共通APを対象にする。
+      for (const [part,selectSuffix] of [['main-eff','target-type'],['sub-eff','sub-target-type']]) {
+        const effectType=document.querySelector(`.${prefix}-${part}-type`)?.value;
+        const value=Number(document.querySelector(`.${prefix}-${part}-val`)?.value)||0;
+        const select=document.querySelector(`.${prefix}-${selectSuffix}`);
+        if(effectType==='mod_ap' && select) select.value=value<0?'player_opp':'player_self';
+      }
       const timingValue = document.querySelector(`.${prefix}-timing`)?.value || 'turn_start';
       const attackerAllowed = skillType === 'passive' && timingValue === 'damage_taken' && !isMagic;
       for (const suffix of ['target-type','sub-target-type']) {
@@ -3478,7 +3497,7 @@
       const skill=document.getElementById('edit-magic-type')?.value==='skill';
       document.getElementById('edit-spell-requirements')?.classList.toggle('hidden',!skill);
       document.getElementById('edit-magic-priority-group')?.classList.toggle('hidden',skill);
-      const desc=document.getElementById('magic-type-explainer');if(desc)desc.textContent=skill?'使用キャラが行動値で発動・自身のAPで支払い・通常行動の代わりになります。攻撃力・最大HP依存の技も使えます。':'プレイヤーが行動するカードです。AP消費なし・記載のカード行動値で発動します。';
+      const desc=document.getElementById('magic-type-explainer');if(desc)desc.textContent=skill?'使用キャラが行動値で発動・チーム共通APで支払い・通常行動の代わりになります。攻撃力・最大HP依存の技も使えます。':'プレイヤーが行動するカードです。AP消費なし・記載のカード行動値で発動します。';
       sanitizeMagicEffectUI('magic-eff');
       updateSkillFormDisplay('magic-eff','active',true);
     }
@@ -3983,7 +4002,7 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.80-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.81-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
@@ -4213,7 +4232,7 @@
       const statusLine = (arr, title, cls) => arr.length ? `<div class="mb-3"><div class="font-black ${cls} mb-1">${title}</div><div class="space-y-1">${arr.map(x=>`<div class="bg-slate-900 border border-slate-800 rounded px-2 py-1.5"><b>${x.type==='status'?statusName(x.status):x.type}</b>：${x.type==='status' ? '' : (x.val !== undefined ? (x.val>=0?'+':'')+x.val : '')}${durationActive(x.duration) ? ` ／ 残り${durationText(x.duration)}` : ''}</div>`).join('')}</div></div>` : `<div class="text-slate-500">${title}なし</div>`;
       const buffs = unit.buffs || [], debuffs = unit.debuffs || [], shields = unit.shields || [];
       const detailSkills = Array.isArray(unit.skills) && unit.skills.length ? unit.skills : (base.skills || []);
-      const html = `<div class="mb-3"><b class="text-amber-300 text-base">戦闘中ステータス</b><div class="grid grid-cols-2 gap-2 mt-2"><div>現在HP: <b>${unit.currentHp}/${unit.maxHp}</b></div><div>現在AP: <b class="text-sky-300">${characterAp(unit)}/100</b></div><div>現在行動値: <b class="text-sky-300">${getEffectiveSpeed(unit)}</b></div></div></div>${statusLine(buffs,'🟢 バフ','text-emerald-300')}${statusLine(debuffs,'🔴 デバフ','text-rose-300')}${statusLine((unit.statuses||[]).map(x=>({...x,type:x.type==='mark'?`印（付与者：${x.sourceName||'不明'}）`:statusName(x.type),val:undefined})),'🟣 状態異常','text-purple-300')}${shields.length ? `<div class="mb-3"><div class="font-black text-cyan-300 mb-1">🛡 シールド</div><div class="space-y-1">${shields.map((x,i)=>`<div class="bg-slate-900 border border-cyan-900 rounded px-2 py-1.5">${i+1}層目：残り${Number(x.remaining ?? x.amount) || 0} / ${Number(x.amount)||0}（${durationActive(x.duration)?`残り${durationText(x.duration)}`:'期限切れ'}）</div>`).join('')}</div></div>` : '<div class="text-slate-500">シールドなし</div>'}<div class="pt-3 border-t border-slate-800"><b class="text-amber-300">スキル一覧</b>${(detailSkills||[]).map(s=>`<div class="skill-compact-detail bg-slate-900 rounded border border-slate-800 text-sm mt-1"><div class="font-black text-amber-200">[${s.type?.toUpperCase()||'SKILL'}] ${s.name} <span class="text-xs text-slate-400">AP:${s.cost||0}</span></div><div class="skill-detail-desc text-slate-200">${s.desc||''}</div></div>`).join('')}</div>`;
+      const html = `<div class="mb-3"><b class="text-amber-300 text-base">戦闘中ステータス</b><div class="grid grid-cols-2 gap-2 mt-2"><div>現在HP: <b>${unit.currentHp}/${unit.maxHp}</b></div><div>陣営共通AP: <b class="text-sky-300">${characterAp(unit)}/100</b></div><div>現在行動値: <b class="text-sky-300">${getEffectiveSpeed(unit)}</b></div></div></div>${statusLine(buffs,'🟢 バフ','text-emerald-300')}${statusLine(debuffs,'🔴 デバフ','text-rose-300')}${statusLine((unit.statuses||[]).map(x=>({...x,type:x.type==='mark'?`印（付与者：${x.sourceName||'不明'}）`:statusName(x.type),val:undefined})),'🟣 状態異常','text-purple-300')}${shields.length ? `<div class="mb-3"><div class="font-black text-cyan-300 mb-1">🛡 シールド</div><div class="space-y-1">${shields.map((x,i)=>`<div class="bg-slate-900 border border-cyan-900 rounded px-2 py-1.5">${i+1}層目：残り${Number(x.remaining ?? x.amount) || 0} / ${Number(x.amount)||0}（${durationActive(x.duration)?`残り${durationText(x.duration)}`:'期限切れ'}）</div>`).join('')}</div></div>` : '<div class="text-slate-500">シールドなし</div>'}<div class="pt-3 border-t border-slate-800"><b class="text-amber-300">スキル一覧</b>${(detailSkills||[]).map(s=>`<div class="skill-compact-detail bg-slate-900 rounded border border-slate-800 text-sm mt-1"><div class="font-black text-amber-200">[${s.type?.toUpperCase()||'SKILL'}] ${s.name} <span class="text-xs text-slate-400">AP:${s.cost||0}</span></div><div class="skill-detail-desc text-slate-200">${s.desc||''}</div></div>`).join('')}</div>`;
       document.getElementById("detail-card-body").innerHTML = html;
       document.getElementById("btn-edit-card").classList.add('hidden');
       document.getElementById("btn-delete-card").classList.add('hidden');
@@ -5545,29 +5564,56 @@
     // ===== ストーリーモードここまで =====
 
     // 戦闘エンジン
-    // v1.0.64 compatibility: legacy player AP targets become the effect owner's self.
-    function normalizeLegacyTarget(effect) {
-      if (!effect || typeof effect !== 'object') return effect;
-      if (effect.targetType === 'player_self' || effect.targetType === 'player_opp') effect.targetType = 'self';
-      if (effect.subEffect) normalizeLegacyTarget(effect.subEffect);
-      return effect;
+    // v1.0.81: AP effects target a team resource, never an individual unit.
+    // Existing saved cards are converted by effect sign, for both main/sub effects.
+    function normalizeLegacyTarget(skill) {
+      if (!skill || typeof skill !== 'object') return skill;
+      let changed = false;
+      if (skill.mainEffect?.type === 'mod_ap') {
+        const wanted = Number(skill.mainEffect.val) < 0 ? 'player_opp' : 'player_self';
+        if (skill.targetType !== wanted) { skill.targetType = wanted; changed = true; }
+        if (skill.targetCond?.type !== 'none') { skill.targetCond = {type:'none'}; changed=true; }
+      }
+      if (skill.hasSubEffect && skill.subEffect?.type === 'mod_ap') {
+        const wanted = Number(skill.subEffect.val) < 0 ? 'player_opp' : 'player_self';
+        if (skill.subEffect.targetType !== wanted) {skill.subEffect.targetType = wanted; changed=true;}
+        if (skill.subEffect.targetCond?.type !== 'none') {skill.subEffect.targetCond={type:'none'};changed=true;}
+      }
+      if (changed) skill.desc = buildAutoSkillDescriptionFromData(skill);
+      return skill;
     }
     function normalizeBattleCard(card) {
       if (!card) return card;
-      const migrateDescription = (value) => String(value || '')
-        .replace(/自分\(プレイヤー\)/g, '自分自身')
-        .replace(/相手\(プレイヤー\)/g, '自分自身');
       if (card.cardType === 'magic') {
         if (card.magicType !== 'skill') card.magicType = 'magic';
+        const apBefore=apTargetSnapshot(card);
         normalizeLegacyTarget(card.effect);
-        if (typeof card.desc === 'string') card.desc = migrateDescription(card.desc);
-        if(card.magicType==='skill')card.desc=spellDescriptionWithRequirements(card,card.desc||card.effect?.desc||'');
-        if (card.effect && typeof card.effect.desc === 'string') card.effect.desc = migrateDescription(card.effect.desc);
-      } else if(card.cardType === 'unit') (card.skills || []).forEach(skill => {
-        normalizeLegacyTarget(skill);
-        if (skill && typeof skill.desc === 'string') skill.desc = migrateDescription(skill.desc);
-      });
+        if (apTargetSnapshot(card)!==apBefore) {
+          // 旧マジックカードの説明欄にもAP対象の変換を反映する。
+          card.desc=spellDescriptionWithRequirements(card,buildAutoSkillDescriptionFromData(card.effect));
+        } else if (card.magicType==='skill') {
+          card.desc=spellDescriptionWithRequirements(card,card.effect?.desc||card.desc||'');
+        }
+      } else if (card.cardType === 'unit') (card.skills || []).forEach(normalizeLegacyTarget);
       return card;
+    }
+    function apTargetSnapshot(card) {
+      const sks=card?.cardType==='magic'?[card.effect]:(card?.skills||[]);
+      return JSON.stringify(sks.filter(Boolean).map(sk=>[
+        sk.mainEffect?.type==='mod_ap'?[sk.targetType,sk.targetCond?.type]:null,
+        sk.hasSubEffect&&sk.subEffect?.type==='mod_ap'?[sk.subEffect.targetType,sk.subEffect.targetCond?.type]:null
+      ]));
+    }
+    // 画像入りカードを一枚ずつ書き戻さない。変化があったカードのみ一括保存する。
+    function persistMigratedApTargets(cards) {
+      if (!cards.length) return Promise.resolve(0);
+      return new Promise((resolve,reject)=>{
+        const tx=db.transaction('cards','readwrite');
+        const store=tx.objectStore('cards');cards.forEach(card=>store.put(card));
+        tx.oncomplete=()=>resolve(cards.length);
+        tx.onerror=()=>reject(tx.error||new Error('AP対象の移行に失敗'));
+        tx.onabort=()=>reject(tx.error||new Error('AP対象の移行が中断'));
+      });
     }
     // 説明文に使用可能者の条件を必ず追記。古いカードも読み込み時に表示を補完する。
     function skillCardRequirementsDescription(limits={}) {
@@ -5594,7 +5640,20 @@
       if (limits.minHp != null && limits.minHp !== '' && unit.maxHp<Number(limits.minHp)) return false;
       return true;
     }
-    function characterAp(unit) { return Math.max(0,Math.min(100,Number(unit?.ap)||0)); }
+    function getBattleSideAp(side) {
+      return Math.max(0,Math.min(100,Number(battleState?.[side==='enemy'?'enemyAp':'playerAp'])||0));
+    }
+    function setBattleSideAp(side, value) {
+      if (!battleState) return 0;
+      const ap=Math.max(0,Math.min(100,Number(value)||0));
+      battleState[side==='enemy'?'enemyAp':'playerAp']=ap;
+      const units=side==='enemy'?battleState.enemyUnits:battleState.playerUnits;
+      (units||[]).forEach(unit=>{unit.ap=ap;});
+      return ap;
+    }
+    function characterAp(unit) {
+      return unit?.side==='player'||unit?.side==='enemy' ? getBattleSideAp(unit.side) : Math.max(0,Math.min(100,Number(unit?.ap)||0));
+    }
     function magicActorForSide(side, selectedId=null) {
       const units=getActiveUnits(side);
       return units.find(u=>u.instanceId===selectedId)||units[0]||null;
@@ -5733,8 +5792,8 @@
       [...(battleState.playerUnits||[]),...(battleState.enemyUnits||[])].forEach(u=>{if(u.isActive&&u.deployedAtTurn==null)u.deployedAtTurn=1;});
       document.getElementById("decision-command-panel")?.classList.remove("hidden");
 
-      // 戦闘開始時APは0。毎ターン開始時に20回復するため、1ターン目の実質APは20。
-      [...(battleState.playerUnits||[]),...(battleState.enemyUnits||[])].forEach(u=>{if(u.isActive&&u.currentHp>0)u.ap=Math.min(100,characterAp(u)+20);});
+      // チーム共通AP：開始時0、各ターン+30（1ターン目は30）、最大100。
+      for(const side of ['player','enemy']) setBattleSideAp(side,getBattleSideAp(side)+30);
       battleState.reservedMagic = null;
       battleState.reservedMagicActorId=null;battleState.reservedEnemyMagicActorId=null;
       battleState.reservedMagicTargetInstanceId = null;
@@ -5802,8 +5861,8 @@
       // card DOM or decode card pictures on every one of 6+ actions per turn.
       if(window.__campaignHeadlessBattle)return;
       document.getElementById("battle-turn-num").innerText = battleState.turn;
-      document.getElementById("battle-ap").innerText = getActiveUnits('player').reduce((sum,u)=>sum+characterAp(u),0);
-      document.getElementById("battle-enemy-ap").innerText = getActiveUnits('enemy').reduce((sum,u)=>sum+characterAp(u),0);
+      document.getElementById("battle-ap").innerText = getBattleSideAp('player');
+      document.getElementById("battle-enemy-ap").innerText = getBattleSideAp('enemy');
       document.getElementById("battle-phase-display").innerText = battleState.phase === "decision" ? "行動決定フェーズ" : "実行フェーズ";
 
       renderFieldUnits('player');
@@ -5897,8 +5956,6 @@
               <span class="text-cyan-300 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800 truncate">${actionBadge}</span>
             </div>
           </div>
-          <div class="w-full mt-1 bg-slate-950 h-1.5 rounded-full border border-sky-900 overflow-hidden"><div class="bg-sky-400 h-full" style="width:${characterAp(u)}%"></div></div>
-          <div class="text-center text-[10px] font-black text-sky-200">⚡ AP ${characterAp(u)} / 100</div>
           <button type="button" class="battle-detail-btn mt-1 w-full py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[10px] text-slate-200 font-bold">🔎 戦闘中の詳細・バフ/デバフ</button>
         `
         const detailBtn = cardEl.querySelector('.battle-detail-btn');
@@ -5929,7 +5986,7 @@
           img.onerror=()=>{img.onerror=null;img.src=fallback;};
           img.src=getCardImage(u)||u.image||u.imageUrl||fallback;
           const name=document.createElement('span');name.className='w-full truncate text-center text-[8px] font-black text-slate-100';name.textContent=u.name||'名称未設定';
-          const hp=document.createElement('span');hp.className='w-full truncate text-center text-[7px] text-slate-400';hp.textContent=`HP ${u.currentHp}/${u.maxHp} · AP ${characterAp(u)}`;
+          const hp=document.createElement('span');hp.className='w-full truncate text-center text-[7px] text-slate-400';hp.textContent=`HP ${u.currentHp}/${u.maxHp}`;
           div.append(label,img,name,hp);
           div.addEventListener('click',()=>openBattleUnitDetail(u.instanceId));
           box.appendChild(div);
@@ -5976,7 +6033,7 @@
         return;
       }
 
-      nameDisp.innerText = `${activeUnit.name}  HP ${activeUnit.currentHp}/${activeUnit.maxHp}  ⚡ AP ${characterAp(activeUnit)}/100`;
+      nameDisp.innerText = `${activeUnit.name}  HP ${activeUnit.currentHp}/${activeUnit.maxHp}  ⚡ チームAP ${characterAp(activeUnit)}/100`;
       const spellHint=document.createElement('div');spellHint.className='w-full text-[10px] text-sky-200 bg-sky-950/40 p-2 rounded border border-sky-700/50';
       spellHint.textContent='スキルカードは、ここで使うキャラを選択してから下のカードをタップします。このキャラの攻撃・スキルの代わりに行動します。';optContainer.appendChild(spellHint);
 
@@ -6221,21 +6278,23 @@
       const eff=card?.effect;
       const magicMissing=!!(eff && (isManualTargetType(eff.targetType)&&!battleState.reservedMagicTargetInstanceId || eff.hasSubEffect&&isManualTargetType(eff.subEffect?.targetType)&&!battleState.reservedMagicSubTargetInstanceId));
       const spellActor=battleState.reservedMagicActorId && units.find(u=>u.instanceId===battleState.reservedMagicActorId);
-      return {totalCost:costs.reduce((s,x)=>s+x.cost,0),currentAp:units.reduce((s,u)=>s+characterAp(u),0),hasUnselectedTarget:costs.some(x=>x.missing)||magicMissing,apShortage:costs.some(x=>x.cost>x.ap)||!!(card&&magicCardIsSkill(card)&&(!spellActor||!skillCardAllowed(card,spellActor))),shortageNames:costs.filter(x=>x.cost>x.ap).map(x=>x.name)};
+      const totalCost=costs.reduce((s,x)=>s+x.cost,0);
+      const currentAp=getBattleSideAp('player');
+      return {totalCost,currentAp,hasUnselectedTarget:costs.some(x=>x.missing)||magicMissing,apShortage:totalCost>currentAp||!!(card&&magicCardIsSkill(card)&&(!spellActor||!skillCardAllowed(card,spellActor))),shortageNames:totalCost>currentAp?['チーム共通AP']:[]};
     }
 
     function updateReservationSummary() {
       const {totalCost, currentAp, hasUnselectedTarget, apShortage} = getPlayerReservationValidation();
       const apEl = document.getElementById("battle-reserved-ap");
       if (apEl) {
-        apEl.innerText = `(個別AP予約合計: ${totalCost} / 現在AP: ${currentAp})`;
+        apEl.innerText = `(共通AP予約合計: ${totalCost} / 現在AP: ${currentAp})`;
         apEl.classList.toggle('text-rose-300', apShortage);
         apEl.classList.toggle('text-slate-400', !apShortage);
       }
 
       const summary = document.getElementById('reservation-summary');
       if (summary) {
-        const parts = [`個別AP予約合計: <b>${totalCost}</b> / 現在AP: <b>${currentAp}</b>`];
+        const parts = [`共通AP予約合計: <b>${totalCost}</b> / 残量: <b>${currentAp}</b>`];
         if (apShortage) parts.push(`<span class="text-rose-300">⚠ ${getPlayerReservationValidation().shortageNames.join("、")||"選択キャラ"} のAP/使用条件が不足</span>`);
         else if (hasUnselectedTarget) parts.push('<span class="text-amber-300">⚠ 対象を選択してください</span>');
         else parts.push('<span class="text-emerald-300">✓ この内容で行動開始できます</span>');
@@ -6341,7 +6400,7 @@
     }
 
     // ===== AI 戦術評価エンジン =====
-    // 玄人：各キャラの個別APと発動条件を見て行動を組み合わせる。
+    // 玄人：チーム共通APと各キャラの発動条件を見て行動を組み合わせる。
     // 達人：さらにビームサーチ＋次ターン価値＋反撃リスクまで評価する。
 
     function getAiTargetsForSkill(skill, unit) {
@@ -6396,7 +6455,13 @@
     }
 
     function aiPlannerUnitAp(unit) { return Math.max(0,Math.min(100,Number(unit?.ap)||0)); }
-    function aiPlannerApForSide(state,side) { return aiPlannerActive(state,side).reduce((sum,u)=>sum+aiPlannerUnitAp(u),0); }
+    function aiPlannerApForSide(state,side) {return Math.max(0,Math.min(100,Number(state?.[side==='enemy'?'enemyAp':'playerAp'])||0));}
+    function aiPlannerSetSideAp(state,side,value) {
+      const ap=Math.max(0,Math.min(100,Number(value)||0));
+      state[side==='enemy'?'enemyAp':'playerAp']=ap;
+      (state.units||[]).forEach(u=>{if(u.side===side)u.ap=ap;});
+      return ap;
+    }
     function aiPlannerMagicActor(state,side,actorId=null) {return aiPlannerActive(state,side).find(u=>u.instanceId===actorId)||aiPlannerActive(state,side)[0]||null;}
     function aiPlannerActive(state, side, includeDead = false) {
       return state.units.filter(u => u.side === side && u.isActive && (includeDead || u.currentHp > 0));
@@ -6556,7 +6621,10 @@
     function aiPlannerResolveTargets(state, actor, effect, explicitTargetId = null) {
       if (!effect) return [];
       const targetType = effect.targetType || 'none';
-      if (targetType === 'player_self' || targetType === 'player_opp') return [actor];
+      if (targetType === 'player_self' || targetType === 'player_opp') {
+        const side=targetType==='player_self'?actor.side:(actor.side==='player'?'enemy':'player');
+        return [{__playerTarget:true,side,name:side==='player'?'プレイヤー':'敵プレイヤー',instanceId:'__ap_'+side}];
+      }
       if (targetType === 'self') return [actor];
       let pool = aiPlannerTargetPool(state, targetType, actor).filter(t => aiPlannerTargetCondition(t, effect.targetCond));
       if (!pool.length) return [];
@@ -6626,10 +6694,10 @@
       const fail = obj => ({ ...obj, success: false });
       if (!effect || effect.type === 'none') return fail({ value: 0, kills: 0, damage: 0, healing: 0 });
       if (effect.type === 'mod_ap') {
-        if (!target || target.__playerTarget || target.currentHp<=0) return fail({value:0,kills:0,damage:0,healing:0});
-        const before=aiPlannerUnitAp(target),delta=Number(effect.val)||0;
-        target.ap=Math.max(0,Math.min(100,before+delta));
-        return ok({value:(target.ap-before)*(target.side===actor.side?2:-2),kills:0,damage:0,healing:0});
+        if (!target || !['player','enemy'].includes(target.side)) return fail({value:0,kills:0,damage:0,healing:0});
+        const before=aiPlannerApForSide(state,target.side),delta=Number(effect.val)||0;
+        const after=aiPlannerSetSideAp(state,target.side,before+delta);
+        return ok({value:(after-before)*(target.side===actor.side?2:-2),kills:0,damage:0,healing:0});
       }
       if (!target || target.__playerTarget) return fail({ value: 0, kills: 0, damage: 0, healing: 0 });
 
@@ -6752,7 +6820,7 @@
       if (!actor || actor.currentHp <= 0 || !skill) return { value: -9999, kills: 0, damage: 0, healing: 0 };
       const cost = Math.max(0, Number(skill.cost) || 0) + (!isMagic && aiPlannerHasStatus(actor, 'pressure') ? 5 : 0);
       if (!isMagic && aiPlannerUnitAp(actor) < cost) return { value: -9999, kills: 0, damage: 0, healing: 0 };
-      if (!isMagic) actor.ap=aiPlannerUnitAp(actor)-cost;
+      if (!isMagic) aiPlannerSetSideAp(state,actor.side,aiPlannerApForSide(state,actor.side)-cost);
       let total = { value: -cost * 1.2, kills: 0, damage: 0, healing: 0 };
 
       const mainEffect = skill.mainEffect;
@@ -6832,7 +6900,7 @@
     // an offensive skill; controllers/defenders use damaging sub-skills less often unless needed.
     function aiPlannerExpectedAttackCoefficient(state, unit) {
       const role = isValidUnitRole(unit?.role) ? unit.role : inferUnitRoleFromSkills(unit?.skills || [], {hp:unit?.maxHp, atk:unit?.atk, priority:unit?.priority});
-      const futureAp = Math.min(100, aiPlannerUnitAp(unit) + 20);
+      const futureAp = Math.min(100, aiPlannerUnitAp(unit) + 30);
       let bestMultiplier = 1.0;
       (unit?.skills || []).forEach(sk => {
         if (sk?.type !== 'active') return;
@@ -6962,13 +7030,13 @@
         if (!chosenStatus) continue;
         const cost = Math.max(0, Number(skill.cost) || 0) + (aiPlannerHasStatus(unit,'pressure') ? 5 : 0);
         if (cost > 100) continue;
-        // 自己APの毎ターン+20と、確実な自己AP供給パッシブを見積もる。
-        const apGain = 20 + (unit.skills || []).reduce((sum, passive) => {
+        // チーム共通APの毎ターン+30と、確実な味方AP供給パッシブを見積もる。
+        const apGain = 30 + (unit.skills || []).reduce((sum, passive) => {
           if (passive?.type !== 'passive' || passive.timing !== 'turn_start' || Number(passive.chance ?? 100) < 100) return sum;
-          if (passive.targetType !== 'self' || passive.mainEffect?.type !== 'mod_ap') return sum;
+          if (passive.targetType !== 'player_self' || passive.mainEffect?.type !== 'mod_ap') return sum;
           const pc = passive.selfCond || {};
           if (pc.type !== 'none' && !aiPlannerCondition(pc,unit,state)) return sum;
-          return sum + Math.max(0, Math.min(20, Number(passive.mainEffect.val) || 0));
+          return sum + Math.max(0, Math.min(30, Number(passive.mainEffect.val) || 0));
         }, 0);
         // 準備を行ったキャラはそのターン再行動できない。最低でも次ターン。
         const waitTurns = Math.max(1, Math.ceil((cost - aiPlannerUnitAp(unit)) / Math.max(1, apGain)));
@@ -7074,9 +7142,9 @@
           const utility = Math.min(900, direct + sub) * chance;
           if (utility < 80) continue; // Do not hoard AP for a trivial threshold passive.
           for (let turn = 1; turn <= weights.length; turn++) {
-            // AP recovers by 20 at each new turn. For end-of-turn triggers the AP after
+            // Shared AP recovers by 30 at each new turn. For end-of-turn triggers the AP after
             // this turn is relevant; for all future trigger timings the recovered AP is used.
-            const projectedAp = Math.min(100, currentAp + (passive.timing === 'turn_end' ? 20 * (turn - 1) : 20 * turn));
+            const projectedAp = Math.min(100, currentAp + (passive.timing === 'turn_end' ? 30 * (turn - 1) : 30 * turn));
             if (projectedAp < threshold) continue;
             score += (unit.side === perspectiveSide ? 1 : -1) * utility * weights[turn - 1];
           }
@@ -7458,7 +7526,7 @@
       if (!attacker || !target || attacker.currentHp <= 0 || target.currentHp <= 0) return 0;
       let best = aiPlannerDamageAfterCut(target, Math.round(aiPlannerEffectiveAtk(attacker) * 1.0));
       const apKey='ap';
-      const futureAp = Math.min(100, Math.max(0, Number(attacker[apKey]) || 0) + 20);
+      const futureAp = Math.min(100, Math.max(0, Number(attacker[apKey]) || 0) + 30);
       (attacker.skills || []).forEach(sk => {
         if (sk?.type !== 'active' || !aiPlannerCondition(sk.selfCond, attacker, state)) return;
         const cost = Math.max(0, Number(sk.cost) || 0) + (aiPlannerHasStatus(attacker, 'pressure') ? 5 : 0);
@@ -7563,7 +7631,7 @@
       const enemyCanUseHealMagic=enemyMagicHand.some(card=>{
         const eff=card?.effect||{},main=eff.mainEffect||{};
         const unused=!(enemySide==='player'?battleState.usedMagicCardIds:battleState.enemyUsedMagicCardIds)?.has?.(card?.id);
-        return unused&&['heal_fixed','heal_max_hp_ratio'].includes(String(main.type||''))&&(magicCardIsSkill(card)?beforeEnemies.some(u=>skillCardAllowed(card,u)&&aiPlannerUnitAp(u)+20>=Number(eff.cost||0)):true);
+        return unused&&['heal_fixed','heal_max_hp_ratio'].includes(String(main.type||''))&&(magicCardIsSkill(card)?beforeEnemies.some(u=>skillCardAllowed(card,u)&&aiPlannerUnitAp(u)+30>=Number(eff.cost||0)):true);
       });
       if(!healers.length&&!enemyCanUseHealMagic)return Math.min(125,dealt*0.055);
       const damagedHealer=damaged.some(u=>healers.some(h=>String(h.instanceId)===String(u.instanceId)));
@@ -7764,7 +7832,7 @@
       const now=aiPlannerUnitAp(aiPlannerFindUnit(state,actor.instanceId));
       const after=aiPlannerUnitAp(aiPlannerFindUnit(afterState,actor.instanceId));
       if (after>=now)return {currentTurnLoss:0,nextTurnLoss:0,total:0};
-      const nextBefore=Math.min(100,now+20),nextAfter=Math.min(100,after+20);
+      const nextBefore=Math.min(100,now+30),nextAfter=Math.min(100,after+30);
       const futureActor=aiPlannerFindUnit(afterState,actor.instanceId);
       let loss=0;
       for(const sk of futureActor?.skills||[]){
@@ -7924,16 +7992,16 @@
             if (cost > 100) continue;
             const immediateAp = entries.reduce((sum,x) => {
               if (x.effect?.type !== 'mod_ap' || Number(x.effect.val) <= 0) return sum;
-              if (x.type === 'self' || x.type === 'all_ally') return sum + Number(x.effect.val);
+              if (x.type === 'player_self') return sum + Number(x.effect.val);
               return sum;
             },0);
             const passiveAp = (actor.skills || []).reduce((sum,passive) => {
-              if (passive?.type !== 'passive' || passive.timing !== 'turn_start' || Number(passive.chance ?? 100) < 100 || passive.targetType !== 'self' || passive.mainEffect?.type !== 'mod_ap') return sum;
+              if (passive?.type !== 'passive' || passive.timing !== 'turn_start' || Number(passive.chance ?? 100) < 100 || passive.targetType !== 'player_self' || passive.mainEffect?.type !== 'mod_ap') return sum;
               if (!aiPlannerCondition(passive.selfCond,actor,state)) return sum;
               return sum + Math.max(0,Number(passive.mainEffect.val)||0);
             },0);
             const nextAp = Math.min(100, Math.max(0,availableAp-prepCost+immediateAp));
-            const wait = Math.max(1,Math.ceil((cost-nextAp)/Math.max(1,20+passiveAp)));
+            const wait = Math.max(1,Math.ceil((cost-nextAp)/Math.max(1,30+passiveAp)));
             if (wait > 3 || (duration !== -1 && duration <= wait)) continue;
             const val = Math.max(0,Number(damage.val)||0);
             const raw = damage.type === 'dmg_fixed' || damage.type === 'dmg_fixed_pierce' ? val : damage.type === 'dmg_max_hp_ratio' ? Number(actor.maxHp||0)*val/100 : attack*val/100;
@@ -8130,7 +8198,7 @@
       const beamWidth = Math.max(12,Math.min(21,12+Math.round(iq*0.09)));
       let beams = [{ state: base, plan: [], score: aiPlannerEvaluateState(base, side), adjustment:0 }];
 
-      // 通常マジックはAP消費なし。スキルカードは術者の個別APと行動枠を使う。
+      // 通常マジックはAP消費なし。スキルカードはチーム共通APと術者の行動枠を使う。
       const magicCandidates = aiPlannerBuildMagicCandidates(base, side, intelligence, activeIds);
       const magicBeam = [];
       beams.forEach(b => magicCandidates.forEach(c => {
@@ -8171,7 +8239,7 @@
         const now = aiPlannerEvaluateState(b.state, side);
         const future = aiPlannerCloneState(b.state);
         const apKey='ap';
-        aiPlannerActive(future,side).forEach(u=>{u.ap=Math.min(100,aiPlannerUnitAp(u)+20);});
+        aiPlannerSetSideAp(future,side,aiPlannerApForSide(future,side)+30);
         const futureValue = aiPlannerEvaluateState(future, side);
         const threat = aiPlannerEstimateThreat(future, side);
         const futureWeight=0.08+(iq/100)*0.32;const threatWeight=0.16+(iq/100)*0.62;
@@ -8303,7 +8371,7 @@
 
       // Lower-IQ profiles remain greedy (no beam search), but evaluate real effect value,
       // the shared AP opportunity cost, and harmful side-effects instead of printed val alone.
-      let remainingAp = 0; // AP is per actor; each action uses its own unit.ap.
+      let remainingAp = 0; // Team shared AP; simulate previous reservations before next actor.
       const apKey='ap';
       const plannerState = aiPlannerCreateState(side);
       units.forEach((u, unitIndex) => {
@@ -8383,6 +8451,7 @@
             u.reservedAction = {type:'skill',skillIndex:pick.sIdx,targetInstanceId:target?.instanceId||null,subTargetInstanceId:subTarget?.instanceId||null};
           }
           if (u.reservedAction.type === 'skill') u.__plannedApCost=Math.max(0,Number(pick.sk.cost||0)) + (unitHasStatus(u,'pressure') ? 5 : 0);
+          if (u.reservedAction.type === 'skill') aiPlannerApplySkill(plannerState,u.instanceId,pick.sk,u.reservedAction.targetInstanceId,false,u.reservedAction.subTargetInstanceId);
         } else {
           const targetScores=aliveEnemies.map(target=>({target,score:scoreAiTarget(target,{mainEffect:{type:'dmg_atk_ratio',val:80}},u)}));
           const target=aiPickWithinThree(targetScores,'score')?.target || aliveEnemies[0];
@@ -8394,7 +8463,7 @@
     function scoreAiMagic(card, side = 'enemy', apOverride = null) {
       if (!card?.effect) return -9999;
       const state = aiPlannerCreateState(side);
-      if (apOverride != null) state[side === 'player' ? 'playerAp' : 'enemyAp'] = Math.max(0, Number(apOverride) || 0);
+      if (apOverride != null) aiPlannerSetSideAp(state,side,apOverride);
       const actorId = 'magic_score_actor';
       const actor = {instanceId:actorId,side,currentHp:1,maxHp:1,atk:0,priority:999,buffs:[],debuffs:[],statuses:[],skills:[],isActive:false,name:'マジック'};
       state.units.push(actor);
@@ -8675,7 +8744,7 @@
       const targetNames = [];
       const targetEntities = [];
       const targetHpBeforeMap = new Map();
-      if(skillCard) actor.ap=Math.max(0,characterAp(actor)-cost);
+      if(skillCard) setBattleSideAp(side,getBattleSideAp(side)-cost);
 
       if (card.effect) {
         const mainTargets = mainTargetsPreview;
@@ -8803,7 +8872,7 @@
         await showActionPopup(unit, sk.name, sk, {target:'有効な対象なし',effect:'対象条件を満たす対象がいません',result:'不発（AP消費なし）',description: sk.desc || sk.description || buildAutoSkillDescriptionFromData(sk)});
         return;
       }
-      unit.ap = Math.max(0, characterAp(unit) - cost);
+      setBattleSideAp(unit.side,getBattleSideAp(unit.side)-cost);
       const effectLines=[], resultLines=[], targetNames=[], targetEntities=[];
       const actorHpBefore = { current: unit.currentHp, max: unit.maxHp };
       const targetHpBeforeMap = new Map();
@@ -8896,7 +8965,10 @@
     }
 
     function resolveTargets(targetType, targetCond, actor, isPlayer, selectedTargetInstanceId = null, isMagic = false) {
-      if (targetType === 'player_self' || targetType === 'player_opp') targetType='self';
+      if (targetType === 'player_self' || targetType === 'player_opp') {
+        const side=targetType==='player_self'?(actor?.side|| (isPlayer?'player':'enemy')):(actor?.side==='enemy'?'player':'enemy');
+        return [{__playerTarget:true,side,name:side==='player'?'プレイヤー側AP':'敵プレイヤー側AP',instanceId:'__ap_'+side}];
+      }
       if (targetType === 'self') return actor ? [actor] : [];
       let pool = getTargetPool(targetType, actor).filter(t => matchesTargetCondition(t, targetCond));
       if (pool.length === 0) return [];
@@ -8949,11 +9021,13 @@
       if (!eff || eff.type === "none") return;
 
       if (eff.type === "mod_ap") {
-        if (!target || target.__playerTarget || !target.isActive || target.currentHp<=0) return;
-        const before=characterAp(target);
-        target.ap=clamp(before+(Number(eff.val)||0),0,100);
-        logBattle(`⚡ ${target.name} のAP ${target.ap-before>=0?'+':''}${target.ap-before} → ${target.ap}`);
-        return {effect:`AP ${eff.val>=0?'+':''}${eff.val}`,result:`${target.name} AP ${before} → ${target.ap}`};
+        if (!target || !['player','enemy'].includes(target.side)) return;
+        const side=target.side;
+        const before=getBattleSideAp(side);
+        const after=setBattleSideAp(side,before+(Number(eff.val)||0));
+        const label=side==='player'?'プレイヤー':'敵プレイヤー';
+        logBattle(`⚡ ${label} の共通AP ${after-before>=0?'+':''}${after-before} → ${after}`);
+        return {effect:`共通AP ${eff.val>=0?'+':''}${eff.val}`,result:`${label} AP ${before} → ${after}`};
       }
 
       if (!target || target.__playerTarget) return;
