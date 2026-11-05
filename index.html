@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>都道府県カード戦争 v1.0.81</title>
+  <title>都道府県カード戦争 v1.0.83</title>
   <link rel="stylesheet" href="offline-tailwind.css">
   <style>
     /* 4体横1列の戦闘フィールド: offline-tailwind.css(v1.0.64)にはgrid-cols-4が未収録だった。 */
@@ -1030,7 +1030,7 @@
   <header class="bg-slate-900 border-b border-slate-800 p-3 sticky top-0 z-40 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
       <h1 class="text-lg font-black text-amber-300 flex items-center gap-2 tracking-wide">
-        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.81</span>
+        <span>🏯</span> 都道府県カード戦争 <span class="text-[10px] bg-amber-500/15 text-amber-200 px-2 py-1 rounded border border-amber-500/30 font-bold">OFFLINE v1.0.83</span>
       </h1>
       <nav class="flex flex-wrap gap-2">
         <button onclick="switchView('prefecture')" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-black">🏯 ゲーム</button>
@@ -3350,6 +3350,13 @@
       const oldType = selector?.dataset.lastEffectType || '';
       const newType = selector?.value || '';
       if (valueInput && isRandomClearCountEffect(newType) && !isRandomClearCountEffect(oldType)) valueInput.value = '1';
+      // AP効果を新たに選んだ時だけ、旧キャラ単位対象から共通AP対象へ初期化。
+      // 既に選んだプレイヤー側は維持し、効果量の符号変更では一切切り替えない。
+      if (newType === 'mod_ap' && oldType !== 'mod_ap') {
+        const targetSuffix = slot === 'main-eff' ? 'target-type' : 'sub-target-type';
+        const targetSelect = document.querySelector(`.${prefix}-${targetSuffix}`);
+        if (targetSelect && !['player_self','player_opp'].includes(targetSelect.value)) targetSelect.value = 'player_self';
+      }
       if (selector) selector.dataset.lastEffectType = newType;
       if (isMagic) sanitizeMagicEffectUI(prefix);
       updateSkillFormDisplay(prefix, skillType, isMagic);
@@ -3378,13 +3385,8 @@
     function updateSkillFormDisplay(prefix, skillType, isMagic = false) {
       syncEffectValueInput(prefix, 'main-eff');
       syncEffectValueInput(prefix, 'sub-eff');
-      // AP操作はキャラ個体ではなくプレイヤー側の共通APを対象にする。
-      for (const [part,selectSuffix] of [['main-eff','target-type'],['sub-eff','sub-target-type']]) {
-        const effectType=document.querySelector(`.${prefix}-${part}-type`)?.value;
-        const value=Number(document.querySelector(`.${prefix}-${part}-val`)?.value)||0;
-        const select=document.querySelector(`.${prefix}-${selectSuffix}`);
-        if(effectType==='mod_ap' && select) select.value=value<0?'player_opp':'player_self';
-      }
+      // v1.0.82: APの増減方向と対象陣営は独立した設定。
+      // 正負を入力しても「自分（プレイヤー）」「相手（プレイヤー）」の手動選択を変更しない。
       const timingValue = document.querySelector(`.${prefix}-timing`)?.value || 'turn_start';
       const attackerAllowed = skillType === 'passive' && timingValue === 'damage_taken' && !isMagic;
       for (const suffix of ['target-type','sub-target-type']) {
@@ -4002,7 +4004,7 @@
         const objectUrl = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = objectUrl;
-        anchor.download = `prefecture-card-war-card-data-v1.0.81-${dateStamp}.json`;
+        anchor.download = `prefecture-card-war-card-data-v1.0.83-${dateStamp}.json`;
         anchor.style.display = 'none';
         document.body.appendChild(anchor);
         anchor.click();
@@ -5564,20 +5566,23 @@
     // ===== ストーリーモードここまで =====
 
     // 戦闘エンジン
-    // v1.0.81: AP effects target a team resource, never an individual unit.
-    // Existing saved cards are converted by effect sign, for both main/sub effects.
+    // v1.0.82: AP効果の対象陣営は効果量の符号に依存しない。
+    // 既に「自分／相手（プレイヤー）」が選ばれているカードは、その選択を必ず尊重する。
+    // v1.0.80以前のキャラ個体対象だけを、共通AP用のプレイヤー対象へ互換変換する。
     function normalizeLegacyTarget(skill) {
       if (!skill || typeof skill !== 'object') return skill;
       let changed = false;
-      if (skill.mainEffect?.type === 'mod_ap') {
-        const wanted = Number(skill.mainEffect.val) < 0 ? 'player_opp' : 'player_self';
-        if (skill.targetType !== wanted) { skill.targetType = wanted; changed = true; }
-        if (skill.targetCond?.type !== 'none') { skill.targetCond = {type:'none'}; changed=true; }
+      const isPlayerSideTarget = target => target === 'player_self' || target === 'player_opp';
+      if (skill.mainEffect?.type === 'mod_ap' && !isPlayerSideTarget(skill.targetType)) {
+        skill.targetType = Number(skill.mainEffect.val) < 0 ? 'player_opp' : 'player_self';
+        skill.targetCond = {type:'none'};
+        changed = true;
       }
-      if (skill.hasSubEffect && skill.subEffect?.type === 'mod_ap') {
-        const wanted = Number(skill.subEffect.val) < 0 ? 'player_opp' : 'player_self';
-        if (skill.subEffect.targetType !== wanted) {skill.subEffect.targetType = wanted; changed=true;}
-        if (skill.subEffect.targetCond?.type !== 'none') {skill.subEffect.targetCond={type:'none'};changed=true;}
+      if (skill.hasSubEffect && skill.subEffect?.type === 'mod_ap'
+          && !isPlayerSideTarget(skill.subEffect.targetType)) {
+        skill.subEffect.targetType = Number(skill.subEffect.val) < 0 ? 'player_opp' : 'player_self';
+        skill.subEffect.targetCond = {type:'none'};
+        changed = true;
       }
       if (changed) skill.desc = buildAutoSkillDescriptionFromData(skill);
       return skill;
@@ -6934,6 +6939,226 @@
       return teamThreat;
     }
 
+    // v1.0.83: Keep opponent-response forecasts local to each immutable hypothetical board.
+    // The forecast uses only cards/conditions/AP visible in the current battle (not hidden
+    // campaign cards before the pairing), and never changes combat execution itself.
+    const aiPlannerResponseForecastCache = new WeakMap();
+    const aiPlannerSupportWeightsCache = new WeakMap();
+    function aiPlannerSupportWeights(state,side) {
+      let cache=aiPlannerSupportWeightsCache.get(state);
+      if(!cache){cache=Object.create(null);aiPlannerSupportWeightsCache.set(state,cache);}
+      if(!cache[side]){
+        const allies=aiPlannerActive(state,side);
+        const output=new Map(), protection=new Map();
+        for(const ally of allies){
+          output.set(ally.instanceId,aiPlannerAttackOutputPotential(state,ally));
+          protection.set(ally.instanceId,aiPlannerProtectionPriority(state,ally));
+        }
+        cache[side]={output,protection,topOutput:Math.max(1,...output.values()),topProtection:Math.max(0.1,...protection.values())};
+      }
+      return cache[side];
+    }
+    function aiPlannerAttackOutputPotential(state, unit) {
+      if (!unit || unit.currentHp <= 0) return 0;
+      const basic = aiPlannerEffectiveAtk(unit);
+      let best = basic;
+      const futureAp = Math.min(100, aiPlannerApForSide(state,unit.side)+30);
+      for (const skill of unit.skills || []) {
+        if (skill?.type !== 'active' || !aiPlannerCondition(skill.selfCond,unit,state)) continue;
+        const cost = Math.max(0,Number(skill.cost)||0)+(aiPlannerHasStatus(unit,'pressure')?5:0);
+        if (cost > futureAp) continue;
+        const eff = skill.mainEffect || {}, type = String(eff.type||'');
+        const enemies = aiPlannerActive(state,unit.side==='player'?'enemy':'player');
+        if (!enemies.some(t=>aiPlannerTargetCondition(t,skill.targetCond))) continue;
+        const val = Math.max(0,Number(eff.val)||0);
+        const raw = ['dmg_atk_ratio','dmg_atk_ratio_pierce'].includes(type) ? basic*val/100
+          : type==='dmg_max_hp_ratio' ? unit.maxHp*val/100
+          : ['dmg_fixed','dmg_fixed_pierce'].includes(type) ? val : 0;
+        if (raw <= 0) continue;
+        const targets = skill.targetType==='all_enemy' ? Math.max(1,Math.min(3,enemies.length))*0.78 : 1;
+        // Shared AP limits how often an expensive skill can fire. This is an output
+        // estimate, not a second free action for every attacker.
+        const apFrequency = cost===0 ? 0.95 : Math.min(0.88,30/Math.max(30,cost));
+        best = Math.max(best,basic + Math.max(0,raw*targets-basic)*apFrequency);
+      }
+      const ratio = [...(unit.buffs||[]),...(unit.debuffs||[])].filter(x=>x.type==='damage_dealt_ratio'&&durationActive(x.duration)).reduce((a,x)=>a+(Number(x.val)||0),0);
+      const role = unit.role==='attacker' ? 1.12 : unit.role==='defender'?0.87:0.96;
+      return Math.max(0,best*(1+ratio/100)*role);
+    }
+    function aiPlannerOpponentForecast(state, friendlySide) {
+      let cached=aiPlannerResponseForecastCache.get(state);
+      if (!cached) { cached=Object.create(null);aiPlannerResponseForecastCache.set(state,cached); }
+      if (cached[friendlySide]) return cached[friendlySide];
+      const enemySide=friendlySide==='player'?'enemy':'player';
+      const allies=aiPlannerActive(state,friendlySide), enemies=aiPlannerActive(state,enemySide);
+      const nowAp=aiPlannerApForSide(state,enemySide), nextAp=Math.min(100,nowAp+30);
+      const profile={aoePerTarget:0,enemyStrongest:null,skillThreatById:Object.create(null),cleansers:[]};
+      const aoeOptions=[];
+      for (const enemy of enemies) {
+        const basic=aiPlannerEffectiveAtk(enemy);
+        let biggestSkill=0, biggestSkillCost=0, availableHigh=0;
+        for (const skill of enemy.skills||[]) {
+          if (skill?.type!=='active' || !aiPlannerCondition(skill.selfCond,enemy,state)) continue;
+          const cost=Math.max(0,Number(skill.cost)||0)+(aiPlannerHasStatus(enemy,'pressure')?5:0);
+          if(cost>nextAp || (enemy.debuffs||[]).some(d=>d.type==='skill_block'&&durationActive(d.duration)))continue;
+          const eligible=allies.filter(t=>aiPlannerTargetCondition(t,skill.targetCond));
+          if(!eligible.length)continue;
+          const effect=skill.mainEffect||{},type=String(effect.type||'');
+          const val=Math.max(0,Number(effect.val)||0);
+          const raw=['dmg_atk_ratio','dmg_atk_ratio_pierce'].includes(type)?basic*val/100
+            :type==='dmg_max_hp_ratio'?enemy.maxHp*val/100
+            :['dmg_fixed','dmg_fixed_pierce'].includes(type)?val:0;
+          const hostile=['select_enemy_1','random_enemy_1','all_enemy','all_field','random_all_1'].includes(skill.targetType);
+          if(hostile&&raw>biggestSkill){biggestSkill=raw;biggestSkillCost=cost;}
+          const actionable=cost<=nowAp?1:0.78;
+          if(hostile&&raw>0&&['all_enemy','all_field'].includes(skill.targetType)) {
+            aoeOptions.push({damage:raw*actionable*(skill.targetType==='all_field'?0.75:1),cost,enemyId:enemy.instanceId});
+          }
+          if(hostile&&raw>0)availableHigh=Math.max(availableHigh,raw*actionable);
+          if(['clear_statuses','status_remove','clear_debuffs','clear_random_debuffs'].includes(type))profile.cleansers.push({unit:enemy,skill});
+        }
+        const hpRatio=enemy.currentHp/Math.max(1,enemy.maxHp);
+        const skillReliance=Math.max(0,biggestSkill-basic)*(biggestSkillCost>30?0.85:1)
+          + (enemy.skills||[]).filter(sk=>sk?.type==='active'&&['skill_block','heal_fixed','heal_max_hp_ratio','shield'].includes(sk.mainEffect?.type)).length*450;
+        profile.skillThreatById[enemy.instanceId]=Math.max(0,skillReliance);
+        const threat=basic+availableHigh*0.45+skillReliance*0.45;
+        if(!profile.enemyStrongest||threat>profile.enemyStrongest.threat)profile.enemyStrongest={unit:enemy,threat};
+      }
+      aoeOptions.sort((a,b)=>b.damage-a.damage);
+      if(aoeOptions.length) {
+        const top=aoeOptions[0];
+        profile.aoePerTarget=top.damage;
+        // Only add a second AoE if team-shared AP can afford both skills.
+        const second=aoeOptions.find(x=>x.enemyId!==top.enemyId && x.cost+top.cost<=nextAp);
+        if(second)profile.aoePerTarget+=second.damage*0.45;
+      }
+      return cached[friendlySide]=profile;
+    }
+    function aiPlannerHasTauntPlan(unit) {
+      return aiPlannerHasStatus(unit,'taunt')||aiPlannerHasStatus(unit,'provoke')||
+        (unit.skills||[]).some(sk=>(sk?.type==='passive'||
+          (sk?.type==='active'&&sk.targetType==='self'&&Number(sk.cost||0)<=60))&&
+          sk.mainEffect?.type==='status_apply'&&['taunt','provoke'].includes(sk.mainEffect.status));
+    }
+    function aiPlannerProtectionPriority(state,ally) {
+      if(!ally||ally.currentHp<=0)return 0;
+      const forecast=aiPlannerOpponentForecast(state,ally.side);
+      const hpRatio=ally.currentHp/Math.max(1,ally.maxHp);
+      const taunt=aiPlannerHasTauntPlan(ally);
+      const vulnerable=ally.role==='attacker' && hpRatio<0.72;
+      const shield=(ally.shields||[]).reduce((sum,x)=>sum+Math.max(0,Number(x.remaining??x.amount)||0),0);
+      let score=taunt?1.85:(vulnerable?1.42:ally.role==='defender'?1.05:0.92);
+      score*=1+Math.min(1.1,(1-hpRatio)*1.9);
+      if(ally.currentHp<=forecast.aoePerTarget*1.25&&forecast.aoePerTarget>0)score*=1.32;
+      if(shield>ally.maxHp*0.28)score*=0.60;
+      return score;
+    }
+    function aiPlannerCanRemoveAilment(state, target, status, blockDebuff=false) {
+      if(!target||target.currentHp<=0)return false;
+      const allies=aiPlannerActive(state,target.side);
+      const ap=Math.min(100,aiPlannerApForSide(state,target.side)+30);
+      for(const ally of allies)for(const sk of ally.skills||[]) {
+        const effect=sk?.mainEffect||{};
+        if(!['clear_statuses','clear_debuffs','clear_random_debuffs','status_remove'].includes(effect.type))continue;
+        if(blockDebuff && !['clear_debuffs','clear_random_debuffs'].includes(effect.type))continue;
+        if(!blockDebuff && effect.type==='status_remove' && effect.status!==status)continue;
+        if(sk.type==='active') {
+          if(ally===target&&blockDebuff)continue; // skill-blocked actor cannot cure itself with an active skill
+          if(Math.max(0,Number(sk.cost)||0)>ap)continue;
+        } else if(sk.type!=='passive'||!['turn_start','before_action','after_action'].includes(sk.timing))continue;
+        const cond=sk.selfCond||{};
+        const statusWouldEnable=!blockDebuff&&ally.instanceId===target.instanceId&&(
+          cond.type==='self_any_status'||(cond.type==='self_status'&&cond.status===status));
+        if(!statusWouldEnable&&!aiPlannerCondition(cond,ally,state))continue;
+        if(sk.targetType==='self' && String(ally.instanceId)!==String(target.instanceId))continue;
+        if(!['self','all_ally','select_ally_1','random_ally_1'].includes(String(sk.targetType||'')))continue;
+        if(!aiPlannerTargetCondition(target,sk.targetCond))continue;
+        // Selectable and self cleanses are reliable; random cleanses on four allies less so.
+        if(sk.targetType==='random_ally_1'&&allies.length>2)continue;
+        return true;
+      }
+      return false;
+    }
+    function aiPlannerSupportTargetBonus(state, actor, candidate) {
+      if(!actor || candidate?.type!=='skill'||!candidate.skill)return 0;
+      const skill=candidate.skill;
+      const effects=[{eff:skill.mainEffect,targetType:skill.targetType,id:candidate.targetInstanceId}];
+      if(skill.hasSubEffect&&skill.subEffect)effects.push({eff:skill.subEffect,targetType:skill.subEffect.targetType==='same_main_target'?skill.targetType:skill.subEffect.targetType,id:skill.subEffect.targetType==='same_main_target'?candidate.targetInstanceId:candidate.subTargetInstanceId});
+      if(!effects.some(({eff,targetType})=>['select_ally_1','self'].includes(targetType)&&(
+        ['mod_atk_ratio','mod_atk_val','damage_dealt_ratio'].includes(eff?.type)&&Number(eff.val)>0 ||
+        eff?.type==='shield'&&Number(eff.val)>0 || eff?.type==='damage_cut_ratio'&&Number(eff.val)>0 ||
+        eff?.type==='damage_taken_ratio'&&Number(eff.val)<0)))return 0;
+      const allies=aiPlannerActive(state,actor.side);
+      let bonus=0;
+      for(const {eff,targetType,id} of effects){
+        if(!['select_ally_1','self'].includes(targetType))continue;
+        const target=targetType==='self'?actor:aiPlannerFindUnit(state,id);
+        if(!target||target.side!==actor.side||target.currentHp<=0)continue;
+        const val=Number(eff?.val)||0,type=String(eff?.type||'');
+        const alive=allies.length;
+        if(['mod_atk_ratio','mod_atk_val','damage_dealt_ratio'].includes(type)&&val>0){
+          const ranks=aiPlannerSupportWeights(state,actor.side);
+          const top=ranks.topOutput;
+          const mine=ranks.output.get(target.instanceId)||0;
+          const relative=mine/top;
+          const healthSurvival=Math.max(0.35,Math.min(1,target.currentHp/Math.max(1,target.maxHp)*1.4));
+          const strength=Math.min(1.5,type==='mod_atk_val'?val/Math.max(1,aiPlannerEffectiveAtk(target))*3:val/35);
+          bonus+=Math.round(580*relative*relative*healthSurvival*strength);
+          if(relative<0.75&&alive>1)bonus-=Math.round((0.75-relative)*300);
+        }
+        const protects=type==='shield'&&val>0 || type==='damage_cut_ratio'&&val>0 || type==='damage_taken_ratio'&&val<0;
+        if(protects){
+          const ranks=aiPlannerSupportWeights(state,actor.side);
+          const danger=ranks.protection.get(target.instanceId)||0;
+          const maxDanger=ranks.topProtection;
+          const relative=danger/maxDanger;
+          const size=type==='shield'?Math.min(1.4,val/2200):Math.min(1.4,Math.abs(val)/30);
+          bonus+=Math.round(500*relative*relative*size);
+          if(relative<0.72&&alive>1)bonus-=Math.round((0.72-relative)*240);
+        }
+      }
+      return bonus;
+    }
+    function aiPlannerCounterplayBonus(state,actor,candidate) {
+      if(!actor || candidate?.type!=='skill'||!candidate.skill)return 0;
+      const skill=candidate.skill;
+      const effects=[{eff:skill.mainEffect,targetType:skill.targetType,id:candidate.targetInstanceId}];
+      if(skill.hasSubEffect&&skill.subEffect)effects.push({eff:skill.subEffect,targetType:skill.subEffect.targetType==='same_main_target'?skill.targetType:skill.subEffect.targetType,id:skill.subEffect.targetType==='same_main_target'?candidate.targetInstanceId:candidate.subTargetInstanceId});
+      if(!effects.some(({eff,targetType})=>['skill_block','status_apply','shield','damage_taken_ratio','damage_cut_ratio'].includes(eff?.type)
+        ||(targetType==='all_ally'&&['shield','heal_fixed','heal_max_hp_ratio'].includes(eff?.type))))return 0;
+      const forecast=aiPlannerOpponentForecast(state,actor.side);
+      let bonus=0;
+      for(const {eff,targetType,id} of effects){
+        const type=String(eff?.type||'');
+        const target=aiPlannerFindUnit(state,id)|| (targetType==='self'?actor:null);
+        if(target&&target.side!==actor.side){
+          if(type==='skill_block' || (type==='status_apply'&&['freeze','paralysis','skill_block'].includes(String(eff?.status||'')))){
+            const reliance=forecast.skillThreatById[target.instanceId]||0;
+            const strongest=forecast.enemyStrongest?.unit?.instanceId===target.instanceId;
+            bonus+=Math.min(850,reliance*0.12)+(strongest&&reliance>500?180:0);
+            if(aiPlannerCanRemoveAilment(state,target,eff?.status,type==='skill_block'))bonus-=type==='skill_block'?160:340;
+          }
+          if(type==='status_apply' && !['freeze','paralysis','skill_block'].includes(String(eff?.status||''))) {
+            const onlyStatus=skill.mainEffect?.type==='status_apply' && (!skill.hasSubEffect||skill.subEffect?.type==='status_apply');
+            if(onlyStatus&&aiPlannerCanRemoveAilment(state,target,eff.status))bonus-=540;
+          }
+        }
+        const allied=target&&target.side===actor.side;
+        if(allied || ['all_ally'].includes(targetType)){
+          const aoe=forecast.aoePerTarget;
+          if(aoe<800)continue;
+          if(type==='shield' || (type==='damage_taken_ratio'&&Number(eff.val)<0) || (type==='damage_cut_ratio'&&Number(eff.val)>0)) {
+            const isAll=targetType==='all_ally';
+            const protection=type==='shield'?Math.min(Math.max(0,Number(eff.val)||0),aoe):aoe*Math.min(0.8,Math.abs(Number(eff.val)||0)/100);
+            bonus+=Math.min(720,protection/Math.max(1,aoe)*450*(isAll?1.6:0.65));
+          }
+        }
+      }
+      // Teamwide heals are valuable after AoE lands, not at full health beforehand.
+      // Their future availability is handled by shared AP opportunity evaluation.
+      return bonus;
+    }
+
     function aiPlannerExpectedSurvivalFactor(state, unit, forecastCache = null) {
       if (!unit || unit.currentHp <= 0) return 0;
       const own = forecastCache ? forecastCache.bySide[unit.side] : aiPlannerActive(state, unit.side);
@@ -6981,6 +7206,16 @@
           const positiveAtkRatio = Math.max(0, activeAtkRatio);
           const forecastAtkDelta = atkDelta >= 0 ? atkDelta / (1 + positiveAtkRatio / 100) : atkDelta;
           unitFuture += forecastAtkDelta * coefficient * weights[i - 1] * survival;
+          // v1.0.83: Multiplicative damage buffs were missing from the future damage
+          // projection, so an attacker often lost the buff to a weaker teammate.
+          const dealtBonus=[...(unit.buffs||[]),...(unit.debuffs||[])]
+            .filter(b=>b.type==='damage_dealt_ratio'&&aiPlannerProjectedDurationActive(b,i))
+            .reduce((a,b)=>a+(Number(b.val)||0),0);
+          if(dealtBonus) {
+            const diminishing=dealtBonus>0?1+dealtBonus/110:1;
+            unitFuture+=Math.max(-unit.atk*2,unit.atk*coefficient*dealtBonus/100/diminishing)
+              * weights[i-1]*survival;
+          }
           const projectedSpeed = futureSpeed[i - 1].get(unit);
           const currentSpeed = liveSpeed.get(unit);
           enemies.forEach(enemy => {
@@ -7206,6 +7441,9 @@
       });
       const ownAp = aiPlannerApForSide(state,side);
       score += ownAp * 2.0;
+      // AP30 must serve four actors. Preserve affordable emergency teamwide
+      // defense against a likely enemy AoE, not just a generic AP stockpile.
+      // Evaluate predicted AoE readiness at actual shared-AP spending thresholds.
       // 行動可能数が多いほど次の局面が安定する。
       score += own.filter(u => u.currentHp > 0).length * 90;
       // Full candidate evaluation includes multi-turn projections. The inner before/after
@@ -7283,7 +7521,7 @@
     // pseudo-unit to a fresh clone) and invalidates its identity cache before changing it.
     // This lets repeated evaluations of a parent node skip rebuilding its large signature.
     function aiPlannerInvalidateEvaluationCache(state) {
-      if (state && typeof state === 'object') aiPlannerEvaluationCache.delete(state);
+      if (state && typeof state === 'object') { aiPlannerEvaluationCache.delete(state); aiPlannerResponseForecastCache.delete(state); aiPlannerSupportWeightsCache.delete(state); }
     }
     // Candidate branches often reach an equivalent state through different cloned objects.
     // Memoize the content-derived evaluation across those clones as well as by object identity.
@@ -7687,7 +7925,7 @@
       const effect = candidate.skill.mainEffect || {};
       const damageSkill = ['dmg_atk_ratio','dmg_atk_ratio_pierce','dmg_max_hp_ratio','dmg_fixed','dmg_fixed_pierce'].includes(String(effect.type || ''));
       let adjustment=0;
-      // Individual AP cannot deny another ally its skill. Evaluate the controller's own action directly.
+      // Shared AP: controllers must justify damage casts against the attackers' remaining options.
       if(role==='controller' && damageSkill && Number(candidate.cost)>0 && !(result?.kills>0)) adjustment-=Math.min(90,Number(candidate.cost)*2);
 
       // A defender's taunt and protective effects gain value when they buy time for an attacker.
@@ -7696,7 +7934,7 @@
         if (protects) {
           const target = aiPlannerFindUnit(afterState, candidate.targetInstanceId) || (candidate.skill.targetType === 'self' ? aiPlannerFindUnit(afterState, actor.instanceId) : null);
           const targetIsAttacker = target && target.side === side && target.role === 'attacker';
-          if (targetIsAttacker) adjustment += 170 + (target.currentHp / Math.max(1, target.maxHp) < 0.55 ? 120 : 0);
+          if (targetIsAttacker && target.currentHp / Math.max(1,target.maxHp)<0.65) adjustment += 75;
           if (effect.type === 'status_apply' && ['taunt','provoke'].includes(String(effect.status || '')) && target?.side === side) {
             const endangeredAttackers = aiPlannerActive(beforeState, side).filter(u => u.role === 'attacker' && u.currentHp / Math.max(1, u.maxHp) < 0.8).length;
             adjustment += Math.min(420, 120 + endangeredAttackers * 100);
@@ -7708,7 +7946,7 @@
       // state evaluator supplies most of the actual buff value.
       if (role === 'controller' && ['mod_atk_ratio','mod_atk_val','mod_speed','shield','damage_taken_ratio','damage_cut_ratio','damage_dealt_ratio','heal_fixed','heal_max_hp_ratio','mod_max_hp_val'].includes(String(effect.type || ''))) {
         const target = aiPlannerFindUnit(afterState, candidate.targetInstanceId) || (candidate.skill.targetType === 'self' ? aiPlannerFindUnit(afterState, actor.instanceId) : null);
-        if (target && target.side === side && target.role === 'attacker') adjustment += 140;
+        if (target && target.side === side && target.role === 'attacker') adjustment += 40;
       }
       return adjustment;
     }
@@ -7767,7 +8005,11 @@
         const beneficial = type === 'damage_cut_ratio' ? (targetsEnemy ? val < 0 : val > 0) : (targetsEnemy ? val > 0 : val < 0);
         value = beneficial ? Math.min(400, Math.abs(val) * 6) : 0;
       } else if (type === 'mod_ap') {
-        value = val > 0 ? Math.min(240, val * 7) : 0;
+        // v1.0.82: enemy AP reduction and own AP gain are helpful;
+        // own AP reduction / enemy AP gain are deliberate but not ordinary support.
+        const targetSide=String(skill.targetType || '');
+        const useful=targetSide==='player_opp' ? -val : (targetSide==='player_self' ? val : 0);
+        value = useful > 0 ? Math.min(240, useful * 7) : 0;
       } else if (['clear_debuffs','clear_statuses','status_remove'].includes(type)) {
         if (targetsEnemy) return 0;
         value = Math.min(220, Math.abs(val) * 2.5 + 65);
@@ -7827,20 +8069,63 @@
 
     // バッファーが先にAPを使うことで、次ターンに主力が20～30AP技を強化付きで撃てる
     // 展開を潰す場合は、現在のバフ価値から「待つ価値」を差し引く。
+    // v1.0.83: Evaluate the AP displaced from OTHER teammates, not only the caster.
+    // Current-turn reservations are coordinated by the beam search itself; the score
+    // penalty only protects valuable threshold-crossing options from beam pruning.
     function aiPlannerApOpportunityPenalty(state, side, actor, candidate, afterState, futureActorIds = []) {
-      if (!actor || !afterState || candidate?.type!=='skill')return {currentTurnLoss:0,nextTurnLoss:0,total:0};
-      const now=aiPlannerUnitAp(aiPlannerFindUnit(state,actor.instanceId));
-      const after=aiPlannerUnitAp(aiPlannerFindUnit(afterState,actor.instanceId));
-      if (after>=now)return {currentTurnLoss:0,nextTurnLoss:0,total:0};
+      if (!actor || !afterState || candidate?.type!=='skill') return {currentTurnLoss:0,nextTurnLoss:0,total:0};
+      const now=aiPlannerApForSide(state,side), after=aiPlannerApForSide(afterState,side);
+      if(after>=now)return {currentTurnLoss:0,nextTurnLoss:0,total:0};
       const nextBefore=Math.min(100,now+30),nextAfter=Math.min(100,after+30);
-      const futureActor=aiPlannerFindUnit(afterState,actor.instanceId);
-      let loss=0;
-      for(const sk of futureActor?.skills||[]){
-        if(sk.type!=='active'||!aiPlannerCondition(sk.selfCond,futureActor,afterState))continue;
-        const cost=Math.max(0,Number(sk.cost)||0)+(aiPlannerHasStatus(futureActor,'pressure')?5:0);
-        if(cost>nextAfter&&cost<=nextBefore)loss=Math.max(loss,Math.min(500,aiPlannerQuickSkillOpportunityValue(afterState,futureActor,sk)*0.28));
+      const futureIds=new Set((futureActorIds||[]).map(String));
+      let current=0,next=0;
+      for(const u of aiPlannerActive(state,side)){
+        const futureAct=futureIds.has(String(u.instanceId));
+        if ((u.debuffs||[]).some(d=>d.type==='skill_block'&&durationActive(d.duration)))continue;
+        for(const sk of u.skills||[]){
+          if(sk?.type!=='active' || !aiPlannerCondition(sk.selfCond,u,state))continue;
+          const cost=Math.max(0,Number(sk.cost)||0)+(aiPlannerHasStatus(u,'pressure')?5:0);
+          if(!cost || cost>100)continue;
+          const currentThreshold=futureAct && cost>after && cost<=now;
+          const nextThreshold=cost>nextAfter && cost<=nextBefore;
+          if(!currentThreshold&&!nextThreshold)continue;
+          let useful=Math.max(0,aiPlannerQuickSkillOpportunityValue(state,u,sk)-180);
+          // Against the free normal attack, only the *incremental* damage of a
+          // skill deserves team AP; high ATK must not make this margin negative.
+          const eff=sk.mainEffect||{}, type=String(eff.type||'');
+          if(['dmg_atk_ratio','dmg_atk_ratio_pierce','dmg_fixed','dmg_fixed_pierce','dmg_max_hp_ratio'].includes(type)){
+            const val=Math.max(0,Number(eff.val)||0);
+            const raw=['dmg_atk_ratio','dmg_atk_ratio_pierce'].includes(type)?aiPlannerEffectiveAtk(u)*val/100
+              :type==='dmg_max_hp_ratio'?u.maxHp*val/100:val;
+            const normal=aiPlannerEffectiveAtk(u);
+            const enemies=aiPlannerActive(state,side==='player'?'enemy':'player');
+            const multiple=sk.targetType==='all_enemy'?Math.max(1,Math.min(enemies.length,4))*0.85:1;
+            useful=Math.max(0,Math.min(2400,(raw*multiple-normal)*0.38));
+          }
+          if(useful<=0)continue;
+          if(currentThreshold){
+            current=Math.max(current,Math.min(950,useful*0.48));
+          }
+          if(nextThreshold){
+            next=Math.max(next,Math.min(480,useful*0.25));
+          }
+        }
       }
-      return {currentTurnLoss:0,nextTurnLoss:loss,total:loss};
+      // An anticipated enemy AoE gives extra value to leaving AP for an actual
+      // all-ally shield/heal that becomes affordable next turn.
+      const forecast=aiPlannerOpponentForecast(state,side);
+      if(forecast.aoePerTarget>1200)for(const unit of aiPlannerActive(state,side))for(const sk of unit.skills||[]){
+        if(sk?.type!=='active'||sk.targetType!=='all_ally'||!aiPlannerCondition(sk.selfCond,unit,state))continue;
+        const main=sk.mainEffect||{};
+        if(!['shield','heal_fixed','heal_max_hp_ratio','damage_cut_ratio','damage_taken_ratio'].includes(main.type))continue;
+        const cost=Math.max(0,Number(sk.cost)||0);
+        if(cost>nextAfter&&cost<=nextBefore){
+          next=Math.max(next,Math.min(620,forecast.aoePerTarget*0.15));
+        }
+      }
+      // Keep the rest of the turn viable; avoid doubly penalizing the same AP
+      // consumption for every ally that needs the same shared 30 AP.
+      return {currentTurnLoss:current,nextTurnLoss:next,total:current+next};
     }
 
     function aiPlannerFriendlyControlRiskPenalty(state, actor, candidate, skillOverride = null) {
@@ -8084,7 +8369,9 @@
         const apOpportunity=aiPlannerApOpportunityPenalty(state,side,actor,c,copy,futureActorIds);
         const damageBonus=aiPlannerDirectDamageScoreBonus(r);
         const comboRealization=aiPlannerSelfComboRealization(state,copy,actor,c,r);
-        const baseAdjustment=strat+tactical+selfHarm+roleAdjustment+comboThreshold+teamLethalCombo+recoveryPressure+actionOrderImpact+damageBonus+comboRealization-repeatBuffPenalty-controlRiskPenalty-healControlPenalty;
+        const supportTarget=c.type==='skill'?aiPlannerSupportTargetBonus(state,actor,c):0;
+        const counterplay=c.type==='skill'?aiPlannerCounterplayBonus(state,actor,c):0;
+        const baseAdjustment=strat+tactical+selfHarm+roleAdjustment+comboThreshold+teamLethalCombo+recoveryPressure+actionOrderImpact+damageBonus+comboRealization+supportTarget+counterplay-repeatBuffPenalty-controlRiskPenalty-healControlPenalty;
         // Full AP opportunity cost prunes a bad early support action, but current-turn denial
         // is already reflected when later actors choose their actual action. Only next-turn AP
         // breakpoints are carried into the final whole-plan score.
@@ -8102,6 +8389,20 @@
       if(bestAttack&&!selected.includes(bestAttack))selected.push(bestAttack);
       const bestLethal=scored.find(x=>x.kills>0);
       if(bestLethal&&!selected.includes(bestLethal))selected.push(bestLethal);
+      // Keep one actionable answer of each kind in the beam even when an immediate
+      // damage move wins the preliminary score. A response may matter after other
+      // teammates' actions and/or once the opponent's plan becomes clearer.
+      const groups={buff:new Set(['mod_atk_ratio','mod_atk_val','damage_dealt_ratio']),
+        protect:new Set(['shield','damage_taken_ratio','damage_cut_ratio']),
+        disable:new Set(['skill_block']), heal:new Set(['heal_fixed','heal_max_hp_ratio'])};
+      for(const [kind,types] of Object.entries(groups)){
+        if(selected.length>=9)break;
+        const best=scored.find(x=>x.c.type==='skill'&&(
+          types.has(String(x.c.skill?.mainEffect?.type||'')) ||
+          (x.c.skill?.hasSubEffect&&types.has(String(x.c.skill.subEffect?.type||''))) ||
+          (kind==='disable'&&x.c.skill?.mainEffect?.type==='status_apply'&&['freeze','paralysis','skill_block'].includes(x.c.skill.mainEffect.status))));
+        if(best&&!selected.includes(best))selected.push(best);
+      }
       return selected.map(x=>({...x.c,__aiPlannerAdjustment:x.adjustment,__fastState:x.nextState,__fastScore:x.afterScore,__fastKills:x.kills,__fastValue:x.value}));
     }
 
@@ -8162,7 +8463,10 @@
         const actor=aiPlannerFindUnit(state,c.actorId);
         const strat=aiStrategyScoreAdjustment(side,c.card.effect?.mainEffect||c.card.effect,c.cost,'magic',actor);
         const opportunity=c.spell?aiPlannerApOpportunityPenalty(state,side,actor,{type:'skill',cost:c.cost},copy,[]):{total:0};
-        const adjustment=strat+(result.kills||0)*300-aiPlannerFriendlyControlRiskPenalty(state,actor,c,c.card.effect)-aiPlannerRepeatedPermanentBuffPenalty(state,actor,c)-opportunity.total;
+        const supportProxy={type:'skill',skill:c.card.effect,targetInstanceId:c.targetInstanceId,subTargetInstanceId:c.subTargetInstanceId};
+        const support=aiPlannerSupportTargetBonus(state,actor,supportProxy);
+        const counter=aiPlannerCounterplayBonus(state,actor,supportProxy);
+        const adjustment=strat+support+counter+(result.kills||0)*300-aiPlannerFriendlyControlRiskPenalty(state,actor,c,c.card.effect)-aiPlannerRepeatedPermanentBuffPenalty(state,actor,c)-opportunity.total;
         const afterScore=aiPlannerEvaluateState(copy,side);
         scored.push({c,score:afterScore+adjustment,adjustment,nextState:copy,afterScore,kills:result.kills||0});
       }
@@ -8243,7 +8547,10 @@
         const futureValue = aiPlannerEvaluateState(future, side);
         const threat = aiPlannerEstimateThreat(future, side);
         const futureWeight=0.08+(iq/100)*0.32;const threatWeight=0.16+(iq/100)*0.62;
-        const score=now+(Number(b.adjustment)||0)+futureValue*futureWeight-threat*threatWeight+aiEvaluationError(side);
+        // New-turn grant is only +30 and AP caps at 100; treat unused overflow
+        // as a small lost opportunity, without forcing a useless skill to fire.
+        const overflow=Math.max(0,aiPlannerApForSide(b.state,side)+30-100);
+        const score=now+(Number(b.adjustment)||0)+futureValue*futureWeight-threat*threatWeight-overflow*9+aiEvaluationError(side);
         finalCandidates.push({...b,score});
       }
       finalCandidates.sort((a,b)=>b.score-a.score);
@@ -8305,6 +8612,19 @@
       if (effect.type === 'damage_taken_ratio' || effect.type === 'damage_cut_ratio') { const v = effect.type === 'damage_cut_ratio' ? -(Number(effect.val)||0) : (Number(effect.val)||0); score += (v < 0 ? (target.side === unit.side ? 75 : 5) : (target.side !== unit.side ? 75 : -10)); }
       if (effect.type === 'damage_dealt_ratio') score += (Number(effect.val||0)>0 ? (target.side===unit.side?90:-10) : (target.side!==unit.side?70:-20));
       if (effect.type === 'heal_block' || effect.type === 'skill_block') score += target.side !== unit.side ? 85 : -20;
+      if(target.side===unit.side){
+        const allies=getActiveUnits(unit.side);
+        if(['mod_atk_ratio','mod_atk_val','damage_dealt_ratio'].includes(effect.type)&&Number(effect.val)>0){
+          const best=Math.max(1,...allies.map(u=>Math.max(0,getEffectiveAtk(u))*(u.role==='attacker'?1.25:1)));
+          score+=160*(getEffectiveAtk(target)*(target.role==='attacker'?1.25:1)/best);
+        }
+        if(['shield','damage_taken_ratio','damage_cut_ratio'].includes(effect.type)){
+          if(unitHasStatus(target,'taunt')||unitHasStatus(target,'provoke'))score+=170;
+          score+=Math.max(0,1-target.currentHp/Math.max(1,target.maxHp))*115;
+        }
+      } else if(effect.type==='skill_block') {
+        score+=Math.min(180,(target.skills||[]).filter(sk=>sk.type==='active').length*40);
+      }
       if (effect.type === 'mod_ap') score += Number(effect.val || 0) > 0 ? 55 : 35;
       const side=unit?.side||'enemy';
       score+=aiStrategyScoreAdjustment(side,effect,Number(skill.cost)||0,'skill',unit);
@@ -8409,7 +8729,9 @@
             const repeat = aiPlannerRepeatedPermanentBuffPenalty(plannerState,plannerActor,candidate);
             const apOpportunity = aiPlannerApOpportunityPenalty(plannerState,side,plannerActor,candidate,copy,futureActorIds).total;
             const roleAdjustment = aiPlannerRoleActionAdjustment(plannerState,copy,side,candidate,plannerActor,result);
-            const score = stateDelta+(result.kills||0)*250+strategy+roleAdjustment-risk-healControl-repeat-apOpportunity+aiPlannerEstimatePassiveSetupBonus(side,u,sk)+aiEvaluationError(side);
+            const support=aiPlannerSupportTargetBonus(plannerState,plannerActor,candidate);
+            const counter=aiPlannerCounterplayBonus(plannerState,plannerActor,candidate);
+            const score = stateDelta+(result.kills||0)*250+strategy+roleAdjustment+support+counter-risk-healControl-repeat-apOpportunity+aiPlannerEstimatePassiveSetupBonus(side,u,sk)+aiEvaluationError(side);
             if (score > bestScore) { bestScore=score; bestOption=option; }
           }
           if (bestOption) usable.push({sIdx,sk,candidates:liveCandidates,score:bestScore,targetInstanceId:bestOption.targetInstanceId||null,subTargetInstanceId:bestOption.subTargetInstanceId||null});
